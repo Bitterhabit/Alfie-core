@@ -134,6 +134,7 @@ export class PetrioHarnessClient {
         ...identity
       },
       body: JSON.stringify({ tool: toolId, arguments: args }),
+      redirect: "error",
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000)
     });
     const payload = await response.json().catch(() => ({}));
