@@ -20,7 +20,7 @@ Current package: @alfie/core 0.3.0
 - Version-bound memory write approvals, duplicate detection and audit history.
 - Python specialist-service boundary documented; Python workers are not part of the authoritative Core.
 - Backup and restore procedure documented for the standalone Core volume.
-- GitHub Actions validates the standalone Compose project, runs the full Node.js test suite and builds the Core image. Latest verified run: 107 tests passed, 0 failed; standalone Compose validation and both Core and interface image builds succeeded. The suite now includes an end-to-end test that bootstraps the standalone interface, links it to Petrio identity, and reads/writes the shared conversation and Garden data. Run: https://github.com/Bitterhabit/Alfie-core/actions/runs/41835883300.
+- GitHub Actions validates the standalone Compose project, runs the full Node.js test suite and builds the Core image. Latest verified run: 107 tests passed, 0 failed; standalone Compose validation and both Core and interface image builds succeeded. The suite now includes an end-to-end test that bootstraps the standalone interface, links it to Petrio identity, and reads/writes the shared conversation and Garden data. Run: https://github.com/Bitterhabit/Alfie-core/actions/runs/41836217216.
 
 ## Remaining release gates
 
