@@ -35,6 +35,46 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
 
+  alfie-interface:
+    build:
+      context: .
+      dockerfile: interface/Dockerfile
+    image: alfie-interface:0.1.0
+    container_name: alfie-interface
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: 8781
+      ALFIE_UI_DATA_DIR: /data
+      ALFIE_CORE_URL: http://alfie-core:8780
+    volumes:
+      - alfie_interface_data:/data
+    expose:
+      - "8781"
+    networks:
+      - alfie-core-internal
+    depends_on:
+      alfie-core:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8781/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+
 networks:
   alfie-core-internal:
     name: alfie-core-internal
@@ -42,3 +82,5 @@ networks:
 volumes:
   alfie_core_data:
     name: alfie-core-data
+  alfie_interface_data:
+    name: alfie-interface-data
