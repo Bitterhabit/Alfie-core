@@ -65,6 +65,11 @@ input:focus,textarea:focus{border-color:rgba(169,149,255,.7);box-shadow:0 0 0 3p
 .conversation-item{overflow:hidden;padding:9px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:#b6aec9;font-size:10px;text-align:left;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
 .conversation-item:hover,.conversation-item.active{background:var(--panel-hover);color:var(--text)}
 .conversation-item.active{border-color:var(--line)}
+.conversation-row{display:flex;align-items:center;gap:2px;min-width:0}
+.conversation-row .conversation-item{flex:1;min-width:0}
+.conversation-delete{width:25px;height:27px;flex-shrink:0;border:1px solid transparent;border-radius:6px;background:transparent;color:#817991;opacity:0;cursor:pointer}
+.conversation-row:hover .conversation-delete,.conversation-delete:focus-visible{opacity:1;border-color:var(--line)}
+.conversation-delete:hover{background:rgba(229,140,145,.12);color:var(--red)}
 .sidebar-empty{padding:8px;color:#766e89;font-size:10px;line-height:1.5}
 .sidebar-footer{display:flex;align-items:center;gap:10px;padding:13px 5px 3px;border-top:1px solid var(--line)}
 .user-avatar{width:31px;height:31px;display:grid;place-items:center;border-radius:9px;background:rgba(169,149,255,.17);color:var(--lavender);font-weight:850;font-size:12px}
@@ -150,6 +155,7 @@ input:focus,textarea:focus{border-color:rgba(169,149,255,.7);box-shadow:0 0 0 3p
   .suggestion-grid{grid-template-columns:1fr}
 }
 @media(max-width:620px){
+  .conversation-delete{opacity:1}
   .topbar-actions{gap:6px}
   .mobile-action{display:inline-flex;align-items:center;justify-content:center;min-width:34px;min-height:34px}
   .connection-state{gap:5px;font-size:0}
