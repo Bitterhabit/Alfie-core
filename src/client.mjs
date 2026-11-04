@@ -74,8 +74,16 @@ export function createAlfieCoreClient({
     saveConversationsDatabase(userId, database, expectedRevision = null) {
       return request(userId, "/v1/conversations/database", { method: "PUT", body: { database, expectedRevision } });
     },
+    listConversations(userId) { return request(userId, "/v1/conversations"); },
+    createConversation(userId, body = {}) { return request(userId, "/v1/conversations", { method: "POST", body }); },
+    getConversation(userId, id) { return request(userId, "/v1/conversations/" + encodeURIComponent(id)); },
+    appendMessage(userId, id, body) { return request(userId, "/v1/conversations/" + encodeURIComponent(id) + "/messages", { method: "POST", body }); },
+    deleteConversation(userId, id) { return request(userId, "/v1/conversations/" + encodeURIComponent(id), { method: "DELETE" }); },
     listMemories(userId, query = "") { return request(userId, "/v1/memories" + (query ? "?" + query : "")); },
+    createMemory(userId, body) { return request(userId, "/v1/memories", { method: "POST", body }); },
     getMemory(userId, id) { return request(userId, "/v1/memories/" + encodeURIComponent(id)); },
+    updateMemory(userId, id, body) { return request(userId, "/v1/memories/" + encodeURIComponent(id), { method: "PATCH", body }); },
+    deleteMemory(userId, id) { return request(userId, "/v1/memories/" + encodeURIComponent(id), { method: "DELETE" }); },
     listTools(userId) { return request(userId, "/v1/tools"); },
     listPermissions(userId) { return request(userId, "/v1/permissions"); },
     listPendingActions(userId) { return request(userId, "/v1/tools/pending"); },
