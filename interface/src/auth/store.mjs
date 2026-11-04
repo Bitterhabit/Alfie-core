@@ -150,6 +150,32 @@ export class InterfaceAuthStore {
     });
   }
 
+  async changePassword(currentPassword, newPassword) {
+    return this.exclusive(async () => {
+      const store = await this.load();
+      const user = store.users[0];
+      if (!user || user.disabled) throw Object.assign(new Error("The interface account is unavailable."), { status: 401 });
+      const validCurrentShape = typeof currentPassword === "string" && currentPassword.length >= 16 && currentPassword.length <= 256;
+      const candidate = typeof currentPassword === "string" ? currentPassword.slice(0, 256) : "";
+      const actual = Buffer.from(await passwordDigest(candidate, user.passwordSalt), "hex");
+      const expected = Buffer.from(user.passwordHash, "hex");
+      const matches = actual.length === expected.length && timingSafeEqual(actual, expected);
+      if (!validCurrentShape || !matches) {
+        throw Object.assign(new Error("Your current password was not accepted."), { status: 401 });
+      }
+      validateCredentials(user.username, newPassword);
+      if (currentPassword === newPassword) {
+        throw Object.assign(new Error("Choose a new password that is different from your current password."), { status: 400 });
+      }
+      const salt = randomBytes(16).toString("hex");
+      user.passwordSalt = salt;
+      user.passwordHash = await passwordDigest(newPassword, salt);
+      store.sessions = [];
+      await this.save(store);
+      return { changed: true };
+    });
+  }
+
   async logout(token) {
     if (typeof token !== "string" || token.length < 32) return;
     await this.exclusive(async () => {
