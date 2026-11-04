@@ -180,6 +180,16 @@ export function createAlfieInterfaceServer({
           }
         }
 
+        if (method === "POST" && url.pathname === "/api/auth/password") {
+          const session = await requireSession(req, res);
+          if (!session) return;
+          requireCsrf(req, session);
+          const body = await readJson(req);
+          const result = await authStore.changePassword(body.currentPassword, body.newPassword);
+          clearSessionCookie(res, cookieSecure);
+          return json(res, 200, result);
+        }
+
         if (method === "POST" && url.pathname === "/api/auth/logout") {
           const session = await requireSession(req, res);
           if (!session) return;
