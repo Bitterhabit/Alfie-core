@@ -3,6 +3,7 @@ import { timingSafeEqual, randomUUID } from "node:crypto";
 import { ProviderRegistry, normaliseConfig, publicConfig } from "./providers/registry.mjs";
 import { createPetrioIdentityAuth } from "./auth/petrioIdentity.mjs";
 import { createIdentityAuthRegistry, createSignedIdentityAuth } from "./auth/signedIdentity.mjs";
+import { IdentityLinkStore } from "./auth/identityLinkStore.mjs";
 import { ConversationStore } from "./conversations/store.mjs";
 import { MemoryStore } from "./memory/store.mjs";
 import { AuditStore } from "./audit/store.mjs";
