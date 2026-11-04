@@ -461,6 +461,24 @@ async function sendMessage(rawText) {
       assistantText = assistantText || "This action is ready for your approval. Open Tools & access to review it.";
     }
     renderMarkdown(assistantBody, assistantText || "I couldn't produce a response.");
+    if (finalEvent?.status === "awaiting_user_approval" && finalEvent.actionId) {
+      const approval = document.createElement("section");
+      approval.className = "chat-approval-card";
+      const heading = document.createElement("strong");
+      heading.textContent = "Your approval is needed";
+      const detail = document.createElement("p");
+      detail.textContent = [finalEvent.toolId, finalEvent.summary].filter(Boolean).join(" · ") || "Alfie has prepared an action for review.";
+      const review = document.createElement("button");
+      review.type = "button";
+      review.className = "secondary-button";
+      review.textContent = "Review in Tools & access";
+      review.addEventListener("click", () => {
+        setView("tools");
+        loadToolsAndApprovals().catch((error) => toast(error.message));
+      });
+      approval.append(heading, detail, review);
+      assistantBody.closest(".message")?.appendChild(approval);
+    }
     await persistMessage("assistant", assistantBody.textContent, conversationId);
     await loadConversations();
     if (finalEvent?.status === "awaiting_user_approval") {
