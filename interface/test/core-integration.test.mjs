@@ -69,8 +69,11 @@ test("standalone interface links to Core and uses the same conversations and Gar
     const headers = { origin: uiUrl, cookie, "content-type": "application/json", "x-csrf-token": login.csrfToken };
 
     const unlinked = await fetch(uiUrl + "/api/core/whoami", { headers: { cookie } });
-    assert.equal(unlinked.status, 403);
-    assert.equal((await unlinked.json()).code, "IDENTITY_LINK_REQUIRED");
+    assert.equal(unlinked.status, 200);
+    assert.equal((await unlinked.json()).linked, false);
+    const blockedData = await fetch(uiUrl + "/api/core/conversations", { headers: { cookie } });
+    assert.equal(blockedData.status, 403);
+    assert.equal((await blockedData.json()).code, "IDENTITY_LINK_REQUIRED");
 
     const linkHeaders = {
       authorization: "Bearer " + serviceToken,
