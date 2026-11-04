@@ -135,7 +135,12 @@ export class ConversationStore {
   async database(userId) {
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
-      return { revision: Number(store.revision) || 0, activeConversationId: store.activeConversationId || store.conversations[0]?.id || null, conversations: store.conversations };
+      return {
+        revision: Number(store.revision) || 0,
+        activeConversationId: store.activeConversationId || store.conversations[0]?.id || null,
+        legacyImportCompleted: Boolean(store.importedAt),
+        conversations: store.conversations
+      };
     });
   }
 
@@ -192,13 +197,39 @@ export class ConversationStore {
     }
     return this.exclusive(userId, async () => {
       const current = await this.load(userId);
-      if (current.conversations.length) {
-        return { imported: false, reason: "core_already_has_conversations", count: current.conversations.length };
+      if (current.importedAt) {
+        return { imported: false, reason: "legacy_history_already_imported", count: 0, skipped: rawConversations.length, total: current.conversations.length };
       }
       const cleaned = this.cleanDatabase(userId, source);
-      const next = { ...cleaned, importedAt: this.now() };
+      const existingIds = new Set(current.conversations.map((item) => item.id));
+      const additions = cleaned.conversations.filter((item) => !existingIds.has(item.id));
+      const skipped = cleaned.conversations.length - additions.length;
+      if (current.conversations.length + additions.length > MAX_CONVERSATIONS) {
+        throw Object.assign(new Error("The combined Core and legacy history exceeds the supported conversation limit. No data was imported."), {
+          status: 409, code: "CONVERSATION_IMPORT_LIMIT"
+        });
+      }
+      const conversations = [...current.conversations, ...additions];
+      const activeConversationId = conversations.some((item) => item.id === current.activeConversationId)
+        ? current.activeConversationId
+        : cleaned.activeConversationId && conversations.some((item) => item.id === cleaned.activeConversationId)
+          ? cleaned.activeConversationId
+          : conversations[0]?.id || null;
+      const next = {
+        ...current,
+        activeConversationId,
+        conversations,
+        importedAt: this.now()
+      };
       await this.save(userId, next);
-      return { imported: true, revision: next.revision, count: next.conversations.length, activeConversationId: next.activeConversationId };
+      return {
+        imported: true,
+        revision: next.revision,
+        count: additions.length,
+        skipped,
+        total: conversations.length,
+        activeConversationId: next.activeConversationId
+      };
     });
   }
 
