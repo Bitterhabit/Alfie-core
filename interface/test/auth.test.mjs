@@ -88,12 +88,13 @@ test("password change rejects reusing the current password", async () => {
 test("password changes require the current password and revoke every active session", async () => {
   await withStore(async (store) => {
     const nextPassword = "a-new-and-different-password-2026";
-    await store.bootstrap("alfie-admin", password);
+    const bootstrapped = await store.bootstrap("alfie-admin", password);
+    const userId = bootstrapped.user.id;
     const first = await store.login("alfie-admin", password);
     const second = await store.login("alfie-admin", password);
-    await assert.rejects(store.changePassword("incorrect-current-password", nextPassword), { status: 401 });
-    await assert.rejects(store.changePassword(password, password), { status: 400 });
-    assert.deepEqual(await store.changePassword(password, nextPassword), { changed: true });
+    await assert.rejects(store.changePassword(userId, "incorrect-current-password", nextPassword), { status: 401 });
+    await assert.rejects(store.changePassword(userId, password, password), { status: 400 });
+    assert.deepEqual(await store.changePassword(userId, password, nextPassword), { changed: true });
     assert.equal(await store.authenticate(first.token), null);
     assert.equal(await store.authenticate(second.token), null);
     await assert.rejects(store.login("alfie-admin", password), { status: 401 });
