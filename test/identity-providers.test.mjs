@@ -57,8 +57,16 @@ test("Core readiness and user identity do not require Petrio to be configured", 
     });
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), {
-      authenticated: true, userId: "standalone-user", identityProvider: "standalone-ui"
+      authenticated: true, userId: "standalone-user", identityProvider: "standalone-ui", linked: false
     });
+    const blocked = await fetch(baseUrl + "/v1/conversations", {
+      headers: {
+        authorization: "Bearer test-service-token-that-is-long-enough-32",
+        ...identityAuth.sign("standalone-user", { method: "GET", path: "/v1/conversations" })
+      }
+    });
+    assert.equal(blocked.status, 403);
+    assert.equal((await blocked.json()).code, "IDENTITY_LINK_REQUIRED");
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
