@@ -59,7 +59,7 @@ test("login throttling is bounded to the socket peer unless proxy headers are tr
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-ui-throttle-"));
   const authStore = new InterfaceAuthStore({ dataDirectory: directory });
   await authStore.bootstrap("alfie-admin", "test-password-for-ci-only-123456");
-  const server = createAlfieInterfaceServer({ authStore, cookieSecure: false, trustProxyHeaders: false });
+  const server = createAlfieInterfaceServer({ authStore, cookieSecure: false, trustProxyHeaders: false, coreClient: {} });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const base = "http://127.0.0.1:" + server.address().port;
   try {
