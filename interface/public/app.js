@@ -330,11 +330,12 @@ async function sendMessage(rawText) {
   const form = $("#chat-form");
   const input = form.elements.message;
   input.disabled = true;
+  let assistantBody = null;
   try {
     if (!state.activeConversationId) await newConversation();
     await persistMessage("user", content);
     renderMessages();
-    const assistantBody = appendMessageElement({ role: "assistant", content: "Thinking…" });
+    assistantBody = appendMessageElement({ role: "assistant", content: "Thinking…" });
     const response = await fetch("/api/core/chat/stream", {
       method: "POST",
       credentials: "same-origin",
@@ -384,6 +385,7 @@ async function sendMessage(rawText) {
       await loadToolsAndApprovals();
     }
   } catch (error) {
+    if (assistantBody) renderMarkdown(assistantBody, "I couldn't complete that response. " + error.message);
     toast(error.message);
   } finally {
     state.sending = false;
