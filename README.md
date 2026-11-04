@@ -33,6 +33,28 @@ The production agent harness is implemented in Node.js:
 
 The Petrio adapter currently registers read-only Calendar and Journal tools (including selected Journal entry reads) when its private service connection is configured. Alfie Core also registers scoped memory search/read tools and approval-gated memory update/forget tools. Mail tools and Calendar/Journal write tools are not yet registered; they must declare trust, risk, strict schemas and output provenance before being enabled. Automatic memory capture remains disabled.
 
+## Standalone interface
+
+The repository includes a separate Node.js web application in `interface/`. It is a first-party client of Core, not a second agent runtime. Its backend authenticates the local session, signs requests with the standalone identity secret and calls Core through the server-side client SDK. Browser code never receives the Core service token or identity secret.
+
+Current interface features:
+
+- first-run single-administrator bootstrap from `ALFIE_UI_BOOTSTRAP_USERNAME` and `ALFIE_UI_BOOTSTRAP_PASSWORD`;
+- password login with asynchronous scrypt verification, opaque hashed session tokens, CSRF protection, idle and absolute expiry;
+- one-time Petrio account linking before any Core user data can be accessed;
+- chat history, new conversations, guarded Alfie chat and streaming response transport;
+- a Garden view for searching, planting, editing and forgetting memories;
+- registered tool scopes, pending approvals, explicit approve/reject controls and audit history;
+- provider health and Core capability status;
+- mobile navigation with access to recent conversations, new chat and sign out;
+- safe DOM-based Markdown rendering for headings, lists, emphasis, code and HTTP(S) links.
+
+On first startup, provide a unique bootstrap username and a password of at least 16 characters through the interface container environment. Remove both bootstrap values after the first account has been created. The interface intentionally has no public self-registration route. Password recovery, password change and multi-user account administration are not yet implemented.
+
+Set `ALFIE_UI_PUBLIC_ORIGIN` to the exact public HTTPS origin used by the reverse proxy. Keep `ALFIE_UI_COOKIE_SECURE=true`. `ALFIE_UI_TRUST_PROXY_HEADERS` defaults to false; enable it only if the interface is reachable exclusively through a trusted proxy that overwrites `CF-Connecting-IP`.
+
+The interface is available on port 8781 inside the private `alfie-core-internal` network. The Compose project does not publish a host port. Put a trusted reverse proxy in front of it when you are ready to expose the web UI.
+
 ## Provider configuration
 
 Set `ALFIE_CORE_PROVIDERS_JSON` in the Core container environment. Example:
