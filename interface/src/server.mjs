@@ -234,6 +234,11 @@ export function createAlfieInterfaceServer({
         if (method === "GET" && conversationMatch) {
           return json(res, 200, await coreClient.getConversation(userId, conversationMatch[1]));
         }
+        if (method === "PATCH" && conversationMatch) {
+          requireCsrf(req, session);
+          const body = await readJson(req);
+          return json(res, 200, { conversation: await coreClient.renameConversation(userId, conversationMatch[1], body.title) });
+        }
         if (method === "DELETE" && conversationMatch) {
           requireCsrf(req, session);
           return json(res, 200, await coreClient.deleteConversation(userId, conversationMatch[1]));
