@@ -312,8 +312,7 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
   const bootstrapPassword = process.env.ALFIE_UI_BOOTSTRAP_PASSWORD || "";
   if (bootstrapUsername || bootstrapPassword) {
     const result = await authStore.bootstrap(bootstrapUsername, bootstrapPassword);
-    if (result.created) process.stdout.write("Created the initial Alfie interface administrator. Remove bootstrap credentials from the environment and restart.
-");
+    if (result.created) process.stdout.write("Created the initial Alfie interface administrator. Remove bootstrap credentials from the environment and restart.\n");
   }
   const server = createAlfieInterfaceServer({ authStore });
   server.listen(PORT, "0.0.0.0", () => process.stdout.write(`Alfie standalone interface listening on port ${PORT}.
