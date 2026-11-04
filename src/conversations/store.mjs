@@ -138,7 +138,8 @@ export class ConversationStore {
       return {
         revision: Number(store.revision) || 0,
         activeConversationId: store.activeConversationId || store.conversations[0]?.id || null,
-        legacyImportCompleted: Boolean(store.importedAt),
+        legacyImportCompleted: Boolean(store.legacyImports?.["petrio-server"] || store.importedAt),
+        localStorageImportCompleted: Boolean(store.legacyImports?.["petrio-local-storage"]),
         conversations: store.conversations
       };
     });
@@ -151,13 +152,22 @@ export class ConversationStore {
         throw Object.assign(new Error("Conversation history changed in another session. Reload before saving to avoid overwriting newer messages."), { status: 409, code: "conversation_revision_conflict", revision: Number(current.revision) || 0 });
       }
       const cleaned = this.cleanDatabase(userId, source);
-      const next = { ...cleaned, importedAt: current.importedAt || null };
+      const next = {
+        ...cleaned,
+        importedAt: current.importedAt || null,
+        legacyImports: current.legacyImports || {}
+      };
       await this.save(userId, next);
       return { revision: next.revision, activeConversationId: next.activeConversationId, conversations: next.conversations };
     });
   }
 
-  async importLegacy(userId, source = {}) {
+  async importLegacy(userId, source = {}, sourceKey = "petrio-server") {
+    if (!["petrio-server", "petrio-local-storage"].includes(sourceKey)) {
+      throw Object.assign(new Error("Unsupported legacy conversation import source."), {
+        status: 400, code: "CONVERSATION_IMPORT_SOURCE_INVALID"
+      });
+    }
     const input = source && typeof source === "object" ? source : {};
     if (!Array.isArray(input.conversations)) {
       throw Object.assign(new Error("Legacy conversation import requires a conversations array. No data was imported."), {
@@ -197,8 +207,8 @@ export class ConversationStore {
     }
     return this.exclusive(userId, async () => {
       const current = await this.load(userId);
-      if (current.importedAt) {
-        return { imported: false, reason: "legacy_history_already_imported", count: 0, skipped: rawConversations.length, total: current.conversations.length };
+      if (current.legacyImports?.[sourceKey] || (sourceKey === "petrio-server" && current.importedAt)) {
+        return { imported: false, reason: "legacy_history_already_imported", sourceKey, count: 0, skipped: rawConversations.length, total: current.conversations.length };
       }
       const cleaned = this.cleanDatabase(userId, source);
       const existingIds = new Set(current.conversations.map((item) => item.id));
@@ -220,12 +230,14 @@ export class ConversationStore {
         ...current,
         activeConversationId,
         conversations,
-        importedAt: this.now()
+        importedAt: sourceKey === "petrio-server" ? this.now() : current.importedAt || null,
+        legacyImports: { ...(current.legacyImports || {}), [sourceKey]: this.now() }
       };
       await this.save(userId, next);
       return {
         imported: true,
         revision: next.revision,
+        sourceKey,
         count: additions.length,
         skipped,
         total: conversations.length,
