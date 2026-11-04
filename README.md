@@ -155,6 +155,14 @@ Petrio and the standalone interface can authenticate to the same Core simultaneo
 
 The standalone Compose project creates the alfie-core-internal network. When Petrio is connected as an adapter, its container must also be attached to this network (or another explicitly configured private network) before enabling the Petrio Core feature flag. The independent interface backend will use the internal service address alfie-core:8780 when attached to this network.
 
+For the current Petrio Compose deployment, start Core first so it creates the network. Then, from the Petrio checkout, attach the Petrio service using the opt-in overlay:
+
+```sh
+docker compose -f compose.yaml -f compose.alfie-core.yaml up -d
+```
+
+The overlay is stored in the Petrio repository. It preserves Petrio's normal default network and adds the external alfie-core-internal network only when explicitly selected. Set matching ALFIE_CORE_SERVICE_TOKEN and ALFIE_CORE_PETRIO_IDENTITY_SECRET values in both server environments, set ALFIE_CORE_URL=http://alfie-core:8780 in Petrio, and set ALFIE_PETRIO_ADAPTER_URL=http://petrio:3000/v1/alfie-core/tools/run in Core. Keep ALFIE_CORE_ENABLED=false until the private connection and read-only adapter checks have been completed.
+
 Petrio is deployed separately and connects as a client over a private Docker network. Do not run a second copy of Alfie Core inside the Petrio Compose project.
 
 
