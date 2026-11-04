@@ -185,7 +185,7 @@ export function createAlfieInterfaceServer({
           if (!session) return;
           requireCsrf(req, session);
           const body = await readJson(req);
-          const result = await authStore.changePassword(body.currentPassword, body.newPassword);
+          const result = await authStore.changePassword(session.user.id, body.currentPassword, body.newPassword);
           clearSessionCookie(res, cookieSecure);
           return json(res, 200, result);
         }
