@@ -22,7 +22,7 @@ services:
         - CMD
         - node
         - -e
-        - "fetch('http://127.0.0.1:8780/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        - "fetch('http://127.0.0.1:8780/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
       interval: 30s
       timeout: 5s
       start_period: 10s
