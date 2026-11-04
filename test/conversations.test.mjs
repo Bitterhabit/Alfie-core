@@ -239,3 +239,17 @@ test("server and browser-local legacy histories have independent one-time import
     assert.equal((await store.database("user-1")).conversations[1].title, "Browser local history");
   });
 });
+
+test("normal conversation saves preserve completed legacy import markers", async () => {
+  await temporaryStore(async (store) => {
+    await store.importLegacy("user-1", { conversations: [] }, "petrio-server");
+    await store.importLegacy("user-1", { conversations: [] }, "petrio-local-storage");
+    const current = await store.database("user-1");
+    await store.replaceDatabase("user-1", { conversations: [{
+      id: "88888888-8888-4888-8888-888888888888", title: "New chat", messages: []
+    }] }, current.revision);
+    const saved = await store.database("user-1");
+    assert.equal(saved.legacyImportCompleted, true);
+    assert.equal(saved.localStorageImportCompleted, true);
+  });
+});
