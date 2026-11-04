@@ -87,3 +87,14 @@ test("identity registry accepts Petrio and standalone clients at the same time",
   assert.deepEqual(registry.verify(petrioHeaders, request), { userId: "petrio-user", providerId: "petrio" });
   assert.deepEqual(registry.verify(standaloneHeaders, request), { userId: "standalone-user", providerId: "standalone-ui" });
 });
+
+test("signed identity replay protection has a bounded cache and fails closed", () => {
+  const auth = createSignedIdentityAuth({
+    secret, providerId: "standalone-ui", maxReplayEntries: 1, now: () => 1_800_000_000_000
+  });
+  const options = { method: "GET", path: "/v1/whoami" };
+  auth.verify(auth.sign("user-1", options), options);
+  assert.throws(() => auth.verify(auth.sign("user-2", options), options), {
+    status: 503, code: "IDENTITY_REPLAY_CACHE_FULL"
+  });
+});
