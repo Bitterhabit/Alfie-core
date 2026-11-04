@@ -171,3 +171,43 @@ test("legacy import rejects malformed and duplicate conversation records", async
     assert.equal((await store.database("user-1")).conversations.length, 0);
   });
 });
+
+test("legacy history merges into existing Core conversations without overwriting them", async () => {
+  await temporaryStore(async (store) => {
+    const existing = await store.create("user-1", "Created in standalone Alfie");
+    const legacyId = "55555555-5555-4555-8555-555555555555";
+    const imported = await store.importLegacy("user-1", {
+      activeConversationId: legacyId,
+      conversations: [{
+        id: legacyId,
+        title: "Older Petrio history",
+        messages: [{ role: "user", content: "Keep this older conversation" }]
+      }]
+    });
+    assert.equal(imported.imported, true);
+    assert.equal(imported.count, 1);
+    assert.equal(imported.total, 2);
+    const database = await store.database("user-1");
+    assert.equal(database.legacyImportCompleted, true);
+    assert.equal(database.conversations.find((item) => item.id === existing.id).title, "Created in standalone Alfie");
+    assert.equal(database.conversations.find((item) => item.id === legacyId).title, "Older Petrio history");
+    assert.equal(database.activeConversationId, existing.id);
+    const repeated = await store.importLegacy("user-1", { conversations: [{ id: legacyId, title: "Changed legacy", messages: [] }] });
+    assert.equal(repeated.imported, false);
+    assert.equal((await store.database("user-1")).conversations.find((item) => item.id === legacyId).title, "Older Petrio history");
+  });
+});
+
+test("legacy import records completion even when all imported IDs already exist in Core", async () => {
+  await temporaryStore(async (store) => {
+    const existing = await store.create("user-1", "Existing");
+    const imported = await store.importLegacy("user-1", {
+      conversations: [{ id: existing.id, title: "Do not overwrite", messages: [] }]
+    });
+    assert.equal(imported.imported, true);
+    assert.equal(imported.count, 0);
+    assert.equal(imported.skipped, 1);
+    assert.equal((await store.database("user-1")).legacyImportCompleted, true);
+    assert.equal((await store.get("user-1", existing.id)).title, "Existing");
+  });
+});
