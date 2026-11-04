@@ -11,10 +11,10 @@ Current package: @alfie/core 0.3.0
 - No published host port; the service is intended to be reached by trusted backends on a private Docker network.
 - Non-root container, read-only root filesystem, dropped capabilities, restricted temporary filesystem and a health check.
 - Provider-neutral signed identity contract with simultaneous Petrio and standalone-interface identity providers using different secrets.
-- One-time cross-client account linking: Petrio issues short-lived single-use codes; the standalone interface consumes them to map its local account to the same canonical Core user ID. Unlinked interface identities cannot access user data.
+- Cross-client account linking: Petrio issues short-lived single-use codes; the standalone interface can consume them to map its local account to the same canonical Core user ID. Alternatively, the interface can provision an independent canonical Core identity without Petrio. Both paths are isolated by canonical user ID.
 - Legacy Petrio identity headers remain compatible.
 - Reusable server-side Node.js client SDK for the standalone interface and other trusted clients.
-- Standalone interface with first-run single-admin bootstrap, password login, secure sessions, CSRF protection, password rotation with global session revocation and one-time Petrio account linking.
+- Standalone interface with first-run single-admin bootstrap, password login, secure sessions, CSRF protection, password rotation with global session revocation, independent Core workspace provisioning, and an optional one-time Petrio account-link choice.
 - Responsive chat workspace with recent conversation history, automatic conversation titles, mobile history controls, safe Markdown rendering and confirmed conversation deletion.
 - Chat composer supports Auto, Light, Standard and Work routing modes; the selected mode is sent to the Core agent loop.
 - Pending tool actions are surfaced inside the chat response with a direct handoff to the detailed Tools & access approval view.
@@ -30,7 +30,7 @@ Current package: @alfie/core 0.3.0
 - Version-bound memory write approvals, duplicate detection and audit history.
 - Python specialist-service boundary documented; Python workers are not part of the authoritative Core.
 - Backup and restore procedures documented for both Core data and standalone interface account volumes.
-- GitHub Actions validates the standalone Compose project, runs the full Node.js test suite and builds the Core image. Latest verified run: 122 tests passed, 0 failed; standalone Compose validation, both image builds, live Core/interface health checks and backup/restore verification of both persistent volumes succeeded. The suite now includes an end-to-end test that bootstraps the standalone interface, links it to Petrio identity, and reads/writes the shared conversation and Garden data. Run: https://github.com/Bitterhabit/Alfie-core/actions/runs/41843763682.
+- GitHub Actions validates the standalone Compose project, runs the full Node.js test suite and builds the Core image. Latest verified run: 124 tests passed, 0 failed; standalone Compose validation, both image builds, live Core/interface health checks and backup/restore verification of both persistent volumes succeeded. The suite now includes an end-to-end test that bootstraps the standalone interface, links it to Petrio identity, and reads/writes the shared conversation and Garden data. Run: https://github.com/Bitterhabit/Alfie-core/actions/runs/41843763682.
 
 ## Remaining release gates
 
