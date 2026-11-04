@@ -29,7 +29,9 @@ test("supports search, editing and deletion without changing memory provenance",
     assert.equal(updated.origin, "user-seeded");
     assert.equal(updated.importance, 5);
     assert.equal((await store.list("user-1", { query: "pixel-art" })).length, 1);
-    assert.deepEqual(await store.remove("user-1", memory.id), { deleted: true });
+    const removed = await store.remove("user-1", memory.id);
+    assert.equal(removed.deleted, true);
+    assert.equal(removed.memory.id, memory.id);
     assert.equal((await store.list("user-1")).length, 0);
   });
 });
