@@ -156,3 +156,18 @@ test("legacy import refuses oversized snapshots instead of silently truncating h
     assert.equal((await store.database("user-1")).conversations.length, 0);
   });
 });
+
+test("legacy import rejects malformed and duplicate conversation records", async () => {
+  await temporaryStore(async (store) => {
+    await assert.rejects(store.importLegacy("user-1", {}), {
+      status: 400, code: "CONVERSATION_IMPORT_INVALID"
+    });
+    await assert.rejects(store.importLegacy("user-1", {
+      conversations: [
+        { id: "duplicate-legacy-id", messages: [] },
+        { id: "duplicate-legacy-id", messages: [] }
+      ]
+    }), { status: 400, code: "CONVERSATION_IMPORT_DUPLICATE_ID" });
+    assert.equal((await store.database("user-1")).conversations.length, 0);
+  });
+});
