@@ -59,3 +59,26 @@ test("idle sessions expire and cannot be refreshed after expiry", async () => {
     assert.equal(await store.authenticate(login.token), null);
   }, { now: () => now });
 });
+
+test("password changes require the current password and revoke every session", async () => {
+  await withStore(async (store) => {
+    await store.bootstrap("alfie-admin", password);
+    const first = await store.login("alfie-admin", password);
+    const second = await store.login("alfie-admin", password);
+    await assert.rejects(store.changePassword("incorrect-current-password", "a-new-strong-password-for-alfie"), { status: 401 });
+    assert.ok(await store.authenticate(first.token));
+    await store.changePassword(password, "a-new-strong-password-for-alfie");
+    assert.equal(await store.authenticate(first.token), null);
+    assert.equal(await store.authenticate(second.token), null);
+    await assert.rejects(store.login("alfie-admin", password), { status: 401 });
+    const renewed = await store.login("alfie-admin", "a-new-strong-password-for-alfie");
+    assert.ok(renewed.token);
+  });
+});
+
+test("password change rejects reusing the current password", async () => {
+  await withStore(async (store) => {
+    await store.bootstrap("alfie-admin", password);
+    await assert.rejects(store.changePassword(password, password), { status: 400 });
+  });
+});
