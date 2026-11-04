@@ -7,7 +7,8 @@ const state = {
   messages: [],
   view: "chat",
   sending: false,
-  conversationLoadToken: 0
+  conversationLoadToken: 0,
+  conversationLoading: false
 };
 
 async function api(route, options = {}) {
@@ -151,6 +152,7 @@ async function logout() {
   state.linked = false;
   state.activeConversationId = null;
   state.conversationLoadToken += 1;
+  state.conversationLoading = false;
   state.messages = [];
   showLogin();
 }
@@ -224,26 +226,36 @@ async function loadConversations() {
 async function loadConversation(id) {
   if (state.sending) { toast("Wait for Alfie's current reply before switching conversations."); return; }
   const token = ++state.conversationLoadToken;
-  const payload = await api("/api/core/conversations/" + encodeURIComponent(id));
-  if (token !== state.conversationLoadToken) return;
-  state.activeConversationId = id;
-  state.messages = payload.conversation?.messages || [];
-  renderMessages();
-  const list = await api("/api/core/conversations");
-  if (token === state.conversationLoadToken) renderConversations(list.conversations || []);
+  state.conversationLoading = true;
+  try {
+    const payload = await api("/api/core/conversations/" + encodeURIComponent(id));
+    if (token !== state.conversationLoadToken) return;
+    state.activeConversationId = id;
+    state.messages = payload.conversation?.messages || [];
+    renderMessages();
+    const list = await api("/api/core/conversations");
+    if (token === state.conversationLoadToken) renderConversations(list.conversations || []);
+  } finally {
+    if (token === state.conversationLoadToken) state.conversationLoading = false;
+  }
 }
 
 async function newConversation({ fromSend = false } = {}) {
   if (state.sending && !fromSend) { toast("Wait for Alfie's current reply before starting another conversation."); return; }
   const token = ++state.conversationLoadToken;
+  state.conversationLoading = true;
   $("#mobile-history-sheet").hidden = true;
-  const payload = await api("/api/core/conversations", { method: "POST", body: JSON.stringify({ title: "New conversation" }) });
-  if (token !== state.conversationLoadToken) return;
-  state.activeConversationId = payload.conversation.id;
-  state.messages = [];
-  renderMessages();
-  await loadConversations();
-  setView("chat");
+  try {
+    const payload = await api("/api/core/conversations", { method: "POST", body: JSON.stringify({ title: "New conversation" }) });
+    if (token !== state.conversationLoadToken) return;
+    state.activeConversationId = payload.conversation.id;
+    state.messages = [];
+    renderMessages();
+    await loadConversations();
+    setView("chat");
+  } finally {
+    if (token === state.conversationLoadToken) state.conversationLoading = false;
+  }
 }
 
 $("#new-chat").addEventListener("click", () => newConversation().catch((error) => toast(error.message)));
@@ -327,13 +339,14 @@ async function persistMessage(role, content, conversationId = state.activeConver
     method: "POST",
     body: JSON.stringify({ role, content })
   });
-  state.messages.push(payload.message || { role, content });
+  if (conversationId === state.activeConversationId) state.messages.push(payload.message || { role, content });
   return payload.message;
 }
 
 async function sendMessage(rawText) {
   const content = String(rawText || "").trim();
   if (!content || state.sending || !state.linked) return;
+  if (state.conversationLoading) { toast("Wait for the selected conversation to finish loading."); return; }
   state.sending = true;
   const form = $("#chat-form");
   const input = form.elements.message;
