@@ -205,6 +205,16 @@ export function createAlfieCoreServer({
       }
     }
 
+    if (req.method === "POST" && url.pathname === "/v1/identity/standalone") {
+      try {
+        const identity = identityAuth.verify(req.headers, { method: req.method, path: url.pathname + url.search });
+        if (identity.providerId !== "standalone-ui") return json(res, 403, { error: "Only the standalone interface can create an independent workspace." });
+        return json(res, 201, await identityLinkStore.createStandaloneWorkspace(identity.providerId, identity.userId));
+      } catch (error) {
+        return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) });
+      }
+    }
+
     if (req.method === "POST" && url.pathname === "/v1/identity/link") {
       try {
         const identity = identityAuth.verify(req.headers, { method: req.method, path: url.pathname + url.search });
