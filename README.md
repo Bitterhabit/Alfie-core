@@ -223,7 +223,16 @@ docker run --rm -v alfie-interface-data:/data:ro -v "$PWD/backups:/backup" alpin
 docker compose start alfie-interface
 ```
 
-Restore that archive to the `alfie-interface-data` volume using the same stop, clear, extract and `chown -R 1000:1000 /data` sequence shown above. The interface archive contains password hashes and session/CSRF records; keep it encrypted and private. If you do not need to preserve active sessions, revoke them after restoring or simply allow their 12-hour absolute expiry to elapse.
+Restore it with the interface volume explicitly selected:
+
+```sh
+docker compose stop alfie-interface
+docker run --rm -v alfie-interface-data:/data alpine:3.20 sh -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+docker run --rm -v alfie-interface-data:/data -v "$PWD/backups:/backup" alpine:3.20 sh -c 'tar -xzf /backup/alfie-interface-BACKUP.tar.gz -C /data && chown -R 1000:1000 /data'
+docker compose start alfie-interface
+```
+
+Replace the archive name with the backup you intend to restore. The interface archive contains password hashes and session/CSRF records; keep it encrypted and private. If you do not need to preserve active sessions, revoke them after restoring or simply allow their 12-hour absolute expiry to elapse.
 
 ## Specialist Python services (planned)
 
