@@ -76,6 +76,11 @@ input:focus,textarea:focus{border-color:rgba(169,149,255,.7);box-shadow:0 0 0 3p
 .topbar{height:78px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line)}
 .topbar .eyebrow{margin-bottom:3px;font-size:8px}
 .topbar h1{margin:0;font-size:18px;letter-spacing:-.025em}
+.topbar-actions{display:flex;align-items:center;gap:12px}
+.mobile-action{display:none;border:1px solid var(--line);border-radius:8px;background:var(--panel-hover);color:var(--text);padding:7px 10px;font-size:10px;font-weight:750;cursor:pointer}
+.mobile-history-sheet{position:absolute;z-index:8;top:72px;left:14px;right:14px;max-height:min(60vh,520px);overflow:auto;padding:13px;border:1px solid var(--line);border-radius:14px;background:rgba(23,20,38,.98);box-shadow:0 20px 60px rgba(0,0,0,.4);backdrop-filter:blur(18px)}
+.mobile-history-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;color:var(--text);font-size:11px}
+.mobile-history-sheet .conversation-list{max-height:calc(60vh - 65px)}
 .connection-state{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:10px}
 #connection-dot{width:7px;height:7px;border-radius:50%;background:var(--orange);box-shadow:0 0 12px rgba(230,166,109,.35)}
 #connection-dot.online{background:#7cc6a1;box-shadow:0 0 12px rgba(124,198,161,.45)}
@@ -135,6 +140,12 @@ input:focus,textarea:focus{border-color:rgba(169,149,255,.7);box-shadow:0 0 0 3p
   .suggestion-grid{grid-template-columns:1fr}
 }
 @media(max-width:620px){
+  .topbar-actions{gap:6px}
+  .mobile-action{display:inline-flex;align-items:center;justify-content:center;min-width:34px;min-height:34px}
+  .connection-state{gap:5px;font-size:0}
+  #connection-dot{width:7px;height:7px}
+  .mobile-history-sheet{top:58px;left:8px;right:8px}
+  .sidebar-footer{display:none}
   body{overflow:auto}
   .app-shell{display:flex;flex-direction:column;height:100dvh}
   .sidebar{order:2;flex:none;height:68px;flex-direction:row;align-items:center;gap:8px;padding:7px 10px;border-top:1px solid var(--line);border-right:0}
