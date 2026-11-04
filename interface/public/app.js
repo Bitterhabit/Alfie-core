@@ -404,7 +404,7 @@ function renderMessages() {
   if (!state.messages.length) {
     const welcome = document.createElement("div");
     welcome.className = "welcome-message";
-    welcome.innerHTML = '<div class="welcome-mark">A</div><h2>What shall we work on?</h2><p>I’m here when you need me. No rush.</p><div class="suggestion-grid"><button type="button" data-prompt="Give me a concise overview of my current priorities.">A quick overview <span>↗</span></button><button type="button" data-prompt="Help me think through an idea I’m developing.">Think through an idea <span>↗</span></button><button type="button" data-prompt="Summarise the recent activity and pending actions available to you.">Review recent activity <span>↗</span></button></div>';
+    welcome.innerHTML = '<div class="welcome-mark alfie-welcome-mark"><span>A</span><i></i></div><p class="eyebrow welcome-eyebrow">A LITTLE SPACE OF YOUR OWN</p><h2>What shall we work on?</h2><p>I’m here when you need me. No rush, no noise.</p><div class="suggestion-grid"><button type="button" data-prompt="Give me a concise overview of my current priorities.">A quick overview <span>↗</span></button><button type="button" data-prompt="Help me think through an idea I’m developing.">Think through an idea <span>↗</span></button><button type="button" data-prompt="Summarise the recent activity and pending actions available to you.">Review recent activity <span>↗</span></button></div>';
     host.appendChild(welcome);
     welcome.querySelectorAll("[data-prompt]").forEach((button) => button.addEventListener("click", () => sendMessage(button.dataset.prompt)));
     return;
