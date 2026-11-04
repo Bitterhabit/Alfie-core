@@ -6,7 +6,8 @@ const state = {
   activeConversationId: null,
   messages: [],
   view: "chat",
-  sending: false
+  sending: false,
+  conversationLoadToken: 0
 };
 
 async function api(route, options = {}) {
@@ -149,6 +150,7 @@ async function logout() {
   state.csrfToken = "";
   state.linked = false;
   state.activeConversationId = null;
+  state.conversationLoadToken += 1;
   state.messages = [];
   showLogin();
 }
@@ -220,17 +222,23 @@ async function loadConversations() {
 }
 
 async function loadConversation(id) {
+  if (state.sending) { toast("Wait for Alfie's current reply before switching conversations."); return; }
+  const token = ++state.conversationLoadToken;
   const payload = await api("/api/core/conversations/" + encodeURIComponent(id));
+  if (token !== state.conversationLoadToken) return;
   state.activeConversationId = id;
   state.messages = payload.conversation?.messages || [];
   renderMessages();
   const list = await api("/api/core/conversations");
-  renderConversations(list.conversations || []);
+  if (token === state.conversationLoadToken) renderConversations(list.conversations || []);
 }
 
-async function newConversation() {
+async function newConversation({ fromSend = false } = {}) {
+  if (state.sending && !fromSend) { toast("Wait for Alfie's current reply before starting another conversation."); return; }
+  const token = ++state.conversationLoadToken;
   $("#mobile-history-sheet").hidden = true;
   const payload = await api("/api/core/conversations", { method: "POST", body: JSON.stringify({ title: "New conversation" }) });
+  if (token !== state.conversationLoadToken) return;
   state.activeConversationId = payload.conversation.id;
   state.messages = [];
   renderMessages();
@@ -314,8 +322,8 @@ function renderMessages() {
   host.scrollTop = host.scrollHeight;
 }
 
-async function persistMessage(role, content) {
-  const payload = await api("/api/core/conversations/" + encodeURIComponent(state.activeConversationId) + "/messages", {
+async function persistMessage(role, content, conversationId = state.activeConversationId) {
+  const payload = await api("/api/core/conversations/" + encodeURIComponent(conversationId) + "/messages", {
     method: "POST",
     body: JSON.stringify({ role, content })
   });
@@ -332,8 +340,9 @@ async function sendMessage(rawText) {
   input.disabled = true;
   let assistantBody = null;
   try {
-    if (!state.activeConversationId) await newConversation();
-    await persistMessage("user", content);
+    if (!state.activeConversationId) await newConversation({ fromSend: true });
+    const conversationId = state.activeConversationId;
+    await persistMessage("user", content, conversationId);
     renderMessages();
     assistantBody = appendMessageElement({ role: "assistant", content: "Thinking…" });
     const response = await fetch("/api/core/chat/stream", {
@@ -378,7 +387,7 @@ async function sendMessage(rawText) {
       assistantText = assistantText || "This action is ready for your approval. Open Tools & access to review it.";
     }
     renderMarkdown(assistantBody, assistantText || "I couldn't produce a response.");
-    await persistMessage("assistant", assistantBody.textContent);
+    await persistMessage("assistant", assistantBody.textContent, conversationId);
     await loadConversations();
     if (finalEvent?.status === "awaiting_user_approval") {
       toast("Alfie is waiting for your approval.");
