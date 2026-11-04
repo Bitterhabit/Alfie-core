@@ -24,11 +24,11 @@ Current package: @alfie/core 0.3.0
 - Login hardening: asynchronous scrypt password verification, constant-work unknown-user handling, bounded attempt tracking and explicit trusted-proxy configuration.
 - Core-owned conversation, memory, permission, pending-action and audit persistence.
 - One-time import paths for existing Petrio conversation and memory data.
-- Revision-aware conversation snapshot writes and stale-snapshot merge/retry in the current Petrio chat client.
+- Revision-aware conversation snapshot writes and stale-snapshot merge/retry in the current Petrio chat client. Legacy conversation import now merges into existing Core history without overwriting it, records completion per user, and rejects oversized or malformed snapshots instead of truncating them.
 - Version-bound memory write approvals, duplicate detection and audit history.
 - Python specialist-service boundary documented; Python workers are not part of the authoritative Core.
 - Backup and restore procedures documented for both Core data and standalone interface account volumes.
-- GitHub Actions validates the standalone Compose project, runs the full Node.js test suite and builds the Core image. Latest verified run: 113 tests passed, 0 failed; standalone Compose validation, both image builds, live Core/interface health checks and backup/restore verification of both persistent volumes succeeded. The suite now includes an end-to-end test that bootstraps the standalone interface, links it to Petrio identity, and reads/writes the shared conversation and Garden data. Run: https://github.com/Bitterhabit/Alfie-core/actions/runs/41838222132.
+- GitHub Actions validates the standalone Compose project, runs the full Node.js test suite and builds the Core image. Latest verified run: 116 tests passed, 0 failed; standalone Compose validation, both image builds, live Core/interface health checks and backup/restore verification of both persistent volumes succeeded. The suite now includes an end-to-end test that bootstraps the standalone interface, links it to Petrio identity, and reads/writes the shared conversation and Garden data. Run: https://github.com/Bitterhabit/Alfie-core/actions/runs/41838222132.
 
 ## Remaining release gates
 
