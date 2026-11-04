@@ -66,6 +66,7 @@ export function createAlfieCoreClient({
     whoami(userId) { return request(userId, "/v1/whoami"); },
     createIdentityLinkCode(userId) { return request(userId, "/v1/identity/link-codes", { method: "POST", body: {} }); },
     linkIdentity(userId, code) { return request(userId, "/v1/identity/link", { method: "POST", body: { code } }); },
+    createStandaloneWorkspace(userId) { return request(userId, "/v1/identity/standalone", { method: "POST", body: {} }); },
     unlinkIdentity(userId) { return request(userId, "/v1/identity/unlink", { method: "POST", body: {} }); },
     chat(userId, body, options = {}) { return request(userId, "/v1/chat", { method: "POST", body, ...options }); },
     runAgent(userId, body, options = {}) { return request(userId, "/v1/agent/run", { method: "POST", body, ...options }); },
