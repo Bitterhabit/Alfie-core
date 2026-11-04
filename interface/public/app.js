@@ -229,6 +229,7 @@ async function loadConversation(id) {
 }
 
 async function newConversation() {
+  $("#mobile-history-sheet").hidden = true;
   const payload = await api("/api/core/conversations", { method: "POST", body: JSON.stringify({ title: "New conversation" }) });
   state.activeConversationId = payload.conversation.id;
   state.messages = [];
