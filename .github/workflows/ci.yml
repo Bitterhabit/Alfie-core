@@ -23,6 +23,8 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Run tests
         run: npm test
+      - name: Check standalone browser script syntax
+        run: node --check interface/public/app.js
       - name: Validate Compose
         run: |
           cp .env.example .env
