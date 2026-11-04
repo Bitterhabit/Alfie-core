@@ -142,14 +142,24 @@ $("#login-form").addEventListener("submit", async (event) => {
   }
 });
 
-$("#logout-button").addEventListener("click", async () => {
+async function logout() {
   try { await api("/api/auth/logout", { method: "POST", body: "{}" }); }
   catch (error) { toast(error.message); }
   state.user = null;
   state.csrfToken = "";
   state.linked = false;
+  state.activeConversationId = null;
+  state.messages = [];
   showLogin();
+}
+
+$("#logout-button").addEventListener("click", logout);
+$("#mobile-logout").addEventListener("click", logout);
+$("#mobile-new-chat").addEventListener("click", () => newConversation().catch((error) => toast(error.message)));
+$("#mobile-history-button").addEventListener("click", () => {
+  $("#mobile-history-sheet").hidden = !$("#mobile-history-sheet").hidden;
 });
+$("#mobile-history-close").addEventListener("click", () => { $("#mobile-history-sheet").hidden = true; });
 
 $("#link-form").addEventListener("submit", async (event) => {
   event.preventDefault();
