@@ -35,15 +35,15 @@ function cookies(header = "") {
   return result;
 }
 
-function setSessionCookie(res, token) {
+function setSessionCookie(res, token, cookieSecure = COOKIE_SECURE) {
   const flags = [`${COOKIE_NAME}=${encodeURIComponent(token)}`, "Path=/", "HttpOnly", "SameSite=Strict", "Max-Age=43200"];
-  if (COOKIE_SECURE) flags.push("Secure");
+  if (cookieSecure) flags.push("Secure");
   res.setHeader("set-cookie", flags.join("; "));
 }
 
-function clearSessionCookie(res) {
+function clearSessionCookie(res, cookieSecure = COOKIE_SECURE) {
   const flags = [`${COOKIE_NAME}=`, "Path=/", "HttpOnly", "SameSite=Strict", "Max-Age=0"];
-  if (COOKIE_SECURE) flags.push("Secure");
+  if (cookieSecure) flags.push("Secure");
   res.setHeader("set-cookie", flags.join("; "));
 }
 
@@ -65,15 +65,15 @@ async function readJson(req) {
   }
 }
 
-function originAllowed(req) {
+function originAllowed(req, publicOrigin = process.env.ALFIE_UI_PUBLIC_ORIGIN, cookieSecure = COOKIE_SECURE) {
   const origin = req.headers.origin;
   if (typeof origin !== "string") return false;
-  const configured = process.env.ALFIE_UI_PUBLIC_ORIGIN;
+  const configured = publicOrigin;
   if (configured) return origin === configured;
   try {
     const parsed = new URL(origin);
     return parsed.host === req.headers.host &&
-      (parsed.protocol === "https:" || (!COOKIE_SECURE && parsed.protocol === "http:"));
+      (parsed.protocol === "https:" || (!cookieSecure && parsed.protocol === "http:"));
   } catch { return false; }
 }
 
@@ -95,6 +95,8 @@ function securityHeaders(res) {
 
 export function createAlfieInterfaceServer({
   authStore = new InterfaceAuthStore(),
+  publicOrigin = process.env.ALFIE_UI_PUBLIC_ORIGIN,
+  cookieSecure = COOKIE_SECURE,
   coreClient = createAlfieCoreClient({
     baseUrl: process.env.ALFIE_CORE_URL || "http://alfie-core:8780",
     serviceToken: process.env.ALFIE_CORE_SERVICE_TOKEN || "",
@@ -123,7 +125,7 @@ export function createAlfieInterfaceServer({
   }
 
   function requireCsrf(req, session) {
-    if (!originAllowed(req)) throw Object.assign(new Error("Request origin was not accepted."), { status: 403 });
+    if (!originAllowed(req, publicOrigin, cookieSecure)) throw Object.assign(new Error("Request origin was not accepted."), { status: 403 });
     const token = req.headers["x-csrf-token"];
     if (typeof token !== "string" || token !== session.csrfToken) {
       throw Object.assign(new Error("The session security token is missing or expired. Refresh the page and try again."), { status: 403, code: "CSRF_INVALID" });
@@ -149,7 +151,7 @@ export function createAlfieInterfaceServer({
         }
 
         if (method === "POST" && url.pathname === "/api/auth/login") {
-          if (!originAllowed(req)) return json(res, 403, { error: "Request origin was not accepted." });
+          if (!originAllowed(req, publicOrigin, cookieSecure)) return json(res, 403, { error: "Request origin was not accepted." });
           const ip = String(req.headers["cf-connecting-ip"] || req.socket.remoteAddress || "unknown").slice(0, 100);
           const current = loginAttempts.get(ip);
           if (current && current.resetAt > now() && current.count >= 5) {
@@ -159,7 +161,7 @@ export function createAlfieInterfaceServer({
           try {
             const result = await authStore.login(body.username, body.password, { ip });
             loginAttempts.delete(ip);
-            setSessionCookie(res, result.token);
+            setSessionCookie(res, result.token, cookieSecure);
             return json(res, 200, { authenticated: true, user: result.user, csrfToken: result.csrfToken });
           } catch (error) {
             const attempt = current && current.resetAt > now()
@@ -177,7 +179,7 @@ export function createAlfieInterfaceServer({
           requireCsrf(req, session);
           const token = cookies(req.headers.cookie)[COOKIE_NAME];
           await authStore.logout(token);
-          clearSessionCookie(res);
+          clearSessionCookie(res, cookieSecure);
           return json(res, 200, { authenticated: false });
         }
 
