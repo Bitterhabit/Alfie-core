@@ -197,3 +197,10 @@ input:focus,textarea:focus{border-color:rgba(169,149,255,.7);box-shadow:0 0 0 3p
   .link-form{grid-template-columns:1fr}
   .toast{right:12px;bottom:78px}
 }
+
+
+.link-divider{display:flex;align-items:center;gap:12px;margin:22px 0 16px;color:#817991;font:800 8px ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.16em}
+.link-divider:before,.link-divider:after{content:"";height:1px;flex:1;background:var(--line)}
+.standalone-choice h3{margin:0 0 6px;font-size:13px;color:var(--text)}
+.standalone-choice .muted{margin-bottom:12px;font-size:11px}
+.standalone-choice .secondary-button{width:100%;min-height:40px;border-color:rgba(169,149,255,.42);color:var(--lavender)}
