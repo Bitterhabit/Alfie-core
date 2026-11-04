@@ -53,3 +53,32 @@ test("interface login requires CSRF and links the authenticated local account", 
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+
+test("login throttling is bounded to the socket peer unless proxy headers are trusted", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-ui-throttle-"));
+  const authStore = new InterfaceAuthStore({ dataDirectory: directory });
+  await authStore.bootstrap("alfie-admin", "test-password-for-ci-only-123456");
+  const server = createAlfieInterfaceServer({ authStore, cookieSecure: false, trustProxyHeaders: false });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = "http://127.0.0.1:" + server.address().port;
+  try {
+    for (let i = 0; i < 5; i += 1) {
+      const response = await fetch(base + "/api/auth/login", {
+        method: "POST",
+        headers: { origin: base, "content-type": "application/json", "cf-connecting-ip": "198.51.100." + (i + 1) },
+        body: JSON.stringify({ username: "alfie-admin", password: "incorrect-password-123456" })
+      });
+      assert.equal(response.status, 401);
+    }
+    const limited = await fetch(base + "/api/auth/login", {
+      method: "POST",
+      headers: { origin: base, "content-type": "application/json", "cf-connecting-ip": "203.0.113.99" },
+      body: JSON.stringify({ username: "alfie-admin", password: "incorrect-password-123456" })
+    });
+    assert.equal(limited.status, 429);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
