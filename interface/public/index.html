@@ -14,10 +14,10 @@
 
   <main id="login-screen" class="login-screen">
     <section class="login-card">
-      <div class="brand-mark" aria-hidden="true"><span>A</span></div>
-      <p class="eyebrow">YOUR PERSONAL AI</p>
+      <div class="brand-mark alfie-mark" aria-hidden="true"><span>A</span><i></i></div>
+      <p class="eyebrow">YOUR OWN PERSONAL CORE</p>
       <h1>Welcome back.</h1>
-      <p class="muted">A quiet space for thinking, creating and getting things done.</p>
+      <p class="muted">A quiet space to think, make things and get things done. Alfie is ready when you are.</p>
       <form id="login-form" class="stack">
         <label>Username<input name="username" autocomplete="username" required minlength="3" maxlength="32"></label>
         <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
@@ -31,8 +31,8 @@
   <div id="app-shell" class="app-shell" hidden>
     <aside class="sidebar">
       <a class="brand" href="/" aria-label="Alfie home">
-        <span class="brand-mark small"><span>A</span></span>
-        <span><strong>alfie</strong><small>PERSONAL CORE</small></span>
+        <span class="brand-mark small alfie-mark" aria-hidden="true"><span>A</span><i></i></span>
+        <span><strong>alfie</strong><small>YOUR PERSONAL CORE</small></span>
       </a>
       <button id="new-chat" class="new-chat-button" type="button"><span>＋</span> New conversation</button>
       <nav class="main-nav" aria-label="Main navigation">
@@ -89,9 +89,10 @@
       <section id="view-chat" class="view view-chat">
         <div id="messages" class="messages">
           <div class="welcome-message">
-            <div class="welcome-mark">A</div>
+            <div class="welcome-mark alfie-welcome-mark"><span>A</span><i></i></div>
+            <p class="eyebrow welcome-eyebrow">A LITTLE SPACE OF YOUR OWN</p>
             <h2>What shall we work on?</h2>
-            <p>I'm here when you need me. No rush.</p>
+            <p>I’m here when you need me. No rush, no noise.</p>
             <div class="suggestion-grid">
               <button type="button" data-prompt="Give me a concise overview of my current priorities.">A quick overview <span>↗</span></button>
               <button type="button" data-prompt="Help me think through an idea I'm developing.">Think through an idea <span>↗</span></button>
