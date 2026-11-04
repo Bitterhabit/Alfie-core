@@ -124,6 +124,29 @@ export class IdentityLinkStore {
     });
   }
 
+  async createStandaloneWorkspace(providerId, subjectId) {
+    if (providerId !== "standalone-ui") {
+      throw Object.assign(new Error("Only the standalone interface can create an independent workspace."), {
+        status: 403, code: "IDENTITY_PROVIDER_NOT_ALLOWED"
+      });
+    }
+    assertUserId(subjectId);
+    return this.exclusive(async () => {
+      const store = await this.load();
+      const existing = store.links.find((item) => item.providerId === providerId && item.subjectId === subjectId);
+      if (existing) {
+        return { created: false, linked: true, mode: existing.mode || "linked", userId: existing.canonicalUserId };
+      }
+      const userId = randomUUID();
+      store.links.push({
+        id: randomUUID(), providerId, subjectId, canonicalUserId: userId,
+        mode: "standalone", linkedAt: new Date(this.now()).toISOString()
+      });
+      await this.save(store);
+      return { created: true, linked: true, mode: "standalone", userId };
+    });
+  }
+
   async resolve(providerId, subjectId) {
     assertUserId(subjectId);
     return this.exclusive(async () => {
