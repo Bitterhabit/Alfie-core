@@ -135,6 +135,10 @@ export function createAlfieInterfaceServer({
     const url = new URL(req.url || "/", "http://alfie-interface.local");
     const method = req.method || "GET";
 
+    if (method === "GET" && url.pathname === "/health") {
+      return json(res, 200, { status: "ok", service: "alfie-interface" });
+    }
+
     if (url.pathname.startsWith("/api/")) {
       try {
         if (method === "GET" && url.pathname === "/api/auth/me") {
