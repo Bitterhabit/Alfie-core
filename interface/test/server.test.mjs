@@ -176,3 +176,36 @@ test("password change requires CSRF, revokes the session and accepts the new pas
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+
+test("standalone workspace setup requires CSRF and provisions an independent Core identity", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-ui-standalone-"));
+  const authStore = new InterfaceAuthStore({ dataDirectory: directory });
+  await authStore.bootstrap("alfie-admin", "test-password-for-ci-only-123456");
+  const calls = [];
+  const coreClient = { createStandaloneWorkspace: async (userId) => { calls.push(userId); return { created: true, linked: true, mode: "standalone", userId: "core-" + userId }; } };
+  const server = createAlfieInterfaceServer({ authStore, coreClient, cookieSecure: false });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = "http://127.0.0.1:" + server.address().port;
+  try {
+    const login = await fetch(base + "/api/auth/login", {
+      method: "POST", headers: { origin: base, "content-type": "application/json" },
+      body: JSON.stringify({ username: "alfie-admin", password: "test-password-for-ci-only-123456" })
+    });
+    const cookie = login.headers.get("set-cookie").split(";")[0];
+    const session = await login.json();
+    const blocked = await fetch(base + "/api/auth/standalone", {
+      method: "POST", headers: { origin: base, cookie, "content-type": "application/json" }, body: "{}"
+    });
+    assert.equal(blocked.status, 403);
+    const created = await fetch(base + "/api/auth/standalone", {
+      method: "POST", headers: { origin: base, cookie, "content-type": "application/json", "x-csrf-token": session.csrfToken }, body: "{}"
+    });
+    assert.equal(created.status, 201);
+    assert.equal((await created.json()).mode, "standalone");
+    assert.deepEqual(calls, [session.user.id]);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
