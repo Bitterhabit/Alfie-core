@@ -345,3 +345,11 @@ label{color:#514b60}
   .mobile-history-sheet{background:#211b35}
   .mobile-history-search{display:block}
 }
+
+/* Compact history actions: quiet until the row is active or hovered */
+.conversation-actions{display:flex;align-items:center;gap:2px;flex-shrink:0;opacity:0;transition:opacity .14s}
+.conversation-row:hover .conversation-actions,.conversation-row:focus-within .conversation-actions,.conversation-item.active+.conversation-actions{opacity:1}
+.conversation-rename,.conversation-delete{display:grid;place-items:center;width:23px;height:25px;padding:0;border:0;border-radius:3px;background:transparent;color:#b9aecf;font-size:12px;cursor:pointer}
+.conversation-rename:hover{background:rgba(177,157,240,.15);color:#eee8ff}
+.conversation-delete:hover{background:rgba(214,110,130,.14);color:#ffc2ce}
+@media(max-width:620px){.conversation-actions{opacity:1}.conversation-rename,.conversation-delete{width:28px;height:30px}}
