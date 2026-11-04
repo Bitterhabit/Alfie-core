@@ -249,7 +249,7 @@ export function createAlfieCoreServer({
         version: SERVICE_VERSION,
         identityProviders: identityAuth.providerIds || [identityAuth.providerId].filter(Boolean),
         implemented: ["multi-client-signed-identity", "cross-client-account-linking", "service-authentication", "health", "readiness", "provider-registry", "provider-health", "model-selection", "bounded-agent-loop", "intent-based-context-assembly", "strict-json-schema-tool-validation", "read-draft-write-risk-tiers", "persistent-pending-actions", "explicit-approve-reject", "untrusted-data-envelopes", "tool-call-deduplication", "four-step-turn-budget", "30-second-wall-clock-budget", "tool-output-truncation", "signed-identity-provider-contract", "conversation-persistence", "conversation-snapshot-migration", "memory-crud", "memory-provenance", "ranked-memory-retrieval", "untrusted-memory-context", "memory-search-tool", "memory-read-tool", "approval-gated-memory-create", "approval-gated-memory-update", "approval-gated-memory-forget", "per-user-action-audit-log", "scoped-tool-registry", "permission-grants", "dashboard-approval-ui", "dashboard-permission-management"],
-        planned: ["mail-tool-adapter", "calendar-journal-write-adapters", "standalone-user-session-authentication"]
+        planned: ["mail-tool-adapter", "calendar-journal-write-adapters", "standalone-account-recovery", "multi-user-administration"]
       });
     }
 
