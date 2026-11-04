@@ -135,7 +135,6 @@ The service listens on port 8780 by default.
 Alfie Core now has its own Compose project and environment template. It can be built and run without starting Petrio:
 
 ```sh
-cd alfie-core
 cp .env.example .env
 # Add a private ALFIE_CORE_SERVICE_TOKEN and at least one trusted identity secret.
 docker compose up -d --build
@@ -145,7 +144,7 @@ docker compose logs -f alfie-core
 
 The service listens on port 8780 inside the private Compose network. No host port is published. The persistent alfie_core_data volume is owned by this Compose project, and the container runs as a non-root user with a read-only root filesystem, dropped Linux capabilities and a restricted temporary filesystem.
 
-Configure these separate credentials in alfie-core/.env:
+Configure these separate credentials in the repository-root .env file:
 
 - ALFIE_CORE_SERVICE_TOKEN — required by every versioned API request.
 - ALFIE_CORE_PETRIO_IDENTITY_SECRET — enables the existing Petrio client adapter.
@@ -156,7 +155,7 @@ Petrio and the standalone interface can authenticate to the same Core simultaneo
 
 The standalone Compose project creates the alfie-core-internal network. When Petrio is connected as an adapter, its container must also be attached to this network (or another explicitly configured private network) before enabling the Petrio Core feature flag. The independent interface backend will use the internal service address alfie-core:8780 when attached to this network.
 
-The original Petrio-root Compose profile remains as a development/transition option. Do not run both Compose definitions as separate Core instances against the same data volume.
+Petrio is deployed separately and connects as a client over a private Docker network. Do not run a second copy of Alfie Core inside the Petrio Compose project.
 
 
 ## Backup and restore
@@ -211,7 +210,7 @@ Core decides whether a specialist operation is appropriate and whether its resul
 
 ## Petrio adapter
 
-Petrio now has a server-side adapter at `server/alfieCoreClient.js` and routes under `/api/alfie/core/*`. It signs the authenticated `req.petrioUser.id` for each request and keeps the service token and Petrio identity secret on the server. The adapter is feature-flagged with `ALFIE_CORE_ENABLED=false` by default; the existing `/api/alfie/*` implementation remains the active path until the Core service is deployed and explicitly enabled. Set `ALFIE_CORE_URL=http://alfie-core:8780` for the internal Compose service name.
+Petrio has a separate server-side adapter in the Petrio repository at `server/alfieCoreClient.js` and routes under `/api/alfie/core/*`. It signs the authenticated Petrio user ID for each request and keeps the service token and Petrio identity secret on the server. The adapter remains feature-flagged with `ALFIE_CORE_ENABLED=false` until the standalone service is deployed and network connectivity is verified. Set `ALFIE_CORE_URL=http://alfie-core:8780` when both backends share the private `alfie-core-internal` Docker network. The Petrio service must be attached to that network using an explicit Compose override; the default Petrio deployment does not require the Core network.
 
 
 ## Petrio dashboard integration
