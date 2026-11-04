@@ -227,8 +227,16 @@ export function createAlfieCoreServer({
 
     if (req.method === "GET" && url.pathname === "/v1/whoami") {
       try {
-        const identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search });
-        return json(res, 200, { authenticated: true, userId: identity.userId, identityProvider: identity.providerId || "configured" });
+        const identity = identityAuth.verify(req.headers, { method: req.method, path: url.pathname + url.search });
+        const canonicalUserId = identity.providerId === "petrio"
+          ? identity.userId
+          : await identityLinkStore.resolve(identity.providerId, identity.userId);
+        return json(res, 200, {
+          authenticated: true,
+          userId: canonicalUserId || identity.userId,
+          identityProvider: identity.providerId || "configured",
+          linked: identity.providerId === "petrio" || Boolean(canonicalUserId)
+        });
       } catch (error) {
         return json(res, error.status || 401, { error: error.message });
       }
