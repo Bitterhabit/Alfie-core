@@ -14,7 +14,7 @@ Current package: @alfie/core 0.3.0
 - One-time cross-client account linking: Petrio issues short-lived single-use codes; the standalone interface consumes them to map its local account to the same canonical Core user ID. Unlinked interface identities cannot access user data.
 - Legacy Petrio identity headers remain compatible.
 - Reusable server-side Node.js client SDK for the standalone interface and other trusted clients.
-- Standalone interface with first-run single-admin bootstrap, password login, secure sessions, CSRF protection and one-time Petrio account linking.
+- Standalone interface with first-run single-admin bootstrap, password login, secure sessions, CSRF protection, password rotation with global session revocation and one-time Petrio account linking.
 - Responsive chat workspace with recent conversation history, automatic conversation titles, mobile history controls, safe Markdown rendering and confirmed conversation deletion.
 - Standalone interface styling aligned to Petrio's purple pixel theme, with crisp square components, square status nodes and themed scrollbars.
 - Garden UI with provenance labels, searchable memories, create/edit/forget actions and importance controls.
@@ -33,12 +33,12 @@ Current package: @alfie/core 0.3.0
 ## Remaining release gates
 
 1. **Separate Git repository:** complete. The independent repository is Bitterhabit/Alfie-core. The extracted folder has been removed from the Petrio extraction branch; Petrio now retains only the client adapter and optional network overlay.
-2. **Canonical identity and account linking:** Core-side linking is implemented and tested. Petrio can issue a one-time link code, and the standalone identity can consume it. The standalone interface now has a first-run bootstrap account, password login, hashed opaque sessions, CSRF protection, idle/absolute expiry and a Core account-link flow. It is a single-admin foundation; account recovery, password change and multi-user administration remain future work.
+2. **Canonical identity and account linking:** Core-side linking is implemented and tested. Petrio can issue a one-time link code, and the standalone identity can consume it. The standalone interface now has a first-run bootstrap account, password login, hashed opaque sessions, CSRF protection, idle/absolute expiry and a Core account-link flow. It is a single-admin foundation; account recovery and multi-user administration remain future work.
 3. **Runtime validation:** CI now runs the full Node test suite (107 passing), validates the standalone Compose project, and builds both Core and interface images. Actual deployment, ingress, health/readiness against the live environment and end-to-end use with the configured model endpoint remain to be exercised.
 4. **Migration rehearsal:** test a full Petrio conversation and memory import into a fresh Core volume, verify counts/provenance/relationships, test rollback and confirm Petrio's source data remains intact.
 5. **Operational validation:** test backup and restore, permissions, volume ownership, restart behaviour and single-instance storage assumptions.
 6. **Petrio network adapter:** connect Petrio to the independent Core private Docker network and verify read-only adapters before enabling the feature flag.
-7. **Account lifecycle:** add password change/recovery and decide whether the single-admin interface should remain single-user or gain multi-user administration. Keep browser clients away from service and identity secrets.
+7. **Account lifecycle:** password change is implemented with current-password verification and global session revocation. Recovery and multi-user administration remain future decisions. Keep browser clients away from service and identity secrets.
 
 ## Architecture boundary
 
