@@ -492,7 +492,11 @@ async function loadMemories() {
         onClick: async () => {
           const text = prompt("Update this memory", memory.text || "");
           if (text === null || !text.trim()) return;
-          try { await api("/api/core/memories/" + encodeURIComponent(memory.id), { method: "PATCH", body: JSON.stringify({ text }) }); await loadMemories(); }
+          const importanceInput = prompt("Importance from 1 (low) to 10 (high)", String(memory.importance || 5));
+          if (importanceInput === null) return;
+          const importance = Number(importanceInput);
+          if (!Number.isInteger(importance) || importance < 1 || importance > 10) { toast("Importance must be a whole number from 1 to 10."); return; }
+          try { await api("/api/core/memories/" + encodeURIComponent(memory.id), { method: "PATCH", body: JSON.stringify({ text, importance }) }); await loadMemories(); }
           catch (error) { toast(error.message); }
         }
       };
@@ -520,7 +524,7 @@ $("#memory-form").addEventListener("submit", async (event) => {
   const text = event.currentTarget.elements.text.value.trim();
   if (!text) return;
   try {
-    await api("/api/core/memories", { method: "POST", body: JSON.stringify({ text, origin: "user-seeded", source: "user", type: "note" }) });
+    await api("/api/core/memories", { method: "POST", body: JSON.stringify({ text, importance: Number(event.currentTarget.elements.importance.value || 5), origin: "user-seeded", source: "user", type: "note" }) });
     event.currentTarget.reset();
     await loadMemories();
     toast("Memory planted in the Garden.");
