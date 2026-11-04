@@ -212,6 +212,7 @@ export function createAlfieInterfaceServer({
 
         if (method === "POST" && url.pathname === "/api/auth/standalone") {
           requireCsrf(req, session);
+          await readJson(req);
           return json(res, 201, await coreClient.createStandaloneWorkspace(userId));
         }
 
