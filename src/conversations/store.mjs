@@ -349,7 +349,7 @@ export class ConversationStore {
     if (typeof title !== "string") {
       throw Object.assign(new Error("A conversation title is required."), { status: 400, code: "CONVERSATION_TITLE_INVALID" });
     }
-    const cleanTitle = title.replace(/\\s+/g, " ").trim();
+    const cleanTitle = title.replace(/\s+/g, " ").trim();
     if (!cleanTitle || cleanTitle.length > 120) {
       throw Object.assign(new Error("Conversation titles must contain between 1 and 120 characters."), { status: 400, code: "CONVERSATION_TITLE_INVALID" });
     }
