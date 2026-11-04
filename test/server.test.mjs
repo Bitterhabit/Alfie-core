@@ -203,7 +203,7 @@ test("user-scoped Core routes require a signed Petrio identity assertion", async
     });
     assert.equal(accepted.status, 200);
     assert.deepEqual(await accepted.json(), {
-      authenticated: true, userId: "petrio-user-42", identityProvider: "petrio"
+      authenticated: true, userId: "petrio-user-42", identityProvider: "petrio", linked: true
     });
   });
 });
