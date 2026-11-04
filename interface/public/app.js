@@ -157,6 +157,39 @@ async function logout() {
   showLogin();
 }
 
+$("#password-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  const currentPassword = String(form.get("currentPassword") || "");
+  const newPassword = String(form.get("newPassword") || "");
+  const confirmPassword = String(form.get("confirmPassword") || "");
+  const button = event.currentTarget.querySelector("button");
+  $("#password-error").textContent = "";
+  if (newPassword !== confirmPassword) {
+    $("#password-error").textContent = "The new passwords do not match.";
+    return;
+  }
+  button.disabled = true;
+  try {
+    await api("/api/auth/password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    state.user = null;
+    state.csrfToken = "";
+    state.linked = false;
+    state.activeConversationId = null;
+    state.messages = [];
+    event.currentTarget.reset();
+    showLogin();
+    $("#login-error").textContent = "Password updated. Sign in again with your new password.";
+  } catch (error) {
+    $("#password-error").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
 $("#logout-button").addEventListener("click", logout);
 $("#mobile-logout").addEventListener("click", logout);
 $("#mobile-new-chat").addEventListener("click", () => newConversation().catch((error) => toast(error.message)));
