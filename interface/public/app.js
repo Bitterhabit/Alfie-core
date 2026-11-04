@@ -349,7 +349,7 @@ async function renameConversation(id, currentTitle) {
   if (state.sending || state.conversationLoading) { toast("Wait for the current conversation action to finish."); return; }
   const entered = window.prompt("Rename conversation", currentTitle);
   if (entered === null) return;
-  const title = entered.replace(/\\s+/g, " ").trim();
+  const title = entered.replace(/\s+/g, " ").trim();
   if (!title || title.length > 120) { toast("Choose a title between 1 and 120 characters."); return; }
   try {
     await api("/api/core/conversations/" + encodeURIComponent(id), {
