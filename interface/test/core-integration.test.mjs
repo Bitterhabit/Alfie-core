@@ -119,9 +119,10 @@ test("standalone interface links to Core and uses the same conversations and Gar
     const garden = await fetch(uiUrl + "/api/core/memories?q=share", { headers: { cookie } });
     assert.equal((await garden.json()).memories[0].id, memory.id);
     const updated = await fetch(uiUrl + "/api/core/memories/" + memory.id, {
-      method: "PATCH", headers, body: JSON.stringify({ text: "The interface and Petrio share one canonical Garden." })
+      method: "PATCH", headers, body: JSON.stringify({ text: "The interface and Petrio share one canonical Garden.", importance: 8 })
     });
     assert.equal(updated.status, 200);
+    assert.equal((await updated.json()).memory.importance, 8);
   } finally {
     await close(ui);
     await close(core);
