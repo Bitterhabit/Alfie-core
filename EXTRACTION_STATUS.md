@@ -16,6 +16,8 @@ Current package: @alfie/core 0.3.0
 - Reusable server-side Node.js client SDK for the standalone interface and other trusted clients.
 - Standalone interface with first-run single-admin bootstrap, password login, secure sessions, CSRF protection, password rotation with global session revocation and one-time Petrio account linking.
 - Responsive chat workspace with recent conversation history, automatic conversation titles, mobile history controls, safe Markdown rendering and confirmed conversation deletion.
+- Chat composer supports Auto, Light, Standard and Work routing modes; the selected mode is sent to the Core agent loop.
+- Pending tool actions are surfaced inside the chat response with a direct handoff to the detailed Tools & access approval view.
 - Standalone interface styling aligned to Petrio's purple pixel theme, with crisp square components, square status nodes and themed scrollbars.
 - Garden UI with provenance labels, searchable memories, create/edit/forget actions and importance controls.
 - Tools & access UI with one permission control per scope, pending-action approvals/rejections and recent audit history.
@@ -28,7 +30,7 @@ Current package: @alfie/core 0.3.0
 - Version-bound memory write approvals, duplicate detection and audit history.
 - Python specialist-service boundary documented; Python workers are not part of the authoritative Core.
 - Backup and restore procedures documented for both Core data and standalone interface account volumes.
-- GitHub Actions validates the standalone Compose project, runs the full Node.js test suite and builds the Core image. Latest verified run: 120 tests passed, 0 failed; standalone Compose validation, both image builds, live Core/interface health checks and backup/restore verification of both persistent volumes succeeded. The suite now includes an end-to-end test that bootstraps the standalone interface, links it to Petrio identity, and reads/writes the shared conversation and Garden data. Run: https://github.com/Bitterhabit/Alfie-core/actions/runs/41841654951.
+- GitHub Actions validates the standalone Compose project, runs the full Node.js test suite and builds the Core image. Latest verified run: 122 tests passed, 0 failed; standalone Compose validation, both image builds, live Core/interface health checks and backup/restore verification of both persistent volumes succeeded. The suite now includes an end-to-end test that bootstraps the standalone interface, links it to Petrio identity, and reads/writes the shared conversation and Garden data. Run: https://github.com/Bitterhabit/Alfie-core/actions/runs/41841654951.
 
 ## Remaining release gates
 
