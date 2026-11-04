@@ -63,7 +63,10 @@ The value is server-side configuration; API keys are never returned by `GET /v1/
 All `/v1/*` routes require `Authorization: Bearer <ALFIE_CORE_SERVICE_TOKEN>`. All user-scoped chat, conversation, memory, tool and permission routes additionally require a one-time identity signature bound to the exact HTTP method and path.
 
 - `GET /v1/status` — implemented/planned capabilities.
-- `GET /v1/whoami` — validates the configured signed identity assertion and reports its provider ID. Petrio and standalone UI backend identities can be configured simultaneously with separate secrets.
+- `GET /v1/whoami` — validates the signed identity and reports provider ID, canonical user ID and whether the interface account is linked.
+- `POST /v1/identity/link-codes` — Petrio-only; creates a five-minute, single-use account-link code for the signed-in Petrio user.
+- `POST /v1/identity/link` — standalone-interface-only; consumes a code and maps that local interface identity to the same canonical Core user ID.
+- `POST /v1/identity/unlink` — lets a standalone interface identity remove its own link.
 - `GET /v1/conversations/database` and `PUT /v1/conversations/database` — load or save the authenticated user's complete conversation database, including the active conversation.
 - `POST /v1/conversations/import` — import the legacy Petrio conversation snapshot once; an existing Core history is never overwritten.
 - `GET /v1/conversations` — list the authenticated user's conversations.
@@ -116,7 +119,7 @@ const alfie = createAlfieCoreClient({
 const result = await alfie.runAgent(authenticatedUser.id, { messages });
 ```
 
-The SDK is server-side only. It requires an authenticated user ID from the calling application's own session, signs each request for the exact HTTP method and path, and keeps both service credentials out of the browser. It rejects paths outside the versioned API boundary and preserves structured Core errors such as conversation revision conflicts.
+The SDK is server-side only. It requires an authenticated user ID from the calling application's own session, signs each request for the exact HTTP method and path, and keeps both service credentials out of the browser. `createIdentityLinkCode`, `linkIdentity` and `unlinkIdentity` support the one-time account-link flow; ordinary user data calls are rejected until the standalone identity is linked. It rejects paths outside the versioned API boundary and preserves structured Core errors such as conversation revision conflicts.
 
 ## Local development
 
