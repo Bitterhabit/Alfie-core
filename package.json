@@ -1,0 +1,22 @@
+{
+  "name": "@alfie/core",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Independent service foundation for Alfie.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
+  },
+  "exports": {
+    "./client": "./src/client.mjs",
+    "./identity": "./src/auth/signedIdentity.mjs"
+  }
+}

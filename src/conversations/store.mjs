@@ -1,0 +1,249 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+
+const USER_ID_PATTERN = /^[a-zA-Z0-9._:@-]{1,128}$/;
+const CONVERSATION_ID_PATTERN = /^[a-f0-9-]{36}$/i;
+const MAX_CONVERSATIONS = 500;
+const MAX_MESSAGES = 500;
+const MAX_CONTENT_LENGTH = 50000;
+
+function safeUserKey(userId) {
+  if (typeof userId !== "string" || !USER_ID_PATTERN.test(userId)) {
+    throw Object.assign(new Error("A verified user identity is required."), { status: 401 });
+  }
+  return createHash("sha256").update(userId).digest("hex");
+}
+
+export class ConversationStore {
+  constructor({ dataDirectory = process.env.ALFIE_CORE_DATA_DIR || "/data", now = () => new Date().toISOString(), uuid = randomUUID } = {}) {
+    this.dataDirectory = path.resolve(dataDirectory);
+    this.now = now;
+    this.uuid = uuid;
+    this.queues = new Map();
+  }
+
+  fileFor(userId) {
+    const key = safeUserKey(userId);
+    return path.join(this.dataDirectory, "users", key, "conversations.json");
+  }
+
+  async exclusive(userId, operation) {
+    const key = safeUserKey(userId);
+    const previous = this.queues.get(key) || Promise.resolve();
+    const current = previous.then(operation, operation);
+    const queued = current.catch(() => {});
+    this.queues.set(key, queued);
+    try { return await current; }
+    finally { if (this.queues.get(key) === queued) this.queues.delete(key); }
+  }
+
+  async load(userId) {
+    const file = this.fileFor(userId);
+    try {
+      const raw = await fs.readFile(file, "utf8");
+      const store = JSON.parse(raw);
+      if (store.schemaVersion !== 1 || store.ownerId !== userId || !Array.isArray(store.conversations)) {
+        throw new Error("Conversation store failed its integrity check.");
+      }
+      return store;
+    } catch (error) {
+      if (error.code === "ENOENT") return { schemaVersion: 1, revision: 0, ownerId: userId, activeConversationId: null, conversations: [] };
+      throw error;
+    }
+  }
+
+  async save(userId, store) {
+    const file = this.fileFor(userId);
+    const directory = path.dirname(file);
+    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+    await fs.chmod(directory, 0o700);
+    const temporary = path.join(directory, `conversations.${this.uuid()}.tmp`);
+    const handle = await fs.open(temporary, "wx", 0o600);
+    try {
+      store.revision = Math.max(0, Number(store.revision) || 0) + 1;
+      await handle.writeFile(JSON.stringify(store, null, 2), "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await fs.rename(temporary, file);
+    await fs.chmod(file, 0o600);
+  }
+
+  cleanDatabase(userId, source = {}) {
+    const input = source && typeof source === "object" ? source : {};
+    const rawConversations = Array.isArray(input.conversations) ? input.conversations.slice(0, MAX_CONVERSATIONS) : [];
+    const conversations = [];
+    const seen = new Set();
+    const idMap = new Map();
+    for (const raw of rawConversations) {
+      if (!raw || typeof raw !== "object") continue;
+      const legacyId = String(raw.id || "");
+      const id = CONVERSATION_ID_PATTERN.test(legacyId) ? legacyId : this.uuid();
+      if (seen.has(legacyId) || seen.has(id)) continue;
+      seen.add(legacyId);
+      seen.add(id);
+      if (legacyId) idMap.set(legacyId, id);
+      const messages = [];
+      for (const rawMessage of (Array.isArray(raw.messages) ? raw.messages.slice(-500) : [])) {
+        if (!rawMessage || typeof rawMessage !== "object") continue;
+        const role = rawMessage.role === "assistant" ? "assistant" : rawMessage.role === "user" ? "user" : "";
+        const content = String(rawMessage.content || "").slice(0, 50000);
+        if (!role || !content.trim() || rawMessage.transient === true) continue;
+        const message = {
+          id: CONVERSATION_ID_PATTERN.test(String(rawMessage.id || "")) ? String(rawMessage.id) : this.uuid(),
+          role,
+          content,
+          createdAt: String(rawMessage.createdAt || this.now()).slice(0, 40),
+          meta: String(rawMessage.meta || "").slice(0, 1000)
+        };
+        if (role === "assistant" && rawMessage.actionCard && typeof rawMessage.actionCard === "object") {
+          const card = rawMessage.actionCard;
+          const safeCard = {
+            state: ["success", "read", "cancelled", "rejected", "error", "approval"].includes(card.state) ? card.state : "error",
+            label: String(card.label || "Alfie Action").slice(0, 120),
+            detail: String(card.detail || (["confirm", "working"].includes(card.state) ? "This temporary action state expired when the conversation was restored." : "")).slice(0, 1000)
+          };
+          for (const key of ["actionId", "toolId", "risk", "target"]) {
+            if (typeof card[key] === "string") safeCard[key] = card[key].slice(0, 160);
+          }
+          if (card.arguments && typeof card.arguments === "object" && !Array.isArray(card.arguments)) {
+            try {
+              const serialised = JSON.stringify(card.arguments);
+              if (serialised.length <= 12000) safeCard.arguments = JSON.parse(serialised);
+            } catch {}
+          }
+          message.actionCard = safeCard;
+        }
+        messages.push(message);
+      }
+      conversations.push({
+        id,
+        title: String(raw.title || "New conversation").slice(0, 160),
+        createdAt: String(raw.createdAt || this.now()).slice(0, 40),
+        updatedAt: String(raw.updatedAt || this.now()).slice(0, 40),
+        messages
+      });
+    }
+    const activeConversationId = idMap.get(String(input.activeConversationId || ""))
+      || (conversations.some((item) => item.id === input.activeConversationId) ? input.activeConversationId : null)
+      || conversations[0]?.id || null;
+    return { schemaVersion: 1, ownerId: userId, activeConversationId, conversations };
+  }
+
+  async database(userId) {
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      return { revision: Number(store.revision) || 0, activeConversationId: store.activeConversationId || store.conversations[0]?.id || null, conversations: store.conversations };
+    });
+  }
+
+  async replaceDatabase(userId, source = {}, expectedRevision = null) {
+    return this.exclusive(userId, async () => {
+      const current = await this.load(userId);
+      if (expectedRevision !== null && Number(expectedRevision) !== (Number(current.revision) || 0)) {
+        throw Object.assign(new Error("Conversation history changed in another session. Reload before saving to avoid overwriting newer messages."), { status: 409, code: "conversation_revision_conflict", revision: Number(current.revision) || 0 });
+      }
+      const cleaned = this.cleanDatabase(userId, source);
+      const next = { ...cleaned, importedAt: current.importedAt || null };
+      await this.save(userId, next);
+      return { revision: next.revision, activeConversationId: next.activeConversationId, conversations: next.conversations };
+    });
+  }
+
+  async importLegacy(userId, source = {}) {
+    return this.exclusive(userId, async () => {
+      const current = await this.load(userId);
+      if (current.conversations.length) {
+        return { imported: false, reason: "core_already_has_conversations", count: current.conversations.length };
+      }
+      const cleaned = this.cleanDatabase(userId, source);
+      const next = { ...cleaned, importedAt: this.now() };
+      await this.save(userId, next);
+      return { imported: true, revision: next.revision, count: next.conversations.length, activeConversationId: next.activeConversationId };
+    });
+  }
+
+  async list(userId) {
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      return store.conversations
+        .slice()
+        .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+        .slice(0, 100)
+        .map(({ messages, ...summary }) => summary);
+    });
+  }
+
+  async create(userId, title = "New conversation") {
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      if (store.conversations.length >= MAX_CONVERSATIONS) {
+        throw Object.assign(new Error("This account has reached its conversation limit."), { status: 409 });
+      }
+      const now = this.now();
+      const conversation = {
+        id: this.uuid(),
+        title: String(title || "New conversation").trim().slice(0, 120) || "New conversation",
+        createdAt: now,
+        updatedAt: now,
+        messages: []
+      };
+      store.conversations.push(conversation);
+      await this.save(userId, store);
+      return conversation;
+    });
+  }
+
+  async get(userId, conversationId) {
+    if (!CONVERSATION_ID_PATTERN.test(String(conversationId || ""))) {
+      throw Object.assign(new Error("Conversation not found."), { status: 404 });
+    }
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      const conversation = store.conversations.find((item) => item.id === conversationId);
+      if (!conversation) throw Object.assign(new Error("Conversation not found."), { status: 404 });
+      return conversation;
+    });
+  }
+
+  async appendMessage(userId, conversationId, input = {}) {
+    if (!CONVERSATION_ID_PATTERN.test(String(conversationId || ""))) {
+      throw Object.assign(new Error("Conversation not found."), { status: 404 });
+    }
+    const role = input.role === "assistant" ? "assistant" : input.role === "user" ? "user" : "";
+    const content = String(input.content || "").trim().slice(0, MAX_CONTENT_LENGTH);
+    if (!role || !content) throw Object.assign(new Error("A non-empty user or assistant message is required."), { status: 400 });
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      const conversation = store.conversations.find((item) => item.id === conversationId);
+      if (!conversation) throw Object.assign(new Error("Conversation not found."), { status: 404 });
+      if (conversation.messages.length >= MAX_MESSAGES) {
+        throw Object.assign(new Error("This conversation has reached its message limit."), { status: 409 });
+      }
+      const message = { id: this.uuid(), role, content, createdAt: this.now() };
+      conversation.messages.push(message);
+      conversation.updatedAt = message.createdAt;
+      if (role === "user" && conversation.title === "New conversation") {
+        conversation.title = content.replace(/\s+/g, " ").slice(0, 80);
+      }
+      await this.save(userId, store);
+      return message;
+    });
+  }
+
+  async remove(userId, conversationId) {
+    if (!CONVERSATION_ID_PATTERN.test(String(conversationId || ""))) {
+      throw Object.assign(new Error("Conversation not found."), { status: 404 });
+    }
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      const index = store.conversations.findIndex((item) => item.id === conversationId);
+      if (index < 0) throw Object.assign(new Error("Conversation not found."), { status: 404 });
+      store.conversations.splice(index, 1);
+      await this.save(userId, store);
+      return { deleted: true };
+    });
+  }
+}

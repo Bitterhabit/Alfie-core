@@ -1,0 +1,44 @@
+services:
+  alfie-core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: alfie-core:0.3.0
+    container_name: alfie-core
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: 8780
+      ALFIE_CORE_DATA_DIR: /data
+    volumes:
+      - alfie_core_data:/data
+    expose:
+      - "8780"
+    networks:
+      - alfie-core-internal
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8780/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+
+networks:
+  alfie-core-internal:
+    name: alfie-core-internal
+
+volumes:
+  alfie_core_data:
+    name: alfie-core-data
