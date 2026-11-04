@@ -29,6 +29,7 @@ test("Petrio harness client sends a signed identity to the internal read-only ad
   assert.equal(captured.options.signal.aborted, true);
   assert.equal(captured.url, "http://petrio:3000/v1/alfie-core/tools/run");
   assert.equal(captured.options.headers.authorization, `Bearer ${token}`);
+  assert.equal(captured.options.redirect, "error");
   assert.equal(identityAuth.verify(captured.options.headers, {
     method: "POST", path: "/v1/alfie-core/tools/run"
   }).userId, "petrio-user-1");
