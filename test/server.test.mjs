@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createAlfieCoreServer } from "../src/server.mjs";
+import { AuditStore } from "../src/audit/store.mjs";
 
 async function withServer(options, run) {
   const server = createAlfieCoreServer(options);
@@ -17,7 +18,7 @@ test("health is public and reports the service identity", async () => {
   await withServer({ serviceToken: "a".repeat(40) }, async (base) => {
     const response = await fetch(`${base}/health`);
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { status: "ok", service: "alfie-core", version: "0.2.0" });
+    assert.deepEqual(await response.json(), { status: "ok", service: "alfie-core", version: "0.3.0" });
   });
 });
 
@@ -163,16 +164,9 @@ test("streaming chat returns newline-delimited meta, delta and done events", asy
       if (options.method === "GET") {
         return { ok: true, status: 200, text: async () => JSON.stringify({ data: [{ id: "stream-model" }] }) };
       }
-      const encoder = new TextEncoder();
       return {
         ok: true, status: 200,
-        body: new ReadableStream({
-          start(controller) {
-            controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'));
-            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-            controller.close();
-          }
-        })
+        json: async () => ({ choices: [{ message: { content: '{"type":"final","message":"Hello"}' } }] })
       };
     }
   });
@@ -342,7 +336,7 @@ test("tool API enforces user scopes and explicit one-time write approvals", asyn
     handler: async (args) => ({ saved: true, title: args.title })
   });
   try {
-    await withServer({ serviceToken: token, identityAuth, permissionStore, pendingActionStore, toolRegistry }, async (base) => {
+    await withServer({ serviceToken: token, identityAuth, permissionStore, pendingActionStore, auditStore: new AuditStore({ dataDirectory: directory }), toolRegistry }, async (base) => {
       const headersFor = (method, requestPath) => ({
         authorization: `Bearer ${token}`,
         ...identityAuth.sign("user-a", { method, path: requestPath })
