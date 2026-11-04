@@ -43,6 +43,8 @@ Current interface features:
 - password login with asynchronous scrypt verification, opaque hashed session tokens, CSRF protection, idle and absolute expiry;
 - one-time Petrio account linking before any Core user data can be accessed;
 - chat history, automatic conversation titles, new conversations, confirmed conversation deletion, guarded Alfie chat and streaming response transport;
+- per-turn model routing modes (Auto, Light, Standard and Work) selected directly in the composer;
+- an in-chat approval notice that takes the user directly to the pending action review, while approval itself remains a separate explicit action;
 - a Garden view for searching, planting, editing and forgetting memories, with provenance labels and importance controls;
 - registered tool scopes, pending approvals, explicit approve/reject controls and audit history;
 - provider health and Core capability status;
