@@ -40,9 +40,10 @@ export class IdentityLinkStore {
       if (value.schemaVersion !== 1 || !Array.isArray(value.links) || !Array.isArray(value.codes)) {
         throw new Error("Identity link store failed its integrity check.");
       }
+      if (!Array.isArray(value.attempts)) value.attempts = [];
       return value;
     } catch (error) {
-      if (error.code === "ENOENT") return { schemaVersion: 1, links: [], codes: [] };
+      if (error.code === "ENOENT") return { schemaVersion: 1, links: [], codes: [], attempts: [] };
       throw error;
     }
   }
@@ -64,6 +65,7 @@ export class IdentityLinkStore {
       const store = await this.load();
       const now = this.now();
       store.codes = store.codes.filter((item) => item.expiresAt > now && item.attempts < 5);
+      store.codes = store.codes.filter((item) => item.canonicalUserId !== canonicalUserId);
       let code;
       let hash;
       do {
@@ -90,12 +92,19 @@ export class IdentityLinkStore {
       const store = await this.load();
       const now = this.now();
       store.codes = store.codes.filter((item) => item.expiresAt > now && item.attempts < 5);
+      store.attempts = store.attempts.filter((item) => item.resetAt > now);
+      const attempt = store.attempts.find((item) => item.providerId === providerId && item.subjectId === subjectId);
+      if (attempt && attempt.count >= 5) {
+        throw Object.assign(new Error("Too many account-link attempts. Request a fresh code and try again later."), { status: 429, code: "IDENTITY_LINK_RATE_LIMITED" });
+      }
       if (store.links.some((item) => item.providerId === providerId && item.subjectId === subjectId)) {
         throw Object.assign(new Error("This interface account is already linked."), { status: 409, code: "IDENTITY_ALREADY_LINKED" });
       }
       const hash = digest(code);
       const pending = store.codes.find((item) => item.hash === hash);
       if (!pending) {
+        if (attempt) attempt.count += 1;
+        else store.attempts.push({ providerId, subjectId, count: 1, resetAt: now + 10 * 60 * 1000 });
         await this.save(store);
         throw Object.assign(new Error("The account-link code is invalid, expired or already used."), { status: 404, code: "IDENTITY_LINK_CODE_INVALID" });
       }
@@ -104,6 +113,7 @@ export class IdentityLinkStore {
         throw Object.assign(new Error("A different account for this identity provider is already linked to this user."), { status: 409, code: "IDENTITY_PROVIDER_ALREADY_LINKED" });
       }
       store.codes = store.codes.filter((item) => item.id !== pending.id);
+      store.attempts = store.attempts.filter((item) => !(item.providerId === providerId && item.subjectId === subjectId));
       store.links.push({
         id: randomUUID(), providerId, subjectId,
         canonicalUserId: pending.canonicalUserId,
