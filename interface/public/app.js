@@ -241,6 +241,50 @@ async function newConversation() {
 $("#new-chat").addEventListener("click", () => newConversation().catch((error) => toast(error.message)));
 $("#refresh-conversations").addEventListener("click", () => loadConversations().catch((error) => toast(error.message)));
 
+function appendInlineMarkdown(parent, source) {
+  const text = String(source || "");
+  const pattern = /\\*\\*[^*]+\\*\\*|`[^`]+`|\\*[^*]+\\*|\\[[^\\]]+\\]\\(https?:\\/\\/[^)\\s]+\\)/g;
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    const token = match[0];
+    if (match.index > cursor) parent.appendChild(document.createTextNode(text.slice(cursor, match.index)));
+    if (token.startsWith("**")) { const node = document.createElement("strong"); node.textContent = token.slice(2, -2); parent.appendChild(node); }
+    else if (token.startsWith("`")) { const node = document.createElement("code"); node.textContent = token.slice(1, -1); parent.appendChild(node); }
+    else if (token.startsWith("*")) { const node = document.createElement("em"); node.textContent = token.slice(1, -1); parent.appendChild(node); }
+    else {
+      const link = /^\\[([^\\]]+)\\]\\((https?:\\/\\/[^)\\s]+)\\)$/.exec(token);
+      if (link) { const node = document.createElement("a"); node.textContent = link[1]; node.href = link[2]; node.target = "_blank"; node.rel = "noopener noreferrer nofollow"; parent.appendChild(node); }
+      else parent.appendChild(document.createTextNode(token));
+    }
+    cursor = match.index + token.length;
+  }
+  if (cursor < text.length) parent.appendChild(document.createTextNode(text.slice(cursor)));
+}
+
+function renderMarkdown(container, source) {
+  container.replaceChildren();
+  const lines = String(source || "").replace(/\\r\\n/g, "\\n").split("\\n");
+  let paragraph = []; let list = null; let listType = ""; let codeLines = null;
+  const flushParagraph = () => { if (!paragraph.length) return; const node = document.createElement("p"); appendInlineMarkdown(node, paragraph.join("\\n")); container.appendChild(node); paragraph = []; };
+  const flushList = () => { if (list) container.appendChild(list); list = null; listType = ""; };
+  for (const line of lines) {
+    if (line.trim().startsWith("```")) {
+      flushParagraph(); flushList();
+      if (codeLines) { const pre = document.createElement("pre"); const code = document.createElement("code"); code.textContent = codeLines.join("\\n"); pre.appendChild(code); container.appendChild(pre); codeLines = null; }
+      else codeLines = [];
+      continue;
+    }
+    if (codeLines) { codeLines.push(line); continue; }
+    if (!line.trim()) { flushParagraph(); flushList(); continue; }
+    const heading = /^(#{1,3})\\s+(.+)$/.exec(line);
+    if (heading) { flushParagraph(); flushList(); const node = document.createElement("h" + heading[1].length); appendInlineMarkdown(node, heading[2]); container.appendChild(node); continue; }
+    const item = /^\\s*(?:[-*]\\s+|\\d+\\.\\s+)(.+)$/.exec(line);
+    if (item) { flushParagraph(); const type = /^\\s*\\d+\\.\\s+/.test(line) ? "ol" : "ul"; if (list && listType !== type) flushList(); if (!list) { list = document.createElement(type); listType = type; } const li = document.createElement("li"); appendInlineMarkdown(li, item[1]); list.appendChild(li); continue; }
+    flushList(); paragraph.push(line);
+  }
+  flushParagraph(); flushList();
+  if (codeLines) { const pre = document.createElement("pre"); const code = document.createElement("code"); code.textContent = codeLines.join("\\n"); pre.appendChild(code); container.appendChild(pre); }
+}
 function appendMessageElement(message) {
   const article = document.createElement("article");
   article.className = "message " + (message.role === "user" ? "user" : "assistant");
@@ -249,7 +293,7 @@ function appendMessageElement(message) {
   label.textContent = message.role === "user" ? "YOU" : "ALFIE";
   const body = document.createElement("div");
   body.className = "message-body";
-  body.textContent = message.content || "";
+  renderMarkdown(body, message.content || "");
   article.append(label, body);
   $("#messages").appendChild(article);
   return body;
@@ -316,7 +360,7 @@ async function sendMessage(rawText) {
         const event = JSON.parse(line);
         if (event.type === "delta") {
           assistantText += event.content || "";
-          assistantBody.textContent = assistantText;
+          renderMarkdown(assistantBody, assistantText);
           $("#messages").scrollTop = $("#messages").scrollHeight;
         }
         if (event.type === "done") finalEvent = event;
@@ -332,7 +376,7 @@ async function sendMessage(rawText) {
     if (finalEvent?.status === "awaiting_user_approval") {
       assistantText = assistantText || "This action is ready for your approval. Open Tools & access to review it.";
     }
-    assistantBody.textContent = assistantText || "I couldn't produce a response.";
+    renderMarkdown(assistantBody, assistantText || "I couldn't produce a response.");
     await persistMessage("assistant", assistantBody.textContent);
     await loadConversations();
     if (finalEvent?.status === "awaiting_user_approval") {
