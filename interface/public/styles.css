@@ -99,6 +99,16 @@ input:focus,textarea:focus{border-color:rgba(169,149,255,.7);box-shadow:0 0 0 3p
 .message-label{display:block;margin-bottom:7px;color:var(--purple);font-size:8px;font-weight:850;letter-spacing:.16em}
 .message.user .message-label{color:var(--orange)}
 .message-body{color:#e8e3f2;font-size:13px;line-height:1.75;white-space:pre-wrap;overflow-wrap:anywhere}
+.message-body p{margin:0 0 10px}
+.message-body p:last-child{margin-bottom:0}
+.message-body h1,.message-body h2,.message-body h3{margin:16px 0 8px;color:#f3efff;letter-spacing:-.025em}
+.message-body h1{font-size:19px}.message-body h2{font-size:16px}.message-body h3{font-size:14px}
+.message-body ul,.message-body ol{margin:7px 0 12px;padding-left:23px}
+.message-body li{padding:2px 0}
+.message-body a{color:var(--lavender);text-decoration:underline;text-underline-offset:3px}
+.message-body code{padding:2px 5px;border:1px solid var(--line);border-radius:5px;background:#100e1b;color:#e5d9ff;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.92em}
+.message-body pre{overflow:auto;margin:10px 0;padding:13px;border:1px solid var(--line);border-radius:10px;background:#0d0b15;white-space:pre}
+.message-body pre code{padding:0;border:0;background:transparent;color:#e5dff0}
 .message.user .message-body{padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:rgba(34,29,51,.8)}
 .composer{width:min(100%,820px);flex-shrink:0;margin:0 auto 18px;padding:12px;border:1px solid rgba(169,149,255,.25);border-radius:15px;background:rgba(30,26,48,.92);box-shadow:0 10px 35px rgba(0,0,0,.16)}
 .composer textarea{display:block;resize:none;min-height:34px;max-height:180px;padding:5px 4px;border:0;background:transparent;font-size:12px;line-height:1.6;box-shadow:none}
