@@ -135,3 +135,24 @@ test("rejects stale conversation snapshots instead of overwriting newer sessions
     assert.ok(latest.revision > initial.revision);
   });
 });
+
+test("legacy import refuses oversized snapshots instead of silently truncating history", async () => {
+  await temporaryStore(async (store) => {
+    const tooManyConversations = Array.from({ length: 501 }, (_, index) => ({
+      id: `legacy-${index}`, messages: []
+    }));
+    await assert.rejects(store.importLegacy("user-1", { conversations: tooManyConversations }), {
+      status: 413, code: "CONVERSATION_IMPORT_LIMIT"
+    });
+    const tooManyMessages = {
+      conversations: [{
+        id: "legacy-one",
+        messages: Array.from({ length: 501 }, (_, index) => ({ role: "user", content: `Message ${index}` }))
+      }]
+    };
+    await assert.rejects(store.importLegacy("user-1", tooManyMessages), {
+      status: 413, code: "CONVERSATION_IMPORT_LIMIT"
+    });
+    assert.equal((await store.database("user-1")).conversations.length, 0);
+  });
+});
