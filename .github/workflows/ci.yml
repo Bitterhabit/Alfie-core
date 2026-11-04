@@ -31,3 +31,15 @@ jobs:
         run: docker build -t alfie-core:${{ github.sha }} .
       - name: Build standalone interface image
         run: docker build -t alfie-interface:${{ github.sha }} -f interface/Dockerfile .
+      - name: Smoke-test Core and standalone interface containers
+        run: |
+          set -euo pipefail
+          trap 'docker compose down -v --remove-orphans' EXIT
+          sed -i "s/^ALFIE_CORE_SERVICE_TOKEN=.*/ALFIE_CORE_SERVICE_TOKEN=$(openssl rand -hex 32)/" .env
+          sed -i "s/^ALFIE_CORE_PETRIO_IDENTITY_SECRET=.*/ALFIE_CORE_PETRIO_IDENTITY_SECRET=$(openssl rand -hex 32)/" .env
+          sed -i "s/^ALFIE_CORE_STANDALONE_IDENTITY_SECRET=.*/ALFIE_CORE_STANDALONE_IDENTITY_SECRET=$(openssl rand -hex 32)/" .env
+          sed -i "s/^ALFIE_UI_BOOTSTRAP_USERNAME=.*/ALFIE_UI_BOOTSTRAP_USERNAME=ci-admin/" .env
+          sed -i "s/^ALFIE_UI_BOOTSTRAP_PASSWORD=.*/ALFIE_UI_BOOTSTRAP_PASSWORD=ci-bootstrap-password-2026/" .env
+          docker compose up -d --wait
+          docker compose exec -T alfie-core node -e "fetch('http://127.0.0.1:8780/ready').then(async r=>{if(!r.ok)throw new Error(await r.text());console.log('Core ready')})"
+          docker compose exec -T alfie-interface node -e "fetch('http://127.0.0.1:8781/health').then(async r=>{if(!r.ok)throw new Error(await r.text());console.log('Interface healthy')})"
