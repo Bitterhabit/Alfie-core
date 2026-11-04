@@ -265,3 +265,83 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--purple);outline-off
 @media(prefers-reduced-motion:reduce){
   *,*:before,*:after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
 }
+
+
+/* Focused professional palette with Petrio pixel identity retained */
+:root{
+  color-scheme:light;
+  --bg:#f2f1f7;
+  --panel:#ffffff;
+  --panel-raised:#ffffff;
+  --panel-hover:#eeebf7;
+  --line:#e2deed;
+  --text:#272333;
+  --muted:#777184;
+  --purple:#765dc7;
+  --purple-strong:#7057c2;
+  --lavender:#e8e1fa;
+}
+html,body{background:#f3f2f7;color:var(--text)}
+.ambient{opacity:.045;filter:blur(70px)}
+.workspace{background:#f7f6fa}
+.topbar{border-bottom-color:#e7e3ed}
+.topbar h1{color:#292536}
+.topbar .eyebrow,.welcome-eyebrow{color:#7964bd}
+.connection-state{background:#fff;border-color:#e5e1eb;color:#716b7e}
+#connection-dot{box-shadow:none}
+.messages{scrollbar-color:#c9c1dd #f3f1f7}
+.welcome-mark{background:#eee9f8;border-color:#d9d0ed;color:#715bb7;box-shadow:0 5px 16px rgba(54,43,84,.06),inset 0 0 0 3px rgba(118,93,199,.04)}
+.welcome-mark:after{border-color:rgba(118,93,199,.2)}
+.welcome-message h2{color:#292536}
+.welcome-message>p:not(.eyebrow){color:#777184}
+.suggestion-grid button{background:#fff;border-color:#e4e0eb;color:#514b60;box-shadow:0 2px 7px rgba(42,35,62,.035)}
+.suggestion-grid button:hover{background:#f5f2fb;border-color:#c9bee7;transform:translateY(-1px)}
+.suggestion-grid span{color:#7862bd}
+.message{margin-bottom:26px}
+.message-label{color:#7964bd}
+.message.user .message-label{color:#8a6a43}
+.message-body{color:#383445;font-size:14px;line-height:1.8}
+.message-body h1,.message-body h2,.message-body h3{color:#292536}
+.message-body a{color:#6851b0}
+.message-body code{background:#f0edf6;border-color:#e2dced;color:#59468f}
+.message-body pre{background:#eeecf3;border-color:#ded9e8;color:#353143}
+.message-body pre code{color:#353143}
+.message.user .message-body{background:#eae5f6;border-color:#dcd3ef;color:#332d43}
+.composer{background:#fff;border-color:#ded8eb;box-shadow:0 5px 22px rgba(44,36,65,.07)}
+.composer textarea{color:#302b3b}
+.composer textarea::placeholder{color:#928c9d}
+.composer-footer>span,.mode-control{color:#827c8d}
+.mode-control select{background:#f7f5fa;color:#4b4558;border-color:#e1dcea}
+.send-button{background:#765fc2;box-shadow:none}
+.sidebar{background:#211b35;border-right-color:rgba(210,197,255,.13)}
+.sidebar .brand strong{color:#f2effa}
+.sidebar .brand small{color:#b7add1}
+.sidebar-heading{color:#a69bbf}
+.sidebar-heading button{color:#c3b8dc}
+.conversation-item{color:#c9c1d9}
+.conversation-item:hover,.conversation-item.active{background:rgba(177,157,240,.13);color:#fff}
+.conversation-item.active{border-color:rgba(190,174,255,.25)}
+.conversation-delete{color:#b9aecf}
+.history-search{width:100%;margin:0 0 10px;padding:9px 10px;border:1px solid rgba(196,182,230,.2);border-radius:5px;background:rgba(13,10,24,.28);color:#f1edf9;font-size:11px}
+.history-search::placeholder{color:#a79dbb}
+.history-search:focus{border-color:#a995e6;box-shadow:0 0 0 2px rgba(169,149,255,.13)}
+.mobile-history-sheet{background:#211b35;border-color:rgba(196,182,230,.25)}
+.mobile-history-search{display:none}
+.mobile-history-header{color:#f2effa}
+.mobile-history-header .icon-button{color:#d3c9e8;border-color:rgba(196,182,230,.25)}
+.link-required{background:#fff;color:#302b3b;border-color:#e2deed;box-shadow:0 8px 28px rgba(44,36,65,.07)}
+.link-required h2,.standalone-choice h3{color:#292536}
+.link-required .muted,.standalone-choice .muted{color:#777184}
+.surface,.memory-form{background:#fff;border-color:#e4e0eb;color:#302b3b}
+.list-item{background:#f8f7fa;border-color:#e8e4ed}
+.list-item strong{color:#332e40}
+.settings-value{color:#4d475b}
+input,textarea{background:#fff;color:#302b3b;border-color:#ded9e7}
+label{color:#514b60}
+.secondary-button{background:#f2eff8;color:#55447f;border-color:#ded7ec}
+.toast{background:#28213c;color:#fff;border-color:rgba(196,182,230,.25)}
+@media(max-width:620px){
+  .workspace{background:#f7f6fa}
+  .mobile-history-sheet{background:#211b35}
+  .mobile-history-search{display:block}
+}
