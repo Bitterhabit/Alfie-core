@@ -42,8 +42,8 @@ Current interface features:
 - first-run single-administrator bootstrap from `ALFIE_UI_BOOTSTRAP_USERNAME` and `ALFIE_UI_BOOTSTRAP_PASSWORD`;
 - password login with asynchronous scrypt verification, opaque hashed session tokens, CSRF protection, idle and absolute expiry;
 - one-time Petrio account linking before any Core user data can be accessed;
-- chat history, new conversations, guarded Alfie chat and streaming response transport;
-- a Garden view for searching, planting, editing and forgetting memories;
+- chat history, automatic conversation titles, new conversations, confirmed conversation deletion, guarded Alfie chat and streaming response transport;
+- a Garden view for searching, planting, editing and forgetting memories, with provenance labels and importance controls;
 - registered tool scopes, pending approvals, explicit approve/reject controls and audit history;
 - provider health and Core capability status;
 - mobile navigation with access to recent conversations, new chat and sign out;
