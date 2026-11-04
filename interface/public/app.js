@@ -5,6 +5,7 @@ const state = {
   linked: false,
   activeConversationId: null,
   messages: [],
+  conversations: [],
   view: "chat",
   sending: false,
   conversationLoadToken: 0,
@@ -285,6 +286,7 @@ function renderConversations(conversations = []) {
 async function loadConversations() {
   const payload = await api("/api/core/conversations");
   const conversations = payload.conversations || [];
+  state.conversations = conversations;
   renderConversations(conversations);
   if (!state.activeConversationId && conversations.length) await loadConversation(conversations[0].id);
 }
