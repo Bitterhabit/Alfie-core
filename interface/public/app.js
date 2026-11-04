@@ -490,22 +490,25 @@ async function loadToolsAndApprovals() {
       api("/api/core/tools"), api("/api/core/permissions"), api("/api/core/tools/pending"), api("/api/core/audit?limit=30")
     ]);
     const scopes = new Set(permissions.scopes || []);
+    const groups = new Map();
     for (const tool of (tools.tools || [])) {
-      const allowed = scopes.has(tool.scope);
+      if (!groups.has(tool.scope)) groups.set(tool.scope, []);
+      groups.get(tool.scope).push(tool);
+    }
+    for (const [scope, scopedTools] of groups) {
+      const allowed = scopes.has(scope);
+      const names = scopedTools.map((tool) => tool.name || tool.id).join(", ");
       const button = {
         label: allowed ? "Revoke" : "Allow",
         kind: allowed ? "secondary-button" : "primary-button",
         onClick: async () => {
           try {
-            await api("/api/core/permissions", {
-              method: allowed ? "DELETE" : "POST",
-              body: JSON.stringify({ scope: tool.scope })
-            });
+            await api("/api/core/permissions", { method: allowed ? "DELETE" : "POST", body: JSON.stringify({ scope }) });
             await loadToolsAndApprovals();
           } catch (error) { toast(error.message); }
         }
       };
-      toolsHost.appendChild(createItem(tool.name || tool.id, tool.scope + " · " + tool.risk + " risk", [button]));
+      toolsHost.appendChild(createItem(scope, (allowed ? "Granted" : "Not granted") + " · " + scopedTools.length + " tool(s): " + names, [button]));
     }
     if (!tools.tools?.length) toolsHost.textContent = "No registered tools.";
     for (const action of (pending.actions || [])) {
