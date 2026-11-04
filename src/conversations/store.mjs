@@ -204,6 +204,34 @@ export class ConversationStore {
           status: 413, code: "CONVERSATION_IMPORT_LIMIT"
         });
       }
+      for (const [messageIndex, message] of (conversation.messages || []).entries()) {
+        if (!message || typeof message !== "object" || Array.isArray(message)) {
+          throw Object.assign(new Error(`Legacy conversation ${index + 1}, message ${messageIndex + 1} is invalid. No data was imported.`), {
+            status: 400, code: "CONVERSATION_IMPORT_INVALID"
+          });
+        }
+        if (message.transient === true) continue;
+        if (!["user", "assistant"].includes(message.role) || !String(message.content || "").trim()) {
+          throw Object.assign(new Error(`Legacy conversation ${index + 1}, message ${messageIndex + 1} has an unsupported role or empty content. No data was imported.`), {
+            status: 400, code: "CONVERSATION_IMPORT_INVALID"
+          });
+        }
+        if (String(message.content || "").length > 50000 || String(message.meta || "").length > 1000) {
+          throw Object.assign(new Error(`Legacy conversation ${index + 1}, message ${messageIndex + 1} exceeds the supported content size. No data was imported.`), {
+            status: 413, code: "CONVERSATION_IMPORT_LIMIT"
+          });
+        }
+        const args = message.actionCard?.arguments;
+        if (args && typeof args === "object" && !Array.isArray(args)) {
+          let size = Infinity;
+          try { size = JSON.stringify(args).length; } catch {}
+          if (size > 12000) {
+            throw Object.assign(new Error(`Legacy conversation ${index + 1}, message ${messageIndex + 1} contains oversized action metadata. No data was imported.`), {
+              status: 413, code: "CONVERSATION_IMPORT_LIMIT"
+            });
+          }
+        }
+      }
     }
     return this.exclusive(userId, async () => {
       const current = await this.load(userId);
