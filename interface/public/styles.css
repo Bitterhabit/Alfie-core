@@ -126,6 +126,11 @@ input:focus,textarea:focus{border-color:rgba(169,149,255,.7);box-shadow:0 0 0 3p
 .composer textarea:focus{box-shadow:none}
 .composer-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:6px}
 .composer-footer>span{color:#817991;font-size:9px}
+.composer-controls{display:flex;align-items:center;gap:10px}
+.mode-control{display:flex;grid-auto-flow:column;align-items:center;gap:7px;color:#9289a7;font-size:9px;font-weight:700}
+.mode-control select{min-width:104px;padding:6px 24px 6px 8px;border:1px solid var(--line);border-radius:2px;background:#151221;color:#d9d0ef;font-size:10px}
+.mode-control select:focus-visible{outline:2px solid var(--purple);outline-offset:2px}
+
 .send-button{width:31px;height:31px;border:0;border-radius:2px;background:var(--purple-strong);color:white;font-size:19px;font-weight:800;cursor:pointer}
 .view-intro{max-width:760px;margin:8px auto 24px}
 .view-intro h2{margin:0 0 6px;font-size:25px;letter-spacing:-.04em}
