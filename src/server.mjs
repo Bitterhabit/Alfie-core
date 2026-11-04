@@ -414,7 +414,7 @@ export function createAlfieCoreServer({
         }
         if (isConversationImport && req.method === "POST") {
           const body = await readJsonBody(req);
-          return json(res, 200, await conversationStore.importLegacy(identity.userId, body.database || body));
+          return json(res, 200, await conversationStore.importLegacy(identity.userId, body.database || body, body.sourceKey || "petrio-server"));
         }
         if (isConversationCollection && req.method === "GET") {
           return json(res, 200, { conversations: await conversationStore.list(identity.userId) });
