@@ -159,39 +159,6 @@ async function logout() {
 
 $("#password-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const currentPassword = String(form.get("currentPassword") || "");
-  const newPassword = String(form.get("newPassword") || "");
-  const confirmPassword = String(form.get("confirmPassword") || "");
-  const button = event.currentTarget.querySelector("button");
-  $("#password-error").textContent = "";
-  if (newPassword !== confirmPassword) {
-    $("#password-error").textContent = "The new passwords do not match.";
-    return;
-  }
-  button.disabled = true;
-  try {
-    await api("/api/auth/password", {
-      method: "POST",
-      body: JSON.stringify({ currentPassword, newPassword })
-    });
-    state.user = null;
-    state.csrfToken = "";
-    state.linked = false;
-    state.activeConversationId = null;
-    state.messages = [];
-    event.currentTarget.reset();
-    showLogin();
-    $("#login-error").textContent = "Password updated. Sign in again with your new password.";
-  } catch (error) {
-    $("#password-error").textContent = error.message;
-  } finally {
-    button.disabled = false;
-  }
-});
-
-$("#password-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
   const form = event.currentTarget;
   const currentPassword = form.elements.currentPassword.value;
   const newPassword = form.elements.newPassword.value;
