@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#171326">
+  <title>Alfie — Personal AI</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+
+  <main id="login-screen" class="login-screen">
+    <section class="login-card">
+      <div class="brand-mark" aria-hidden="true"><span>A</span></div>
+      <p class="eyebrow">YOUR PERSONAL AI</p>
+      <h1>Welcome back.</h1>
+      <p class="muted">A quiet space for thinking, creating and getting things done.</p>
+      <form id="login-form" class="stack">
+        <label>Username<input name="username" autocomplete="username" required minlength="3" maxlength="32"></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="primary-button" type="submit">Sign in <span aria-hidden="true">↗</span></button>
+      </form>
+      <p id="login-error" class="error-message" role="alert"></p>
+      <p id="setup-message" class="setup-message" hidden>Initial setup is required. Set ALFIE_UI_BOOTSTRAP_USERNAME and ALFIE_UI_BOOTSTRAP_PASSWORD in the server environment, then restart the interface.</p>
+    </section>
+  </main>
+
+  <div id="app-shell" class="app-shell" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="Alfie home">
+        <span class="brand-mark small"><span>A</span></span>
+        <span><strong>alfie</strong><small>PERSONAL CORE</small></span>
+      </a>
+      <button id="new-chat" class="new-chat-button" type="button"><span>＋</span> New conversation</button>
+      <nav class="main-nav" aria-label="Main navigation">
+        <button class="nav-item active" data-view="chat" type="button"><span>◈</span> Chat</button>
+        <button class="nav-item" data-view="garden" type="button"><span>✳</span> Garden</button>
+        <button class="nav-item" data-view="tools" type="button"><span>⌘</span> Tools & access</button>
+        <button class="nav-item" data-view="settings" type="button"><span>⚙</span> Settings</button>
+      </nav>
+      <div class="sidebar-section">
+        <div class="sidebar-heading"><span>RECENT</span><button id="refresh-conversations" type="button" aria-label="Refresh conversations">↻</button></div>
+        <div id="conversation-list" class="conversation-list"></div>
+      </div>
+      <div class="sidebar-footer">
+        <div class="user-avatar">A</div>
+        <div class="user-details"><strong id="user-name">Account</strong><small>Private workspace</small></div>
+        <button id="logout-button" class="icon-button" type="button" aria-label="Sign out">⇥</button>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div><p class="eyebrow">ALFIE CORE</p><h1 id="view-title">Chat</h1></div>
+        <div class="connection-state"><span id="connection-dot"></span><span id="connection-label">Connecting</span></div>
+      </header>
+
+      <section id="link-required" class="link-required" hidden>
+        <div class="link-icon">↔</div>
+        <p class="eyebrow">CONNECT YOUR ACCOUNT</p>
+        <h2>Bring your Alfie history with you.</h2>
+        <p class="muted">Generate a one-time link code in Petrio under Alfie → Tool access. Enter it here to connect this interface to the same conversations, memories and permissions.</p>
+        <form id="link-form" class="link-form">
+          <label>One-time Petrio code<input name="code" autocomplete="one-time-code" maxlength="10" placeholder="XXXXXXXXXX" required></label>
+          <button class="primary-button" type="submit">Link account</button>
+        </form>
+        <p id="link-error" class="error-message" role="alert"></p>
+      </section>
+
+      <section id="view-chat" class="view view-chat">
+        <div id="messages" class="messages">
+          <div class="welcome-message">
+            <div class="welcome-mark">A</div>
+            <h2>What shall we work on?</h2>
+            <p>I'm here when you need me. No rush.</p>
+            <div class="suggestion-grid">
+              <button type="button" data-prompt="Give me a concise overview of my current priorities.">A quick overview <span>↗</span></button>
+              <button type="button" data-prompt="Help me think through an idea I'm developing.">Think through an idea <span>↗</span></button>
+              <button type="button" data-prompt="Summarise the recent activity and pending actions available to you.">Review recent activity <span>↗</span></button>
+            </div>
+          </div>
+        </div>
+        <form id="chat-form" class="composer">
+          <textarea name="message" rows="1" placeholder="Message Alfie…" aria-label="Message Alfie" required></textarea>
+          <div class="composer-footer"><span>Alfie can make mistakes. Review actions before approving.</span><button class="send-button" type="submit" aria-label="Send message">↑</button></div>
+        </form>
+      </section>
+
+      <section id="view-garden" class="view" hidden>
+        <div class="view-intro"><p class="eyebrow">MEMORY & CONTEXT</p><h2>The Garden</h2><p class="muted">Memories stay yours. See where each one came from, update it or let it go.</p></div>
+        <div class="toolbar"><input id="memory-search" type="search" placeholder="Search memories…"><button id="refresh-memories" class="secondary-button" type="button">Refresh</button></div>
+        <div id="memory-list" class="memory-list"></div>
+        <form id="memory-form" class="memory-form">
+          <h3>Plant a memory</h3>
+          <label>What should Alfie remember?<textarea name="text" rows="2" maxlength="20000" required></textarea></label>
+          <button class="primary-button" type="submit">Save to Garden</button>
+        </form>
+      </section>
+
+      <section id="view-tools" class="view" hidden>
+        <div class="view-intro"><p class="eyebrow">PERMISSIONS & SAFETY</p><h2>Tools & access</h2><p class="muted">Reads run only within granted scopes. Changes and external actions wait for your approval.</p></div>
+        <div class="two-column">
+          <section class="surface"><h3>Registered tools</h3><div id="tool-list" class="item-list"></div></section>
+          <section class="surface"><h3>Pending approvals</h3><div id="pending-list" class="item-list"></div></section>
+        </div>
+        <section class="surface activity-surface"><h3>Recent activity</h3><div id="audit-list" class="item-list"></div></section>
+      </section>
+
+      <section id="view-settings" class="view" hidden>
+        <div class="view-intro"><p class="eyebrow">CORE STATUS</p><h2>Settings</h2><p class="muted">Connection, model providers and account status.</p></div>
+        <div class="settings-grid">
+          <section class="surface"><h3>Account connection</h3><div id="account-status" class="settings-value">Checking…</div></section>
+          <section class="surface"><h3>Model providers</h3><div id="provider-status" class="item-list"></div></section>
+          <section class="surface"><h3>Core capabilities</h3><div id="core-status" class="item-list"></div></section>
+        </div>
+      </section>
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    </main>
+  </div>
+</body>
+</html>
