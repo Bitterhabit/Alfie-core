@@ -92,7 +92,9 @@ test("password changes require the current password and revoke every active sess
     const userId = bootstrapped.user.id;
     const first = await store.login("alfie-admin", password);
     const second = await store.login("alfie-admin", password);
+    assert.equal(first.user.id, userId);
     await assert.rejects(store.changePassword(userId, "incorrect-current-password", nextPassword), { status: 401 });
+    assert.equal((await store.load()).users[0]?.id, userId);
     await assert.rejects(store.changePassword(userId, password, password), { status: 400 });
     assert.deepEqual(await store.changePassword(userId, password, nextPassword), { changed: true });
     assert.equal(await store.authenticate(first.token), null);
