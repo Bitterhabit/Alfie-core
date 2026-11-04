@@ -253,3 +253,25 @@ test("normal conversation saves preserve completed legacy import markers", async
     assert.equal(saved.localStorageImportCompleted, true);
   });
 });
+
+test("legacy import rejects oversized message content and action metadata", async () => {
+  await temporaryStore(async (store) => {
+    const conversationId = "99999999-9999-4999-8999-999999999999";
+    await assert.rejects(store.importLegacy("user-1", {
+      conversations: [{
+        id: conversationId,
+        messages: [{ role: "user", content: "x".repeat(50001) }]
+      }]
+    }), { status: 413, code: "CONVERSATION_IMPORT_LIMIT" });
+    await assert.rejects(store.importLegacy("user-1", {
+      conversations: [{
+        id: conversationId,
+        messages: [{
+          role: "assistant", content: "Review this",
+          actionCard: { state: "approval", arguments: { payload: "x".repeat(12001) } }
+        }]
+      }]
+    }), { status: 413, code: "CONVERSATION_IMPORT_LIMIT" });
+    assert.equal((await store.database("user-1")).conversations.length, 0);
+  });
+});
