@@ -190,6 +190,42 @@ $("#password-form").addEventListener("submit", async (event) => {
   }
 });
 
+$("#password-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const currentPassword = form.elements.currentPassword.value;
+  const newPassword = form.elements.newPassword.value;
+  const confirmPassword = form.elements.confirmPassword.value;
+  const error = $("#password-error");
+  error.textContent = "";
+  if (newPassword !== confirmPassword) {
+    error.textContent = "The new passwords do not match.";
+    return;
+  }
+  const button = form.querySelector("button[type='submit']");
+  button.disabled = true;
+  try {
+    await api("/api/auth/password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    form.reset();
+    state.user = null;
+    state.csrfToken = "";
+    state.linked = false;
+    state.activeConversationId = null;
+    state.conversationLoadToken += 1;
+    state.conversationLoading = false;
+    state.messages = [];
+    showLogin();
+    $("#login-error").textContent = "Password updated. Sign in again with your new password.";
+  } catch (failure) {
+    error.textContent = failure.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
 $("#logout-button").addEventListener("click", logout);
 $("#mobile-logout").addEventListener("click", logout);
 $("#mobile-new-chat").addEventListener("click", () => newConversation().catch((error) => toast(error.message)));
