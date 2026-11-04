@@ -11,6 +11,7 @@ Current package: @alfie/core 0.3.0
 - No published host port; the service is intended to be reached by trusted backends on a private Docker network.
 - Non-root container, read-only root filesystem, dropped capabilities, restricted temporary filesystem and a health check.
 - Provider-neutral signed identity contract with simultaneous Petrio and standalone-interface identity providers using different secrets.
+- One-time cross-client account linking: Petrio issues short-lived single-use codes; the standalone interface consumes them to map its local account to the same canonical Core user ID. Unlinked interface identities cannot access user data.
 - Legacy Petrio identity headers remain compatible.
 - Reusable server-side Node.js client SDK for the standalone interface and other trusted clients.
 - Core-owned conversation, memory, permission, pending-action and audit persistence.
@@ -19,12 +20,12 @@ Current package: @alfie/core 0.3.0
 - Version-bound memory write approvals, duplicate detection and audit history.
 - Python specialist-service boundary documented; Python workers are not part of the authoritative Core.
 - Backup and restore procedure documented for the standalone Core volume.
-- GitHub Actions validates the standalone Compose project, runs the full Node.js test suite and builds the Core image. Latest run: 94 tests passed, 0 failed; Compose validation and image build succeeded.
+- GitHub Actions validates the standalone Compose project, runs the full Node.js test suite and builds the Core image. Latest run: 99 tests passed, 0 failed; Compose validation and image build succeeded.
 
 ## Remaining release gates
 
 1. **Separate Git repository:** complete. The independent repository is Bitterhabit/Alfie-core. The extracted folder has been removed from the Petrio extraction branch; Petrio now retains only the client adapter and optional network overlay.
-2. **Canonical identity and account linking:** each trusted client must authenticate its own user session and map that person to the same stable Core user ID. The HMAC identity assertion is not a login system.
+2. **Canonical identity and account linking:** Core-side linking is implemented and tested. Petrio can issue a one-time link code, and the standalone identity can consume it. The standalone interface still needs its own login/session system; HMAC identity assertions are not a login system.
 3. **Runtime validation:** install dependencies, run the full Node test suite, validate both Compose definitions with Docker Compose, build the image and exercise health/readiness and API flows. Tests have been added but have not been run in this environment.
 4. **Migration rehearsal:** test a full Petrio conversation and memory import into a fresh Core volume, verify counts/provenance/relationships, test rollback and confirm Petrio's source data remains intact.
 5. **Operational validation:** test backup and restore, permissions, volume ownership, restart behaviour and single-instance storage assumptions.
