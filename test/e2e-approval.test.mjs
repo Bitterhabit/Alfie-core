@@ -9,6 +9,7 @@ import { createPetrioIdentityAuth } from "../src/auth/petrioIdentity.mjs";
 import { ToolRegistry } from "../src/tools/registry.mjs";
 import { PermissionStore } from "../src/permissions/store.mjs";
 import { PendingActionStore } from "../src/agent/pendingActionStore.mjs";
+import { AuditStore } from "../src/audit/store.mjs";
 
 async function withServer(options, run) {
   const server = createAlfieCoreServer(options);
@@ -85,6 +86,7 @@ test("agent proposal stays pending until the owning Petrio user approves it, the
       },
       permissionStore,
       pendingActionStore,
+      auditStore: new AuditStore({ dataDirectory: directory }),
       toolRegistry
     }, async (base) => {
       const headersFor = (userId, method, requestPath) => ({
