@@ -17,6 +17,7 @@ The independent service currently provides:
 - When Core is enabled, Petrio's shared Memory Engine/Garden adapter now uses Core as its authoritative store. Before the first Core memory operation it imports the complete legacy memory snapshot (up to 2,000 entries); truncated snapshots are rejected rather than partially imported. If Core is explicitly disabled, the adapter continues using the legacy Petrio API. If Core is enabled but unavailable, it fails closed rather than silently splitting memory writes across two stores.
 - A provider registry for Ollama and OpenAI-compatible endpoints.
 - Provider health inspection, short-lived health caching, mode/priority selection and automatic fallback.
+- The standalone Settings workspace now displays each configured endpoint's installed model inventory and marks the currently configured model. This is discovery/status only; model pulling and persistent model selection are the next model-management milestone.
 - Non-streaming model chat at `POST /v1/chat` and NDJSON streaming at `POST /v1/chat/stream`.
 - Provider failover both during health-based selection and when a provider fails before a response is established.
 - API-key-safe provider configuration output at `GET /v1/providers`.
