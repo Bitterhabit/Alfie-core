@@ -193,6 +193,8 @@ function renderConversationList(host, conversations = []) {
   if (!host) return;
   host.replaceChildren();
   for (const item of conversations) {
+    const row = document.createElement("div");
+    row.className = "conversation-row";
     const button = document.createElement("button");
     button.type = "button";
     button.className = "conversation-item" + (item.id === state.activeConversationId ? " active" : "");
@@ -201,7 +203,14 @@ function renderConversationList(host, conversations = []) {
       $("#mobile-history-sheet").hidden = true;
       loadConversation(item.id).catch((error) => toast(error.message));
     });
-    host.appendChild(button);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "conversation-delete";
+    remove.textContent = "×";
+    remove.setAttribute("aria-label", "Delete " + (item.title || "conversation"));
+    remove.addEventListener("click", () => deleteConversation(item.id));
+    row.append(button, remove);
+    host.appendChild(row);
   }
   if (!conversations.length) {
     const empty = document.createElement("p");
@@ -260,6 +269,22 @@ async function newConversation({ fromSend = false } = {}) {
 
 $("#new-chat").addEventListener("click", () => newConversation().catch((error) => toast(error.message)));
 $("#refresh-conversations").addEventListener("click", () => loadConversations().catch((error) => toast(error.message)));
+
+async function deleteConversation(id) {
+  if (state.sending || state.conversationLoading) { toast("Wait for the current conversation action to finish."); return; }
+  if (!confirm("Delete this conversation and its messages? This cannot be undone.")) return;
+  try {
+    await api("/api/core/conversations/" + encodeURIComponent(id), { method: "DELETE", body: "{}" });
+    if (state.activeConversationId === id) {
+      state.activeConversationId = null;
+      state.messages = [];
+      state.conversationLoadToken += 1;
+      renderMessages();
+    }
+    await loadConversations();
+    toast("Conversation deleted.");
+  } catch (error) { toast(error.message); }
+}
 
 function appendInlineMarkdown(parent, source) {
   const text = String(source || "");
