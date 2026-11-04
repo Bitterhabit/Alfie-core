@@ -20,13 +20,13 @@ Current package: @alfie/core 0.3.0
 - Version-bound memory write approvals, duplicate detection and audit history.
 - Python specialist-service boundary documented; Python workers are not part of the authoritative Core.
 - Backup and restore procedure documented for the standalone Core volume.
-- GitHub Actions validates the standalone Compose project, runs the full Node.js test suite and builds the Core image. Latest verified run: 106 tests passed, 0 failed; standalone Compose validation and both Core and interface image builds succeeded. Run: https://github.com/Bitterhabit/Alfie-core/actions/runs/41834993129.
+- GitHub Actions validates the standalone Compose project, runs the full Node.js test suite and builds the Core image. Latest verified run: 107 tests passed, 0 failed; standalone Compose validation and both Core and interface image builds succeeded. The suite now includes an end-to-end test that bootstraps the standalone interface, links it to Petrio identity, and reads/writes the shared conversation and Garden data. Run: https://github.com/Bitterhabit/Alfie-core/actions/runs/41835452768.
 
 ## Remaining release gates
 
 1. **Separate Git repository:** complete. The independent repository is Bitterhabit/Alfie-core. The extracted folder has been removed from the Petrio extraction branch; Petrio now retains only the client adapter and optional network overlay.
 2. **Canonical identity and account linking:** Core-side linking is implemented and tested. Petrio can issue a one-time link code, and the standalone identity can consume it. The standalone interface now has a first-run bootstrap account, password login, hashed opaque sessions, CSRF protection, idle/absolute expiry and a Core account-link flow. It is a single-admin foundation; account recovery, password change and multi-user administration remain future work.
-3. **Runtime validation:** CI now runs the full Node test suite (106 passing), validates the standalone Compose project, and builds both Core and interface images. Actual deployment, ingress, health/readiness against the live environment and end-to-end use with the configured model endpoint remain to be exercised.
+3. **Runtime validation:** CI now runs the full Node test suite (107 passing), validates the standalone Compose project, and builds both Core and interface images. Actual deployment, ingress, health/readiness against the live environment and end-to-end use with the configured model endpoint remain to be exercised.
 4. **Migration rehearsal:** test a full Petrio conversation and memory import into a fresh Core volume, verify counts/provenance/relationships, test rollback and confirm Petrio's source data remains intact.
 5. **Operational validation:** test backup and restore, permissions, volume ownership, restart behaviour and single-instance storage assumptions.
 6. **Petrio network adapter:** connect Petrio to the independent Core private Docker network and verify read-only adapters before enabling the feature flag.
