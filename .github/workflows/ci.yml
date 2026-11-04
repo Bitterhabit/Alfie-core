@@ -29,3 +29,5 @@ jobs:
           docker compose -f compose.yaml config --quiet
       - name: Build Core image
         run: docker build -t alfie-core:${{ github.sha }} .
+      - name: Build standalone interface image
+        run: docker build -t alfie-interface:${{ github.sha }} -f interface/Dockerfile .
