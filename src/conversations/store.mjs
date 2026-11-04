@@ -210,8 +210,9 @@ export class ConversationStore {
         });
       }
       const conversations = [...current.conversations, ...additions];
-      const activeConversationId = conversations.some((item) => item.id === current.activeConversationId)
-        ? current.activeConversationId
+      const currentActiveConversationId = current.activeConversationId || current.conversations[0]?.id || null;
+      const activeConversationId = conversations.some((item) => item.id === currentActiveConversationId)
+        ? currentActiveConversationId
         : cleaned.activeConversationId && conversations.some((item) => item.id === cleaned.activeConversationId)
           ? cleaned.activeConversationId
           : conversations[0]?.id || null;
