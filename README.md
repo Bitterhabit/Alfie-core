@@ -42,7 +42,7 @@ Current interface features:
 - first-run single-administrator bootstrap from `ALFIE_UI_BOOTSTRAP_USERNAME` and `ALFIE_UI_BOOTSTRAP_PASSWORD`;
 - password login with asynchronous scrypt verification, opaque hashed session tokens, CSRF protection, idle and absolute expiry;
 - independent standalone workspace provisioning, with an optional one-time Petrio account-link choice before the first workspace is created; each choice receives a separate canonical Core identity and isolated data; unlinked identities cannot access another user's data;
-- chat history, automatic conversation titles, new conversations, confirmed conversation deletion, guarded Alfie chat and streaming response transport;
+- chat history with search, automatic conversation titles, user-controlled renaming, new conversations, confirmed conversation deletion, guarded Alfie chat and streaming response transport;
 - per-turn model routing modes (Auto, Light, Standard and Work) selected directly in the composer;
 - an in-chat approval notice that takes the user directly to the pending action review, while approval itself remains a separate explicit action;
 - a Garden view for searching, planting, editing and forgetting memories, with provenance labels and importance controls;
@@ -97,6 +97,7 @@ All `/v1/*` routes require `Authorization: Bearer <ALFIE_CORE_SERVICE_TOKEN>`. A
 - `POST /v1/conversations` — create a conversation with an optional title.
 - `GET /v1/conversations/:id` — retrieve one of the authenticated user's conversations.
 - `POST /v1/conversations/:id/messages` — append a user or assistant message.
+- `PATCH /v1/conversations/:id` — rename that user's conversation (validated 1–120 character title).
 - `DELETE /v1/conversations/:id` — delete that user's conversation.
 - `GET /v1/memories` — list/search memories; optional `origin`, `source`, `type`, `tag`, `minImportance`, `q`, `limit` and `sort` query parameters.
 - `GET /v1/memories/stats` — counts by source/type and relationship totals.
