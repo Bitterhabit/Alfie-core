@@ -153,6 +153,30 @@ export class ConversationStore {
   }
 
   async importLegacy(userId, source = {}) {
+    const input = source && typeof source === "object" ? source : {};
+    const rawConversations = Array.isArray(input.conversations) ? input.conversations : [];
+    if (rawConversations.length > MAX_CONVERSATIONS) {
+      throw Object.assign(new Error(`Legacy history contains more than the supported ${MAX_CONVERSATIONS} conversations. No data was imported; export and migrate in reviewed batches.`), {
+        status: 413, code: "CONVERSATION_IMPORT_LIMIT"
+      });
+    }
+    for (const [index, conversation] of rawConversations.entries()) {
+      if (!conversation || typeof conversation !== "object" || Array.isArray(conversation)) {
+        throw Object.assign(new Error(`Legacy conversation ${index + 1} is not a valid object. No data was imported.`), {
+          status: 400, code: "CONVERSATION_IMPORT_INVALID"
+        });
+      }
+      if (conversation.messages !== undefined && !Array.isArray(conversation.messages)) {
+        throw Object.assign(new Error(`Legacy conversation ${index + 1} has an invalid messages collection. No data was imported.`), {
+          status: 400, code: "CONVERSATION_IMPORT_INVALID"
+        });
+      }
+      if ((conversation.messages || []).length > MAX_MESSAGES) {
+        throw Object.assign(new Error(`Legacy conversation ${index + 1} contains more than the supported ${MAX_MESSAGES} messages. No data was imported; export and migrate in reviewed batches.`), {
+          status: 413, code: "CONVERSATION_IMPORT_LIMIT"
+        });
+      }
+    }
     return this.exclusive(userId, async () => {
       const current = await this.load(userId);
       if (current.conversations.length) {
