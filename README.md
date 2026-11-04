@@ -125,7 +125,7 @@ Requires Node.js 22 or newer.
 ```sh
 npm install
 npm test
-ALFIE_CORE_SERVICE_TOKEN="$(openssl rand -hex 32)" ALFIE_CORE_STANDALONE_IDENTITY_SECRET="$(openssl rand -hex 32)" npm start
+ALFIE_CORE_DATA_DIR=./data ALFIE_CORE_SERVICE_TOKEN="$(openssl rand -hex 32)" ALFIE_CORE_STANDALONE_IDENTITY_SECRET="$(openssl rand -hex 32)" npm start
 ```
 
 The service listens on port 8780 by default.
