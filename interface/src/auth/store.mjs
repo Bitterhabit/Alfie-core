@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
-  createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual
+  createHash, randomBytes, randomUUID, scrypt, scryptSync, timingSafeEqual
 } from "node:crypto";
+import { promisify } from "node:util";
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9._-]{3,32}$/;
 const SESSION_IDLE_MS = 30 * 60 * 1000;
@@ -12,8 +13,12 @@ function digest(value) {
   return createHash("sha256").update(String(value)).digest("hex");
 }
 
-function passwordDigest(password, salt) {
-  return scryptSync(password, salt, 64).toString("hex");
+const scryptAsync = promisify(scrypt);
+const DUMMY_SALT = "alfie-interface-dummy-salt-v1";
+const DUMMY_HASH = scryptSync("not-a-real-alfie-password", DUMMY_SALT, 64).toString("hex");
+
+async function passwordDigest(password, salt) {
+  return (await scryptAsync(password, salt, 64)).toString("hex");
 }
 
 function validateCredentials(username, password) {
@@ -74,7 +79,7 @@ export class InterfaceAuthStore {
         username: username.trim(),
         displayName: username.trim(),
         passwordSalt: salt,
-        passwordHash: passwordDigest(password, salt),
+        passwordHash: await passwordDigest(password, salt),
         createdAt: new Date(this.now()).toISOString(),
         disabled: false
       };
@@ -96,12 +101,14 @@ export class InterfaceAuthStore {
     return this.exclusive(async () => {
       const store = await this.load();
       const user = store.users.find((item) => item.username.toLowerCase() === String(username || "").trim().toLowerCase());
-      if (!user || user.disabled || typeof password !== "string") {
-        throw Object.assign(new Error("Username or password was not accepted."), { status: 401 });
-      }
-      const actual = Buffer.from(passwordDigest(password, user.passwordSalt), "hex");
-      const expected = Buffer.from(user.passwordHash, "hex");
-      if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+      const validPasswordShape = typeof password === "string" && password.length >= 16 && password.length <= 256;
+      const candidate = typeof password === "string" ? password.slice(0, 256) : "";
+      // Always perform a password derivation, including for unknown/disabled users,
+      // so account existence is not exposed by a cheap early-return path.
+      const actual = Buffer.from(await passwordDigest(candidate, user?.passwordSalt || DUMMY_SALT), "hex");
+      const expected = Buffer.from(user?.passwordHash || DUMMY_HASH, "hex");
+      const matches = actual.length === expected.length && timingSafeEqual(actual, expected);
+      if (!user || user.disabled || !validPasswordShape || !matches) {
         throw Object.assign(new Error("Username or password was not accepted."), { status: 401 });
       }
       const now = this.now();
