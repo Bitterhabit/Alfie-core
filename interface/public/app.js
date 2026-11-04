@@ -201,6 +201,24 @@ $("#mobile-history-button").addEventListener("click", () => {
 });
 $("#mobile-history-close").addEventListener("click", () => { $("#mobile-history-sheet").hidden = true; });
 
+$("#standalone-button").addEventListener("click", async () => {
+  const button = $("#standalone-button");
+  const error = $("#standalone-error");
+  error.textContent = "";
+  button.disabled = true;
+  try {
+    await api("/api/auth/standalone", { method: "POST", body: "{}" });
+    state.linked = true;
+    toast("Your independent Alfie workspace is ready.");
+    await refreshIdentity();
+    await loadConversations();
+  } catch (failure) {
+    error.textContent = failure.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
 $("#link-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
