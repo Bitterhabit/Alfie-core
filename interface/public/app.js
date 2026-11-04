@@ -246,7 +246,10 @@ document.querySelectorAll(".nav-item").forEach((button) => {
 function renderConversationList(host, conversations = []) {
   if (!host) return;
   host.replaceChildren();
-  for (const item of conversations) {
+  const searchId = host.id === "mobile-conversation-list" ? "#mobile-history-search" : "#history-search";
+  const query = String($(searchId)?.value || "").trim().toLowerCase();
+  const visibleConversations = conversations.filter((item) => !query || String(item.title || "New conversation").toLowerCase().includes(query));
+  for (const item of visibleConversations) {
     const row = document.createElement("div");
     row.className = "conversation-row";
     const button = document.createElement("button");
@@ -266,10 +269,10 @@ function renderConversationList(host, conversations = []) {
     row.append(button, remove);
     host.appendChild(row);
   }
-  if (!conversations.length) {
+  if (!visibleConversations.length) {
     const empty = document.createElement("p");
     empty.className = "sidebar-empty";
-    empty.textContent = "Your conversations will appear here.";
+    empty.textContent = conversations.length ? "No conversations match that search." : "Your conversations will appear here.";
     host.appendChild(empty);
   }
 }
@@ -323,6 +326,9 @@ async function newConversation({ fromSend = false } = {}) {
 
 $("#new-chat").addEventListener("click", () => newConversation().catch((error) => toast(error.message)));
 $("#refresh-conversations").addEventListener("click", () => loadConversations().catch((error) => toast(error.message)));
+["#history-search", "#mobile-history-search"].forEach((selector) => {
+  $(selector)?.addEventListener("input", () => loadConversations().catch((error) => toast(error.message)));
+});
 
 async function deleteConversation(id) {
   if (state.sending || state.conversationLoading) { toast("Wait for the current conversation action to finish."); return; }
