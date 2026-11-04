@@ -64,7 +64,7 @@ export class IdentityLinkStore {
     return this.exclusive(async () => {
       const store = await this.load();
       const now = this.now();
-      store.codes = store.codes.filter((item) => item.expiresAt > now && item.attempts < 5);
+      store.codes = store.codes.filter((item) => item.expiresAt > now);
       store.codes = store.codes.filter((item) => item.canonicalUserId !== canonicalUserId);
       let code;
       let hash;
@@ -91,7 +91,7 @@ export class IdentityLinkStore {
     return this.exclusive(async () => {
       const store = await this.load();
       const now = this.now();
-      store.codes = store.codes.filter((item) => item.expiresAt > now && item.attempts < 5);
+      store.codes = store.codes.filter((item) => item.expiresAt > now);
       store.attempts = store.attempts.filter((item) => item.resetAt > now);
       const attempt = store.attempts.find((item) => item.providerId === providerId && item.subjectId === subjectId);
       if (attempt && attempt.count >= 5) {
