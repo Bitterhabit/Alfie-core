@@ -329,7 +329,7 @@ async function newConversation({ fromSend = false } = {}) {
 $("#new-chat").addEventListener("click", () => newConversation().catch((error) => toast(error.message)));
 $("#refresh-conversations").addEventListener("click", () => loadConversations().catch((error) => toast(error.message)));
 ["#history-search", "#mobile-history-search"].forEach((selector) => {
-  $(selector)?.addEventListener("input", () => loadConversations().catch((error) => toast(error.message)));
+  $(selector)?.addEventListener("input", () => renderConversations(state.conversations));
 });
 
 async function deleteConversation(id) {
