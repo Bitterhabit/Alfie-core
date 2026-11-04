@@ -443,6 +443,10 @@ export function createAlfieCoreServer({
           const message = await conversationStore.appendMessage(identity.userId, messageMatch[1], body);
           return json(res, 201, { message });
         }
+        if (conversationMatch && req.method === "PATCH") {
+          const body = await readJsonBody(req);
+          return json(res, 200, { conversation: await conversationStore.rename(identity.userId, conversationMatch[1], body.title) });
+        }
         if (conversationMatch && req.method === "DELETE") {
           return json(res, 200, await conversationStore.remove(identity.userId, conversationMatch[1]));
         }
