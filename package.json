@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node src/server.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs interface/test/*.test.mjs"
   },
   "dependencies": {
     "ajv": "^8.17.1",
