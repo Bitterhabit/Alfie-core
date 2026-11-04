@@ -239,7 +239,7 @@ export function createAlfieCoreServer({
           linked: identity.providerId === "petrio" || Boolean(canonicalUserId)
         });
       } catch (error) {
-        return json(res, error.status || 401, { error: error.message });
+        return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) });
       }
     }
 
@@ -267,7 +267,7 @@ export function createAlfieCoreServer({
     if (isToolsCollection || isPermissionsCollection || isToolPlan || isToolApproval || isToolExecution || isToolRejection || isPendingActions) {
       let identity;
       try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
-      catch (error) { return json(res, error.status || 401, { error: error.message }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
       try {
         const scopes = await permissionStore.list(identity.userId);
         if (isToolsCollection && req.method === "GET") {
@@ -326,7 +326,7 @@ export function createAlfieCoreServer({
     if (isMemoryCollection || isMemoryStats || isMemoryImport || memoryMatch || memoryRelatedMatch || memoryRelationshipsMatch || memoryRelationshipDeleteMatch) {
       let identity;
       try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
-      catch (error) { return json(res, error.status || 401, { error: error.message }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
       try {
         if (isMemoryCollection && req.method === "GET") {
           const memories = await memoryStore.list(identity.userId, {
@@ -386,7 +386,7 @@ export function createAlfieCoreServer({
     if (url.pathname === "/v1/audit" && req.method === "GET") {
       let identity;
       try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
-      catch (error) { return json(res, error.status || 401, { error: error.message }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
       try {
         const limit = url.searchParams.get("limit") || 100;
         return json(res, 200, { events: await auditStore.list(identity.userId, { limit }) });
@@ -403,7 +403,7 @@ export function createAlfieCoreServer({
     if (isConversationCollection || isConversationDatabase || isConversationImport || conversationMatch || messageMatch) {
       let identity;
       try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
-      catch (error) { return json(res, error.status || 401, { error: error.message }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
       try {
         if (isConversationDatabase && req.method === "GET") {
           return json(res, 200, { database: await conversationStore.database(identity.userId) });
