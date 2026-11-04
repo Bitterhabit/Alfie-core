@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import { createPetrioIdentityAuth } from "../src/auth/petrioIdentity.mjs";
 import { createIdentityAuthRegistry, createSignedIdentityAuth } from "../src/auth/signedIdentity.mjs";
 import { createAlfieCoreServer } from "../src/server.mjs";
+import { IdentityLinkStore } from "../src/auth/identityLinkStore.mjs";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 const secret = "test-only-identity-secret-with-at-least-32-bytes";
 
@@ -97,4 +101,39 @@ test("signed identity replay protection has a bounded cache and fails closed", (
   assert.throws(() => auth.verify(auth.sign("user-2", options), options), {
     status: 503, code: "IDENTITY_REPLAY_CACHE_FULL"
   });
+});
+
+
+test("standalone identity can provision its own isolated Core workspace without Petrio", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-standalone-identity-"));
+  const identityAuth = createSignedIdentityAuth({ secret, providerId: "standalone-ui" });
+  const identityLinkStore = new IdentityLinkStore({ dataDirectory: directory });
+  const token = "test-service-token-that-is-long-enough-32";
+  const server = createAlfieCoreServer({ serviceToken: token, identityAuth, identityLinkStore, petrioHarnessClient: { enabled: false } });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = "http://127.0.0.1:" + server.address().port;
+  const call = async (userId, method, requestPath, body) => fetch(base + requestPath, {
+    method,
+    headers: { authorization: "Bearer " + token, ...identityAuth.sign(userId, { method, path: requestPath }), ...(body ? { "content-type": "application/json" } : {}) },
+    ...(body ? { body: JSON.stringify(body) } : {})
+  });
+  try {
+    const created = await call("local-user-1", "POST", "/v1/identity/standalone", {});
+    assert.equal(created.status, 201);
+    const workspace = await created.json();
+    assert.equal(workspace.created, true);
+    assert.equal(workspace.mode, "standalone");
+    const who = await call("local-user-1", "GET", "/v1/whoami");
+    assert.deepEqual(await who.json(), { authenticated: true, userId: workspace.userId, identityProvider: "standalone-ui", linked: true });
+    const conversations = await call("local-user-1", "GET", "/v1/conversations");
+    assert.equal(conversations.status, 200);
+    const other = await call("local-user-2", "GET", "/v1/conversations");
+    assert.equal(other.status, 403);
+    assert.equal((await other.json()).code, "IDENTITY_LINK_REQUIRED");
+    const repeated = await call("local-user-1", "POST", "/v1/identity/standalone", {});
+    assert.equal((await repeated.json()).userId, workspace.userId);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await fs.rm(directory, { recursive: true, force: true });
+  }
 });
