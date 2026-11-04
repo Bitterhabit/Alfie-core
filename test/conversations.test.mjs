@@ -211,3 +211,31 @@ test("legacy import records completion even when all imported IDs already exist 
     assert.equal((await store.get("user-1", existing.id)).title, "Existing");
   });
 });
+
+test("server and browser-local legacy histories have independent one-time import markers", async () => {
+  await temporaryStore(async (store) => {
+    await store.importLegacy("user-1", {
+      conversations: [{
+        id: "66666666-6666-4666-8666-666666666666",
+        title: "Petrio server history",
+        messages: []
+      }]
+    }, "petrio-server");
+    await store.importLegacy("user-1", {
+      conversations: [{
+        id: "77777777-7777-4777-8777-777777777777",
+        title: "Browser local history",
+        messages: []
+      }]
+    }, "petrio-local-storage");
+    const database = await store.database("user-1");
+    assert.equal(database.legacyImportCompleted, true);
+    assert.equal(database.localStorageImportCompleted, true);
+    assert.equal(database.conversations.length, 2);
+    const repeated = await store.importLegacy("user-1", {
+      conversations: [{ id: "77777777-7777-4777-8777-777777777777", title: "Changed", messages: [] }]
+    }, "petrio-local-storage");
+    assert.equal(repeated.imported, false);
+    assert.equal((await store.database("user-1")).conversations[1].title, "Browser local history");
+  });
+});
