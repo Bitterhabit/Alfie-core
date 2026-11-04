@@ -210,6 +210,11 @@ export function createAlfieInterfaceServer({
           return json(res, 200, await coreClient.linkIdentity(userId, body.code));
         }
 
+        if (method === "POST" && url.pathname === "/api/auth/standalone") {
+          requireCsrf(req, session);
+          return json(res, 201, await coreClient.createStandaloneWorkspace(userId));
+        }
+
         if (method === "GET" && url.pathname === "/api/core/whoami") {
           return json(res, 200, await coreClient.whoami(userId));
         }
