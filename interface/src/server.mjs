@@ -97,6 +97,7 @@ export function createAlfieInterfaceServer({
   authStore = new InterfaceAuthStore(),
   publicOrigin = process.env.ALFIE_UI_PUBLIC_ORIGIN,
   cookieSecure = COOKIE_SECURE,
+  trustProxyHeaders = process.env.ALFIE_UI_TRUST_PROXY_HEADERS === "true",
   coreClient = createAlfieCoreClient({
     baseUrl: process.env.ALFIE_CORE_URL || "http://alfie-core:8780",
     serviceToken: process.env.ALFIE_CORE_SERVICE_TOKEN || "",
@@ -152,7 +153,13 @@ export function createAlfieInterfaceServer({
 
         if (method === "POST" && url.pathname === "/api/auth/login") {
           if (!originAllowed(req, publicOrigin, cookieSecure)) return json(res, 403, { error: "Request origin was not accepted." });
-          const ip = String(req.headers["cf-connecting-ip"] || req.socket.remoteAddress || "unknown").slice(0, 100);
+          const forwardedIp = trustProxyHeaders ? req.headers["cf-connecting-ip"] : null;
+          const ip = String(forwardedIp || req.socket.remoteAddress || "unknown").slice(0, 100);
+          // Expired buckets are discarded and the map is bounded against random-IP memory growth.
+          for (const [key, value] of loginAttempts) {
+            if (value.resetAt <= now()) loginAttempts.delete(key);
+          }
+          while (loginAttempts.size >= 5000) loginAttempts.delete(loginAttempts.keys().next().value);
           const current = loginAttempts.get(ip);
           if (current && current.resetAt > now() && current.count >= 5) {
             return json(res, 429, { error: "Too many sign-in attempts. Wait ten minutes before trying again." });
