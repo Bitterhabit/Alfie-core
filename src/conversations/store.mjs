@@ -342,6 +342,28 @@ export class ConversationStore {
     });
   }
 
+  async rename(userId, conversationId, title) {
+    if (!CONVERSATION_ID_PATTERN.test(String(conversationId || ""))) {
+      throw Object.assign(new Error("Conversation not found."), { status: 404 });
+    }
+    if (typeof title !== "string") {
+      throw Object.assign(new Error("A conversation title is required."), { status: 400, code: "CONVERSATION_TITLE_INVALID" });
+    }
+    const cleanTitle = title.replace(/\\s+/g, " ").trim();
+    if (!cleanTitle || cleanTitle.length > 120) {
+      throw Object.assign(new Error("Conversation titles must contain between 1 and 120 characters."), { status: 400, code: "CONVERSATION_TITLE_INVALID" });
+    }
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      const conversation = store.conversations.find((item) => item.id === conversationId);
+      if (!conversation) throw Object.assign(new Error("Conversation not found."), { status: 404 });
+      conversation.title = cleanTitle;
+      conversation.updatedAt = this.now();
+      await this.save(userId, store);
+      return { id: conversation.id, title: conversation.title, updatedAt: conversation.updatedAt };
+    });
+  }
+
   async remove(userId, conversationId) {
     if (!CONVERSATION_ID_PATTERN.test(String(conversationId || ""))) {
       throw Object.assign(new Error("Conversation not found."), { status: 404 });
