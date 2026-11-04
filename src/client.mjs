@@ -79,6 +79,7 @@ export function createAlfieCoreClient({
     createConversation(userId, body = {}) { return request(userId, "/v1/conversations", { method: "POST", body }); },
     getConversation(userId, id) { return request(userId, "/v1/conversations/" + encodeURIComponent(id)); },
     appendMessage(userId, id, body) { return request(userId, "/v1/conversations/" + encodeURIComponent(id) + "/messages", { method: "POST", body }); },
+    renameConversation(userId, id, title) { return request(userId, "/v1/conversations/" + encodeURIComponent(id), { method: "PATCH", body: { title } }); },
     deleteConversation(userId, id) { return request(userId, "/v1/conversations/" + encodeURIComponent(id), { method: "DELETE" }); },
     listMemories(userId, query = "") { return request(userId, "/v1/memories" + (query ? "?" + query : "")); },
     createMemory(userId, body) { return request(userId, "/v1/memories", { method: "POST", body }); },
