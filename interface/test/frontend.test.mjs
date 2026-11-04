@@ -12,6 +12,8 @@ test("standalone workspace exposes independent navigation and model routing cont
     assert.match(html, new RegExp(`<option value="${mode}">`));
   }
   assert.match(app, /mode: \$\("#model-mode"\)\.value/);
+  assert.match(app, /chat-approval-card/);
+  assert.match(app, /Review in Tools & access/);
   assert.match(html, /data-view="garden"/);
   assert.match(html, /data-view="tools"/);
   assert.match(html, /data-view="settings"/);
