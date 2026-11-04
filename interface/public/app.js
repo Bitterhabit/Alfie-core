@@ -261,13 +261,23 @@ function renderConversationList(host, conversations = []) {
       $("#mobile-history-sheet").hidden = true;
       loadConversation(item.id).catch((error) => toast(error.message));
     });
+    const actions = document.createElement("div");
+    actions.className = "conversation-actions";
+    const rename = document.createElement("button");
+    rename.type = "button";
+    rename.className = "conversation-rename";
+    rename.textContent = "✎";
+    rename.setAttribute("aria-label", "Rename " + (item.title || "conversation"));
+    rename.title = "Rename conversation";
+    rename.addEventListener("click", () => renameConversation(item.id, item.title || "New conversation"));
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "conversation-delete";
     remove.textContent = "×";
     remove.setAttribute("aria-label", "Delete " + (item.title || "conversation"));
     remove.addEventListener("click", () => deleteConversation(item.id));
-    row.append(button, remove);
+    actions.append(rename, remove);
+    row.append(button, actions);
     host.appendChild(row);
   }
   if (!visibleConversations.length) {
@@ -302,7 +312,10 @@ async function loadConversation(id) {
     state.messages = payload.conversation?.messages || [];
     renderMessages();
     const list = await api("/api/core/conversations");
-    if (token === state.conversationLoadToken) renderConversations(list.conversations || []);
+    if (token === state.conversationLoadToken) {
+      state.conversations = list.conversations || [];
+      renderConversations(state.conversations);
+    }
   } finally {
     if (token === state.conversationLoadToken) state.conversationLoading = false;
   }
@@ -331,6 +344,22 @@ $("#refresh-conversations").addEventListener("click", () => loadConversations().
 ["#history-search", "#mobile-history-search"].forEach((selector) => {
   $(selector)?.addEventListener("input", () => renderConversations(state.conversations));
 });
+
+async function renameConversation(id, currentTitle) {
+  if (state.sending || state.conversationLoading) { toast("Wait for the current conversation action to finish."); return; }
+  const entered = window.prompt("Rename conversation", currentTitle);
+  if (entered === null) return;
+  const title = entered.replace(/\\s+/g, " ").trim();
+  if (!title || title.length > 120) { toast("Choose a title between 1 and 120 characters."); return; }
+  try {
+    await api("/api/core/conversations/" + encodeURIComponent(id), {
+      method: "PATCH",
+      body: JSON.stringify({ title })
+    });
+    await loadConversations();
+    toast("Conversation renamed.");
+  } catch (error) { toast(error.message); }
+}
 
 async function deleteConversation(id) {
   if (state.sending || state.conversationLoading) { toast("Wait for the current conversation action to finish."); return; }
