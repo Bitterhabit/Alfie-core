@@ -18,6 +18,19 @@ import { registerMemoryTools } from "./integrations/memoryTools.mjs";
 const SERVICE_VERSION = "0.3.0";
 const MAX_BODY_BYTES = 1024 * 1024;
 
+
+async function resolveIdentity(identityAuth, identityLinkStore, headers, request) {
+  const identity = identityAuth.verify(headers, request);
+  if (identity.providerId === "petrio") return identity;
+  const canonicalUserId = await identityLinkStore.resolve(identity.providerId, identity.userId);
+  if (!canonicalUserId) {
+    throw Object.assign(new Error("Link this interface account to your Petrio account before accessing Alfie data."), {
+      status: 403, code: "IDENTITY_LINK_REQUIRED"
+    });
+  }
+  return { ...identity, userId: canonicalUserId };
+}
+
 function createDefaultIdentityAuth() {
   const providers = [createPetrioIdentityAuth()];
   const standaloneSecret = process.env.ALFIE_CORE_STANDALONE_IDENTITY_SECRET || "";
@@ -135,6 +148,7 @@ export function createAlfieCoreServer({
   })(),
   providerRegistry = new ProviderRegistry(),
   identityAuth = createDefaultIdentityAuth(),
+  identityLinkStore = new IdentityLinkStore(),
   petrioIdentityAuth = createPetrioIdentityAuth(),
   conversationStore = new ConversationStore(),
   memoryStore = new MemoryStore(),
@@ -178,9 +192,42 @@ export function createAlfieCoreServer({
     }
 
 
-    if (req.method === "GET" && url.pathname === "/v1/whoami") {
+
+    if (req.method === "POST" && url.pathname === "/v1/identity/link-codes") {
       try {
         const identity = identityAuth.verify(req.headers, { method: req.method, path: url.pathname + url.search });
+        if (identity.providerId !== "petrio") return json(res, 403, { error: "Only a signed Petrio session can create an account-link code." });
+        const result = await identityLinkStore.createCode(identity.userId);
+        return json(res, 201, result);
+      } catch (error) {
+        return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) });
+      }
+    }
+
+    if (req.method === "POST" && url.pathname === "/v1/identity/link") {
+      try {
+        const identity = identityAuth.verify(req.headers, { method: req.method, path: url.pathname + url.search });
+        if (identity.providerId !== "standalone-ui") return json(res, 403, { error: "Only the standalone interface identity can consume an account-link code." });
+        const body = await readJsonBody(req);
+        return json(res, 200, await identityLinkStore.consumeCode(identity.providerId, identity.userId, body.code));
+      } catch (error) {
+        return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) });
+      }
+    }
+
+    if (req.method === "POST" && url.pathname === "/v1/identity/unlink") {
+      try {
+        const identity = identityAuth.verify(req.headers, { method: req.method, path: url.pathname + url.search });
+        if (identity.providerId !== "standalone-ui") return json(res, 403, { error: "Only the standalone interface identity can unlink itself." });
+        return json(res, 200, await identityLinkStore.unlink(identity.providerId, identity.userId));
+      } catch (error) {
+        return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) });
+      }
+    }
+
+    if (req.method === "GET" && url.pathname === "/v1/whoami") {
+      try {
+        const identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search });
         return json(res, 200, { authenticated: true, userId: identity.userId, identityProvider: identity.providerId || "configured" });
       } catch (error) {
         return json(res, error.status || 401, { error: error.message });
@@ -192,8 +239,8 @@ export function createAlfieCoreServer({
         service: "alfie-core",
         version: SERVICE_VERSION,
         identityProviders: identityAuth.providerIds || [identityAuth.providerId].filter(Boolean),
-        implemented: ["multi-client-signed-identity", "service-authentication", "health", "readiness", "provider-registry", "provider-health", "model-selection", "bounded-agent-loop", "intent-based-context-assembly", "strict-json-schema-tool-validation", "read-draft-write-risk-tiers", "persistent-pending-actions", "explicit-approve-reject", "untrusted-data-envelopes", "tool-call-deduplication", "four-step-turn-budget", "30-second-wall-clock-budget", "tool-output-truncation", "signed-identity-provider-contract", "conversation-persistence", "conversation-snapshot-migration", "memory-crud", "memory-provenance", "ranked-memory-retrieval", "untrusted-memory-context", "memory-search-tool", "memory-read-tool", "approval-gated-memory-create", "approval-gated-memory-update", "approval-gated-memory-forget", "per-user-action-audit-log", "scoped-tool-registry", "permission-grants", "dashboard-approval-ui", "dashboard-permission-management"],
-        planned: ["mail-tool-adapter", "calendar-journal-write-adapters", "standalone-user-session-authentication", "canonical-account-linking"]
+        implemented: ["multi-client-signed-identity", "cross-client-account-linking", "service-authentication", "health", "readiness", "provider-registry", "provider-health", "model-selection", "bounded-agent-loop", "intent-based-context-assembly", "strict-json-schema-tool-validation", "read-draft-write-risk-tiers", "persistent-pending-actions", "explicit-approve-reject", "untrusted-data-envelopes", "tool-call-deduplication", "four-step-turn-budget", "30-second-wall-clock-budget", "tool-output-truncation", "signed-identity-provider-contract", "conversation-persistence", "conversation-snapshot-migration", "memory-crud", "memory-provenance", "ranked-memory-retrieval", "untrusted-memory-context", "memory-search-tool", "memory-read-tool", "approval-gated-memory-create", "approval-gated-memory-update", "approval-gated-memory-forget", "per-user-action-audit-log", "scoped-tool-registry", "permission-grants", "dashboard-approval-ui", "dashboard-permission-management"],
+        planned: ["mail-tool-adapter", "calendar-journal-write-adapters", "standalone-user-session-authentication"]
       });
     }
 
@@ -210,7 +257,7 @@ export function createAlfieCoreServer({
     const isPendingActions = url.pathname === "/v1/tools/pending";
     if (isToolsCollection || isPermissionsCollection || isToolPlan || isToolApproval || isToolExecution || isToolRejection || isPendingActions) {
       let identity;
-      try { identity = identityAuth.verify(req.headers, { method: req.method, path: url.pathname + url.search }); }
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
       catch (error) { return json(res, error.status || 401, { error: error.message }); }
       try {
         const scopes = await permissionStore.list(identity.userId);
@@ -269,7 +316,7 @@ export function createAlfieCoreServer({
     const isMemoryImport = url.pathname === "/v1/memories/import";
     if (isMemoryCollection || isMemoryStats || isMemoryImport || memoryMatch || memoryRelatedMatch || memoryRelationshipsMatch || memoryRelationshipDeleteMatch) {
       let identity;
-      try { identity = identityAuth.verify(req.headers, { method: req.method, path: url.pathname + url.search }); }
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
       catch (error) { return json(res, error.status || 401, { error: error.message }); }
       try {
         if (isMemoryCollection && req.method === "GET") {
@@ -329,7 +376,7 @@ export function createAlfieCoreServer({
 
     if (url.pathname === "/v1/audit" && req.method === "GET") {
       let identity;
-      try { identity = identityAuth.verify(req.headers, { method: req.method, path: url.pathname + url.search }); }
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
       catch (error) { return json(res, error.status || 401, { error: error.message }); }
       try {
         const limit = url.searchParams.get("limit") || 100;
@@ -346,7 +393,7 @@ export function createAlfieCoreServer({
     const isConversationImport = url.pathname === "/v1/conversations/import";
     if (isConversationCollection || isConversationDatabase || isConversationImport || conversationMatch || messageMatch) {
       let identity;
-      try { identity = identityAuth.verify(req.headers, { method: req.method, path: url.pathname + url.search }); }
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
       catch (error) { return json(res, error.status || 401, { error: error.message }); }
       try {
         if (isConversationDatabase && req.method === "GET") {
@@ -406,7 +453,7 @@ export function createAlfieCoreServer({
       req.on("aborted", () => controller.abort());
       res.on("close", () => { if (!res.writableEnded) controller.abort(); });
       try {
-        const identity = identityAuth.verify(req.headers, { method: req.method, path: url.pathname + url.search });
+        const identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search });
         const body = await readJsonBody(req);
         const result = await agentLoop.run({
           userId: identity.userId, messages: cleanMessages(body.messages),
@@ -440,7 +487,7 @@ export function createAlfieCoreServer({
       req.on("aborted", () => controller.abort(new Error("Petrio client disconnected.")));
       res.on("close", () => { if (!res.writableEnded) controller.abort(new Error("Petrio client disconnected.")); });
       try {
-        const identity = identityAuth.verify(req.headers, { method: req.method, path: url.pathname + url.search });
+        const identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search });
         const body = await readJsonBody(req);
         const messages = cleanMessages(body.messages);
         const requestedMode = ["auto", "light", "standard", "work"].includes(body.mode) ? body.mode : providers.mode;
