@@ -215,6 +215,16 @@ docker compose start alfie-core
 
 Replace the archive name with the backup you intend to restore. Backups contain private conversation and memory data; keep them encrypted and outside any public web directory. Test restore periodically before relying on a backup.
 
+The standalone interface has a separate `alfie-interface-data` volume containing the local account database and session records. Back it up separately when you create or change the interface account:
+
+```sh
+docker compose stop alfie-interface
+docker run --rm -v alfie-interface-data:/data:ro -v "$PWD/backups:/backup" alpine:3.20 sh -c 'tar -czf /backup/alfie-interface-$(date -u +%Y%m%dT%H%M%SZ).tar.gz -C /data .'
+docker compose start alfie-interface
+```
+
+Restore that archive to the `alfie-interface-data` volume using the same stop, clear, extract and `chown -R 1000:1000 /data` sequence shown above. The interface archive contains password hashes and session/CSRF records; keep it encrypted and private. If you do not need to preserve active sessions, revoke them after restoring or simply allow their 12-hour absolute expiry to elapse.
+
 ## Specialist Python services (planned)
 
 Node.js remains the only Alfie Core and the authority for identity, conversations, memory, permissions, tool execution, approvals and audit. Python is reserved for optional specialist workers where its ecosystem is useful, such as embeddings, semantic reranking, document/data analysis and model-assisted processing.
