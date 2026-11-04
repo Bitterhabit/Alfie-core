@@ -150,10 +150,10 @@ export class InterfaceAuthStore {
     });
   }
 
-  async changePassword(currentPassword, newPassword) {
+  async changePassword(userId, currentPassword, newPassword) {
     return this.exclusive(async () => {
       const store = await this.load();
-      const user = store.users[0];
+      const user = store.users.find((item) => item.id === userId);
       if (!user || user.disabled) throw Object.assign(new Error("The interface account is unavailable."), { status: 401 });
       const validCurrentShape = typeof currentPassword === "string" && currentPassword.length >= 16 && currentPassword.length <= 256;
       const candidate = typeof currentPassword === "string" ? currentPassword.slice(0, 256) : "";
