@@ -1,12 +1,13 @@
 # Alfie Core extraction status
 
 Last reviewed: 4 November 2026
-Current development branch: feature/alfie-core-extraction
+Repository: Bitterhabit/Alfie-core (main)
+Source extraction commit: 65cdacd
 Current package: @alfie/core 0.3.0
 
 ## Completed in the extraction branch
 
-- Independent Node.js Core service with its own Dockerfile, Compose project, environment template and persistent named volume.
+- Independent Node.js Core service extracted into its own GitHub repository, with its own Dockerfile, Compose project, environment template and persistent named volume.
 - No published host port; the service is intended to be reached by trusted backends on a private Docker network.
 - Non-root container, read-only root filesystem, dropped capabilities, restricted temporary filesystem and a health check.
 - Provider-neutral signed identity contract with simultaneous Petrio and standalone-interface identity providers using different secrets.
@@ -18,10 +19,11 @@ Current package: @alfie/core 0.3.0
 - Version-bound memory write approvals, duplicate detection and audit history.
 - Python specialist-service boundary documented; Python workers are not part of the authoritative Core.
 - Backup and restore procedure documented for the standalone Core volume.
+- GitHub Actions validates the standalone Compose project, runs the full Node.js test suite and builds the Core image. Latest run: 94 tests passed, 0 failed; Compose validation and image build succeeded.
 
 ## Remaining release gates
 
-1. **Separate Git repository:** the Core is still located in the alfie-core/ directory of the Petrio repository. Create an empty Bitterhabit/alfie-core repository, then split this directory into it without changing the active Petrio branch. The GitHub connection used for this work can update existing repositories but cannot create a new repository.
+1. **Separate Git repository:** complete. The independent repository is Bitterhabit/Alfie-core. The extracted folder has been removed from the Petrio extraction branch; Petrio now retains only the client adapter and optional network overlay.
 2. **Canonical identity and account linking:** each trusted client must authenticate its own user session and map that person to the same stable Core user ID. The HMAC identity assertion is not a login system.
 3. **Runtime validation:** install dependencies, run the full Node test suite, validate both Compose definitions with Docker Compose, build the image and exercise health/readiness and API flows. Tests have been added but have not been run in this environment.
 4. **Migration rehearsal:** test a full Petrio conversation and memory import into a fresh Core volume, verify counts/provenance/relationships, test rollback and confirm Petrio's source data remains intact.
