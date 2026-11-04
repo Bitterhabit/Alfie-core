@@ -175,15 +175,18 @@ document.querySelectorAll(".nav-item").forEach((button) => {
   button.addEventListener("click", () => setView(button.dataset.view));
 });
 
-function renderConversations(conversations = []) {
-  const host = $("#conversation-list");
+function renderConversationList(host, conversations = []) {
+  if (!host) return;
   host.replaceChildren();
   for (const item of conversations) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "conversation-item" + (item.id === state.activeConversationId ? " active" : "");
     button.textContent = item.title || "New conversation";
-    button.addEventListener("click", () => loadConversation(item.id));
+    button.addEventListener("click", () => {
+      $("#mobile-history-sheet").hidden = true;
+      loadConversation(item.id).catch((error) => toast(error.message));
+    });
     host.appendChild(button);
   }
   if (!conversations.length) {
@@ -192,6 +195,11 @@ function renderConversations(conversations = []) {
     empty.textContent = "Your conversations will appear here.";
     host.appendChild(empty);
   }
+}
+
+function renderConversations(conversations = []) {
+  renderConversationList($("#conversation-list"), conversations);
+  renderConversationList($("#mobile-conversation-list"), conversations);
 }
 
 async function loadConversations() {
