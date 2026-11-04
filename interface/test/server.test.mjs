@@ -129,3 +129,50 @@ test("password endpoint requires CSRF, rotates credentials and clears the sessio
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+
+test("password change requires CSRF, revokes the session and accepts the new password", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-ui-password-"));
+  const authStore = new InterfaceAuthStore({ dataDirectory: directory });
+  const currentPassword = "current-interface-password-2026";
+  const newPassword = "new-interface-password-rotated-2026";
+  await authStore.bootstrap("alfie-admin", currentPassword);
+  const server = createAlfieInterfaceServer({ authStore, cookieSecure: false, coreClient: {} });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = "http://127.0.0.1:" + server.address().port;
+  try {
+    const loginResponse = await fetch(base + "/api/auth/login", {
+      method: "POST",
+      headers: { origin: base, "content-type": "application/json" },
+      body: JSON.stringify({ username: "alfie-admin", password: currentPassword })
+    });
+    const cookie = loginResponse.headers.get("set-cookie").split(";")[0];
+    const login = await loginResponse.json();
+    const blocked = await fetch(base + "/api/auth/password", {
+      method: "POST",
+      headers: { origin: base, cookie, "content-type": "application/json" },
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    assert.equal(blocked.status, 403);
+
+    const changed = await fetch(base + "/api/auth/password", {
+      method: "POST",
+      headers: { origin: base, cookie, "content-type": "application/json", "x-csrf-token": login.csrfToken },
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    assert.deepEqual(await changed.json(), { changed: true });
+    assert.match(changed.headers.get("set-cookie"), /Max-Age=0/);
+    const oldSession = await fetch(base + "/api/auth/me", { headers: { cookie } });
+    assert.equal((await oldSession.json()).authenticated, false);
+
+    const newLogin = await fetch(base + "/api/auth/login", {
+      method: "POST",
+      headers: { origin: base, "content-type": "application/json" },
+      body: JSON.stringify({ username: "alfie-admin", password: newPassword })
+    });
+    assert.equal(newLogin.status, 200);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
