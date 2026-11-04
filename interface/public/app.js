@@ -726,6 +726,18 @@ async function loadSettings() {
         Number.isFinite(endpoint.latencyMs) ? endpoint.latencyMs + " ms" : ""
       ].filter(Boolean).join(" · ");
       providers.appendChild(createItem(config.name || endpoint.id, details));
+      const installedModels = Array.isArray(endpoint.models) ? endpoint.models : [];
+      if (installedModels.length) {
+        providers.appendChild(createItem(
+          "Installed on " + (config.name || endpoint.id),
+          installedModels.map((model) => model === config.model ? model + " · ACTIVE" : model).join("  |  ")
+        ));
+      } else {
+        providers.appendChild(createItem(
+          "Model inventory · " + (config.name || endpoint.id),
+          endpoint.online ? "No models are installed on this endpoint yet." : "Connect this endpoint to inspect its installed models."
+        ));
+      }
     }
     if (!health.endpoints?.length) providers.textContent = "No model endpoints configured.";
     core.textContent = (status.implemented || []).length + " capabilities active · " + (status.planned || []).length + " planned";
