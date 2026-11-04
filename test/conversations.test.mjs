@@ -42,6 +42,19 @@ test("serialises concurrent writes and rejects invalid message roles", async () 
   });
 });
 
+test("renames conversations with validated titles and preserves user isolation", async () => {
+  await temporaryStore(async (store) => {
+    const conversation = await store.create("user-1");
+    const renamed = await store.rename("user-1", conversation.id, "  Project   planning  ");
+    assert.equal(renamed.title, "Project planning");
+    assert.equal((await store.get("user-1", conversation.id)).title, "Project planning");
+    await assert.rejects(store.rename("user-2", conversation.id, "Private title"), { status: 404 });
+    await assert.rejects(store.rename("user-1", conversation.id, "   "), { status: 400, code: "CONVERSATION_TITLE_INVALID" });
+    await assert.rejects(store.rename("user-1", conversation.id, "x".repeat(121)), { status: 400, code: "CONVERSATION_TITLE_INVALID" });
+    assert.equal((await store.get("user-1", conversation.id)).title, "Project planning");
+  });
+});
+
 test("deletes only the selected user's conversation", async () => {
   await temporaryStore(async (store) => {
     const conversation = await store.create("user-1");
