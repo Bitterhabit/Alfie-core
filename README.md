@@ -49,7 +49,7 @@ Current interface features:
 - mobile navigation with access to recent conversations, new chat and sign out;
 - safe DOM-based Markdown rendering for headings, lists, emphasis, code and HTTP(S) links.
 
-On first startup, provide a unique bootstrap username and a password of at least 16 characters through the interface container environment. Remove both bootstrap values after the first account has been created. The interface intentionally has no public self-registration route. Password recovery, password change and multi-user account administration are not yet implemented.
+On first startup, provide a unique bootstrap username and a password of at least 16 characters through the interface container environment. Remove both bootstrap values after the first account has been created. The interface intentionally has no public self-registration route. Password changes require the current password and revoke all active sessions. Account recovery and multi-user account administration are not yet implemented.
 
 Set `ALFIE_UI_PUBLIC_ORIGIN` to the exact public HTTPS origin used by the reverse proxy. Keep `ALFIE_UI_COOKIE_SECURE=true`. `ALFIE_UI_TRUST_PROXY_HEADERS` defaults to false; enable it only if the interface is reachable exclusively through a trusted proxy that overwrites `CF-Connecting-IP`.
 
