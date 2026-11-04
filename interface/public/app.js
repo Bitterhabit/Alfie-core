@@ -423,7 +423,7 @@ async function sendMessage(rawText) {
       method: "POST",
       credentials: "same-origin",
       headers: { "content-type": "application/json", "x-csrf-token": state.csrfToken },
-      body: JSON.stringify({ messages: state.messages.slice(-16).map(({ role, content: text }) => ({ role, content: text })) })
+      body: JSON.stringify({ messages: state.messages.slice(-16).map(({ role, content: text }) => ({ role, content: text })), mode: $("#model-mode").value })
     });
     if (!response.ok) {
       const failure = await response.json().catch(() => ({}));
@@ -642,8 +642,17 @@ async function loadSettings() {
       api("/api/core/whoami"), api("/api/core/status"), api("/api/core/providers"), api("/api/core/providers/health")
     ]);
     account.textContent = who.linked ? "Linked to your Petrio account · " + who.userId : "Not linked";
+    providers.appendChild(createItem("Routing mode", String(providerList.mode || "auto").toUpperCase() + " · choose a mode from the chat composer to influence model selection."));
     for (const endpoint of (health.endpoints || [])) {
-      providers.appendChild(createItem(endpoint.id, (endpoint.online ? "Online" : "Offline") + " · " + (endpoint.model || "No model configured")));
+      const config = (providerList.endpoints || []).find((item) => item.id === endpoint.id) || {};
+      const details = [
+        endpoint.online ? "Online" : "Offline",
+        config.provider || "provider",
+        endpoint.model || config.model || "No model configured",
+        config.mode || "standard",
+        Number.isFinite(endpoint.latencyMs) ? endpoint.latencyMs + " ms" : ""
+      ].filter(Boolean).join(" · ");
+      providers.appendChild(createItem(config.name || endpoint.id, details));
     }
     if (!health.endpoints?.length) providers.textContent = "No model endpoints configured.";
     core.textContent = (status.implemented || []).length + " capabilities active · " + (status.planned || []).length + " planned";
