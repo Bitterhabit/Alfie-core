@@ -42,7 +42,8 @@
         <button class="nav-item" data-view="settings" type="button"><span>⚙</span> Settings</button>
       </nav>
       <div class="sidebar-section">
-        <div class="sidebar-heading"><span>RECENT</span><button id="refresh-conversations" type="button" aria-label="Refresh conversations">↻</button></div>
+        <div class="sidebar-heading"><span>RECENT CHATS</span><button id="refresh-conversations" type="button" aria-label="Refresh conversations">↻</button></div>
+        <label class="history-search-wrap"><span class="sr-only">Search conversations</span><input id="history-search" class="history-search" type="search" placeholder="Search conversations…" autocomplete="off"></label>
         <div id="conversation-list" class="conversation-list"></div>
       </div>
       <div class="sidebar-footer">
@@ -64,6 +65,7 @@
       </header>
       <section id="mobile-history-sheet" class="mobile-history-sheet" hidden aria-label="Recent conversations">
         <div class="mobile-history-header"><strong>Recent conversations</strong><button id="mobile-history-close" class="icon-button" type="button" aria-label="Close history">×</button></div>
+        <input id="mobile-history-search" class="history-search mobile-history-search" type="search" placeholder="Search conversations…" autocomplete="off">
         <div id="mobile-conversation-list" class="conversation-list"></div>
       </section>
 
