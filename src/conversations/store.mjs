@@ -154,18 +154,31 @@ export class ConversationStore {
 
   async importLegacy(userId, source = {}) {
     const input = source && typeof source === "object" ? source : {};
-    const rawConversations = Array.isArray(input.conversations) ? input.conversations : [];
+    if (!Array.isArray(input.conversations)) {
+      throw Object.assign(new Error("Legacy conversation import requires a conversations array. No data was imported."), {
+        status: 400, code: "CONVERSATION_IMPORT_INVALID"
+      });
+    }
+    const rawConversations = input.conversations;
     if (rawConversations.length > MAX_CONVERSATIONS) {
       throw Object.assign(new Error(`Legacy history contains more than the supported ${MAX_CONVERSATIONS} conversations. No data was imported; export and migrate in reviewed batches.`), {
         status: 413, code: "CONVERSATION_IMPORT_LIMIT"
       });
     }
+    const seenLegacyIds = new Set();
     for (const [index, conversation] of rawConversations.entries()) {
       if (!conversation || typeof conversation !== "object" || Array.isArray(conversation)) {
         throw Object.assign(new Error(`Legacy conversation ${index + 1} is not a valid object. No data was imported.`), {
           status: 400, code: "CONVERSATION_IMPORT_INVALID"
         });
       }
+      const legacyId = String(conversation.id || "");
+      if (legacyId && seenLegacyIds.has(legacyId)) {
+        throw Object.assign(new Error(`Legacy conversation ID "${legacyId}" appears more than once. No data was imported.`), {
+          status: 400, code: "CONVERSATION_IMPORT_DUPLICATE_ID"
+        });
+      }
+      if (legacyId) seenLegacyIds.add(legacyId);
       if (conversation.messages !== undefined && !Array.isArray(conversation.messages)) {
         throw Object.assign(new Error(`Legacy conversation ${index + 1} has an invalid messages collection. No data was imported.`), {
           status: 400, code: "CONVERSATION_IMPORT_INVALID"
