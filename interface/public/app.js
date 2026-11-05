@@ -645,6 +645,7 @@ $("#memory-editor-form").addEventListener("submit", async (event) => {
   }
 });
 $("#memory-editor-cancel").addEventListener("click", () => $("#memory-editor").close());
+$("#memory-editor-cancel-secondary").addEventListener("click", () => $("#memory-editor").close());
 
 $("#refresh-memories").addEventListener("click", loadMemories);
 $("#memory-search").addEventListener("input", () => {
