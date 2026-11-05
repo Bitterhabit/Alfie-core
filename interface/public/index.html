@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#171326">
   <title>Alfie — Personal AI</title>
-  <link rel="stylesheet" href="/styles.css?v=alfie-workspace-0.6.0">\n  <link rel="stylesheet" href="/alfie-design-system.css?v=alfie-design-0.1.0">
+  <link rel="stylesheet" href="/styles.css?v=alfie-workspace-0.6.0">\n  <link rel="stylesheet" href="/alfie-design-system.css?v=alfie-design-0.2.0">
   <script src="/app.js?v=alfie-workspace-0.6.0" defer></script>
 </head>
 <body>
@@ -138,6 +138,15 @@
           <section class="surface"><h3>Change password</h3><form id="password-form" class="stack"><label>Current password<input name="currentPassword" type="password" autocomplete="current-password" minlength="16" maxlength="256" required></label><label>New password<input name="newPassword" type="password" autocomplete="new-password" minlength="16" maxlength="256" required></label><label>Confirm new password<input name="confirmPassword" type="password" autocomplete="new-password" minlength="16" maxlength="256" required></label><button class="secondary-button" type="submit">Update password</button><p class="muted">Changing your password signs out all active sessions, including this one.</p><p id="password-error" class="error-message" role="alert"></p></form></section>
         </div>
       </section>
+      <dialog id="memory-editor" class="alfie-dialog" aria-labelledby="memory-editor-title">
+        <form id="memory-editor-form" class="memory-editor-form">
+          <input id="memory-editor-id" name="memoryId" type="hidden">
+          <div class="dialog-heading"><div><p class="eyebrow">GARDEN ENTRY</p><h2 id="memory-editor-title">Tend to this memory</h2></div><button id="memory-editor-cancel" class="icon-button" type="button" aria-label="Close editor">×</button></div>
+          <label>Memory<textarea id="memory-editor-text" name="text" rows="5" maxlength="20000" required></textarea></label>
+          <label>Importance <span class="field-hint">1 · Low — 10 · High</span><input id="memory-editor-importance" name="importance" type="number" min="1" max="10" required></label>
+          <div class="dialog-actions"><button class="secondary-button" id="memory-editor-cancel-secondary" type="button">Cancel</button><button class="primary-button" type="submit">Save changes</button></div>
+        </form>
+      </dialog>
       <div id="toast" class="toast" role="status" aria-live="polite"></div>
     </main>
   </div>
