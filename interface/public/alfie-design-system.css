@@ -181,3 +181,91 @@ input, textarea, select { border-radius: var(--alfie-radius-sm); }
 @media (prefers-reduced-motion: reduce) {
   .alfie-dialog[open] { animation: none; }
 }
+
+/* Pixel-art character: a quiet layer of pixel texture and stepped motion. */
+body::before {
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  opacity: .13;
+  background-image:
+    linear-gradient(rgba(190,171,255,.11) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(190,171,255,.11) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(ellipse at 52% 43%, #000 0%, transparent 74%);
+}
+body::after {
+  position: fixed;
+  z-index: 0;
+  top: 22%;
+  right: 9%;
+  width: 2px;
+  height: 2px;
+  pointer-events: none;
+  content: "";
+  background: rgba(218,205,255,.72);
+  box-shadow:
+    4px 0 rgba(185,165,255,.46),
+    8px 0 rgba(185,165,255,.18),
+    0 4px rgba(185,165,255,.35),
+    8px 4px rgba(185,165,255,.3),
+    4px 8px rgba(185,165,255,.22),
+    16px 12px rgba(185,165,255,.3),
+    20px 12px rgba(185,165,255,.14);
+  animation: alfie-pixel-float 9s steps(4,end) infinite;
+}
+@keyframes alfie-pixel-float {
+  0%, 100% { opacity: .28; transform: translate3d(0,0,0); }
+  48% { opacity: .7; transform: translate3d(-3px,-5px,0); }
+  52% { opacity: .62; transform: translate3d(-2px,-4px,0); }
+}
+
+/* A tiny pixel glint makes the Alfie mark feel alive without becoming a mascot animation. */
+.brand-mark::before, .welcome-mark::before {
+  position: absolute;
+  z-index: 2;
+  top: 9px;
+  left: 10px;
+  width: 2px;
+  height: 2px;
+  pointer-events: none;
+  content: "";
+  background: rgba(225,215,255,.85);
+  box-shadow:
+    4px 0 rgba(185,165,255,.7),
+    0 4px rgba(185,165,255,.65),
+    8px 4px rgba(185,165,255,.4),
+    4px 8px rgba(185,165,255,.45);
+  animation: alfie-pixel-twinkle 6.5s steps(3,end) infinite;
+}
+@keyframes alfie-pixel-twinkle {
+  0%, 100% { opacity: .3; }
+  35% { opacity: .85; }
+  58% { opacity: .48; }
+}
+.nav-item.active::after {
+  width: 3px;
+  height: 3px;
+  margin-left: auto;
+  background: var(--alfie-accent);
+  box-shadow: 3px 0 rgba(185,165,255,.5), 0 3px rgba(185,165,255,.5);
+  content: "";
+  image-rendering: pixelated;
+}
+#connection-dot.online {
+  animation: alfie-status-pixel 3.8s steps(2,end) infinite;
+}
+@keyframes alfie-status-pixel {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .58; }
+}
+@media (max-width: 620px) {
+  body::after { top: 14%; right: 8%; opacity: .18; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body::after, .brand-mark::before, .welcome-mark::before, #connection-dot.online {
+    animation: none !important;
+  }
+}
