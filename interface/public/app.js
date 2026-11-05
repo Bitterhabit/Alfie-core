@@ -598,15 +598,12 @@ async function loadMemories() {
       const meta = [memory.origin, "importance " + memory.importance, ...(memory.tags || [])].join(" · ");
       const edit = {
         label: "Edit",
-        onClick: async () => {
-          const text = prompt("Update this memory", memory.text || "");
-          if (text === null || !text.trim()) return;
-          const importanceInput = prompt("Importance from 1 (low) to 10 (high)", String(memory.importance || 5));
-          if (importanceInput === null) return;
-          const importance = Number(importanceInput);
-          if (!Number.isInteger(importance) || importance < 1 || importance > 10) { toast("Importance must be a whole number from 1 to 10."); return; }
-          try { await api("/api/core/memories/" + encodeURIComponent(memory.id), { method: "PATCH", body: JSON.stringify({ text, importance }) }); await loadMemories(); }
-          catch (error) { toast(error.message); }
+        onClick: () => {
+          $("#memory-editor-id").value = memory.id;
+          $("#memory-editor-text").value = memory.text || "";
+          $("#memory-editor-importance").value = String(memory.importance || 5);
+          $("#memory-editor").showModal();
+          $("#memory-editor-text").focus();
         }
       };
       const forget = {
@@ -622,6 +619,32 @@ async function loadMemories() {
     if (!payload.memories?.length) host.textContent = "No matching memories yet.";
   } catch (error) { host.textContent = error.message; }
 }
+
+$("#memory-editor-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const id = form.elements.memoryId.value;
+  const text = form.elements.text.value.trim();
+  const importance = Number(form.elements.importance.value);
+  if (!text) { toast("A memory cannot be empty."); return; }
+  if (!Number.isInteger(importance) || importance < 1 || importance > 10) { toast("Importance must be a whole number from 1 to 10."); return; }
+  const save = form.querySelector('[type="submit"]');
+  save.disabled = true;
+  try {
+    await api("/api/core/memories/" + encodeURIComponent(id), {
+      method: "PATCH",
+      body: JSON.stringify({ text, importance })
+    });
+    $("#memory-editor").close();
+    await loadMemories();
+    toast("Garden entry updated.");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    save.disabled = false;
+  }
+});
+$("#memory-editor-cancel").addEventListener("click", () => $("#memory-editor").close());
 
 $("#refresh-memories").addEventListener("click", loadMemories);
 $("#memory-search").addEventListener("input", () => {
