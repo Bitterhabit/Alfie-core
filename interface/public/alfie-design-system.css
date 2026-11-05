@@ -269,3 +269,44 @@ body::after {
     animation: none !important;
   }
 }
+
+
+/* Full-workspace atmosphere: layered plum light, soft vignette and slow ambient drift. */
+html, body {
+  background-color: #100d19;
+  background-image:
+    radial-gradient(ellipse 72% 58% at 52% -12%, rgba(124,91,190,.23), transparent 72%),
+    radial-gradient(ellipse 46% 52% at 100% 42%, rgba(105,67,132,.12), transparent 74%),
+    radial-gradient(ellipse 48% 48% at 0% 100%, rgba(79,66,142,.13), transparent 76%),
+    radial-gradient(ellipse 100% 100% at 50% 50%, transparent 48%, rgba(5,4,11,.42) 100%),
+    linear-gradient(145deg, #151020 0%, #100d19 48%, #130e1d 100%);
+  background-attachment: fixed;
+}
+.ambient {
+  opacity: .22;
+  filter: blur(104px) saturate(118%);
+}
+.ambient-one {
+  width: min(58vw, 700px);
+  height: min(58vw, 700px);
+  top: -390px;
+  left: 9%;
+  background: radial-gradient(circle, rgba(142,105,218,.68), rgba(104,75,160,.2) 48%, transparent 72%);
+}
+.ambient-two {
+  width: min(48vw, 560px);
+  height: min(48vw, 560px);
+  right: -7%;
+  bottom: -340px;
+  background: radial-gradient(circle, rgba(155,91,151,.48), rgba(104,72,142,.15) 50%, transparent 74%);
+}
+body::before {
+  opacity: .085;
+  background-size: 32px 32px;
+  mask-image: radial-gradient(ellipse at 50% 45%, #000 0%, rgba(0,0,0,.72) 34%, transparent 78%);
+}
+@media (max-width: 620px) {
+  .ambient-one { width: 390px; height: 390px; top: -250px; left: -110px; }
+  .ambient-two { width: 340px; height: 340px; right: -170px; bottom: -210px; }
+  body::before { opacity: .065; }
+}
