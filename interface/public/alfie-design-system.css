@@ -1,0 +1,149 @@
+/*
+ * Alfie UI foundation
+ * Shared visual language for the independent workspace and future embedded surfaces.
+ * Keep these tokens and primitives portable; host applications may adapt layout, not identity.
+ */
+:root {
+  --alfie-bg: #100d19;
+  --alfie-surface: #191426;
+  --alfie-surface-raised: #211a32;
+  --alfie-surface-hover: #2b2240;
+  --alfie-border: rgba(190,171,255,.16);
+  --alfie-border-strong: rgba(190,171,255,.29);
+  --alfie-text: #f1edf9;
+  --alfie-muted: #aaa1ba;
+  --alfie-muted-soft: #827991;
+  --alfie-accent: #b9a5ff;
+  --alfie-accent-strong: #8b72e8;
+  --alfie-accent-soft: #e1d7ff;
+  --alfie-positive: #8fd2ad;
+  --alfie-caution: #e8b17d;
+  --alfie-danger: #e58c9a;
+  --alfie-radius-sm: 8px;
+  --alfie-radius-md: 12px;
+  --alfie-radius-lg: 17px;
+  --alfie-shadow-panel: 0 18px 48px rgba(0,0,0,.22);
+  --alfie-motion: 180ms cubic-bezier(.2,.7,.25,1);
+}
+
+/* Atmospheric identity: a little depth, never a distracting moving wallpaper. */
+.ambient {
+  opacity: .17;
+  filter: blur(88px);
+  will-change: transform;
+}
+.ambient-one { animation: alfie-drift-one 34s ease-in-out infinite alternate; }
+.ambient-two { animation: alfie-drift-two 41s ease-in-out infinite alternate; }
+@keyframes alfie-drift-one {
+  from { transform: translate3d(-12px,0,0) scale(.96); }
+  to { transform: translate3d(42px,28px,0) scale(1.08); }
+}
+@keyframes alfie-drift-two {
+  from { transform: translate3d(10px,0,0) scale(1.02); }
+  to { transform: translate3d(-34px,-24px,0) scale(.94); }
+}
+
+/* Consistent workspace proportions: focused content, with room to breathe. */
+.workspace { padding-inline: clamp(18px,3vw,42px); }
+.workspace > .view:not(.view-chat) {
+  width: 100%;
+  max-width: 1180px;
+  margin-inline: auto;
+}
+.view { padding-top: clamp(24px,3.2vh,38px); }
+.view-intro { max-width: 900px; margin: 4px 0 27px; }
+.view-intro h2 { font-size: clamp(25px,2.4vw,31px); }
+.view-intro p:last-child { max-width: 620px; }
+
+/* Reusable surface language for Garden, Tools, Settings and future embedded cards. */
+.surface, .memory-form {
+  border-color: var(--alfie-border);
+  border-radius: var(--alfie-radius-lg);
+  background: linear-gradient(145deg,rgba(37,29,57,.82),rgba(22,18,35,.88));
+  box-shadow: inset 0 1px rgba(255,255,255,.025);
+}
+.surface { padding: clamp(17px,2vw,22px); }
+.surface h3, .memory-form h3 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 16px;
+  color: var(--alfie-accent-soft);
+  font-size: 12px;
+  letter-spacing: .01em;
+}
+.surface h3:before, .memory-form h3:before {
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--alfie-accent);
+  box-shadow: 0 0 12px rgba(185,165,255,.35);
+  content: "";
+}
+.item-list { gap: 9px; }
+.list-item {
+  align-items: flex-start;
+  padding: 14px;
+  border-color: rgba(190,171,255,.12);
+  border-radius: var(--alfie-radius-md);
+  background: rgba(13,10,22,.34);
+  transition: border-color var(--alfie-motion), background var(--alfie-motion), transform var(--alfie-motion);
+}
+.list-item:hover {
+  border-color: rgba(190,171,255,.28);
+  background: rgba(40,31,61,.56);
+  transform: translateY(-1px);
+}
+.list-item > div:first-child { min-width: 0; }
+.list-item strong { font-size: 11px; line-height: 1.5; }
+.list-item p { font-size: 10px; line-height: 1.65; }
+.item-actions { flex-wrap: wrap; }
+.item-actions button { min-height: 31px; }
+
+/* Garden gets a calmer, more editorial card rhythm instead of a compressed log. */
+.toolbar, .memory-list, .memory-form { max-width: 900px; }
+.toolbar { align-items: center; margin-bottom: 17px; }
+.toolbar input { min-width: 0; }
+.memory-list { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 11px; }
+.memory-list .list-item { min-height: 112px; flex-direction: column; }
+.memory-list .list-item strong { display: block; color: #f1edf9; font-size: 12px; }
+.memory-list .list-item p { margin-top: 8px; color: var(--alfie-muted); }
+.memory-list .item-actions { align-self: flex-end; }
+.memory-form { margin-top: 20px; padding: clamp(17px,2.4vw,23px); }
+.memory-form label { gap: 9px; }
+.memory-form textarea { min-height: 86px; }
+
+/* Tools is a control surface: separate decisions from the audit trail. */
+.two-column { align-items: start; gap: 16px; }
+.two-column > .surface { min-width: 0; min-height: 210px; }
+.activity-surface { margin-top: 16px; }
+.activity-surface .list-item { align-items: center; }
+.settings-grid { gap: 16px; }
+.settings-grid > .surface { min-width: 0; }
+
+/* Quiet, consistent interaction feedback across all Alfie surfaces. */
+.nav-item, .new-chat-button, .primary-button, .secondary-button, .icon-button,
+.suggestion-grid button, .send-button, .connection-state {
+  transition-duration: var(--alfie-motion);
+}
+button:active { transform: translateY(0) scale(.985); }
+input, textarea, select { border-radius: var(--alfie-radius-sm); }
+::selection { color: #fff; background: rgba(139,114,232,.55); }
+
+@media (max-width: 760px) {
+  .memory-list { grid-template-columns: 1fr; }
+  .memory-list .list-item { min-height: 0; }
+  .two-column { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .workspace { padding-inline: 14px; }
+  .view { padding-top: 22px; }
+  .view-intro { margin-bottom: 20px; }
+  .toolbar { gap: 7px; }
+  .toolbar .secondary-button { flex-shrink: 0; }
+  .memory-form { margin-top: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ambient-one, .ambient-two { animation: none !important; }
+  .list-item, button, .nav-item { transition: none !important; }
+}
