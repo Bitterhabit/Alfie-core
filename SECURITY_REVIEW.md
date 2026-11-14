@@ -35,4 +35,4 @@
 
 ## Verification status
 
-Source changes and test cases have been prepared in the feature branch. A successful local Node test run, Docker build, live deployment check and browser-based visual/accessibility review have **not** been performed as part of this source-only GitHub edit. Treat this as a targeted hardening pass, not a security certification.
+GitHub Actions run #187 passed the Node test suite, standalone browser-script syntax check, Compose validation, Core image build and standalone interface image build. The container smoke-test step was still running at the time of this review. No live homelab deployment check or browser-based visual/accessibility review has been performed. Treat this as a targeted hardening pass, not a security certification.
