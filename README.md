@@ -58,7 +58,11 @@ Set `ALFIE_UI_PUBLIC_ORIGIN` to the exact public HTTPS origin used by the revers
 
 The interface is available on port 8781 inside the private `alfie-core-internal` network. The Compose project does not publish a host port. Put a trusted reverse proxy in front of it when you are ready to expose the web UI.
 
-## Security review\n\nSee [`SECURITY_REVIEW.md`](./SECURITY_REVIEW.md) for the interface security review, fixes in this pass, deployment requirements and remaining risks. New bootstrap passwords and password changes require at least 16 characters. Existing shorter passwords remain usable for sign-in so deployments are not unexpectedly locked out; rotate them through Settings.\n\n## Provider configuration
+## Security review
+
+See [`SECURITY_REVIEW.md`](./SECURITY_REVIEW.md) for the interface security review, fixes in this pass, deployment requirements and remaining risks. New bootstrap passwords and password changes require at least 16 characters. Existing shorter passwords remain usable for sign-in so deployments are not unexpectedly locked out; rotate them through Settings.
+
+## Provider configuration
 
 Set `ALFIE_CORE_PROVIDERS_JSON` in the Core container environment. Example:
 
