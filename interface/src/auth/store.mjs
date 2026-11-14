@@ -25,8 +25,8 @@ function validateCredentials(username, password) {
   if (typeof username !== "string" || !USERNAME_PATTERN.test(username)) {
     throw Object.assign(new Error("Username must be 3–32 characters using letters, numbers, dots, underscores or hyphens."), { status: 400 });
   }
-  if (typeof password !== "string" || password.length < 6 || password.length > 256) {
-    throw Object.assign(new Error("Choose a password between 6 and 256 characters."), { status: 400 });
+  if (typeof password !== "string" || password.length < 16 || password.length > 256) {
+    throw Object.assign(new Error("Choose a password between 16 and 256 characters."), { status: 400 });
   }
 }
 
@@ -101,7 +101,7 @@ export class InterfaceAuthStore {
     return this.exclusive(async () => {
       const store = await this.load();
       const user = store.users.find((item) => item.username.toLowerCase() === String(username || "").trim().toLowerCase());
-      const validPasswordShape = typeof password === "string" && password.length >= 6 && password.length <= 256;
+      // Preserve sign-in compatibility for existing accounts; bootstrap and password changes require 16+ characters.\n      const validPasswordShape = typeof password === "string" && password.length >= 6 && password.length <= 256;
       const candidate = typeof password === "string" ? password.slice(0, 256) : "";
       // Always perform a password derivation, including for unknown/disabled users,
       // so account existence is not exposed by a cheap early-return path.
