@@ -43,10 +43,20 @@ test("login issues a hashed opaque session and CSRF token; logout revokes it", a
 
 test("invalid credentials and weak bootstrap passwords are rejected", async () => {
   await withStore(async (store) => {
-    await assert.rejects(store.bootstrap("ab", "short"), { status: 400 });
+    await assert.rejects(store.bootstrap("ab", "short"), { status: 400 });\n    await assert.rejects(store.bootstrap("alfie-admin", "sixteen-char-xxx"), { status: 400 });
     await store.bootstrap("alfie-admin", password);
     await assert.rejects(store.login("alfie-admin", "incorrect-password"), { status: 401 });
     await assert.rejects(store.login("unknown-user", password), { status: 401 });
+  });
+});
+
+test("password changes reject passwords shorter than sixteen characters", async () => {
+  await withStore(async (store) => {
+    const bootstrapped = await store.bootstrap("alfie-admin", password);
+    await assert.rejects(
+      store.changePassword(bootstrapped.user.id, password, "too-short"),
+      { status: 400 }
+    );
   });
 });
 
