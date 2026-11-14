@@ -46,11 +46,23 @@ async function api(route, options = {}) {
       throw error;
     }
     return payload;
+  } catch (error) {
+    if (trackSoul) window.alfieSoul?.setState("error", "red");
+    throw error;
   } finally {
     if (trackSoul) {
       pendingApiCalls = Math.max(0, pendingApiCalls - 1);
-      if (pendingApiCalls === 0 && window.alfieSoul.getAnimationState() === "thinking") {
-        window.alfieSoul.setState("idle", "purple");
+      if (pendingApiCalls === 0) {
+        const animationState = window.alfieSoul.getAnimationState();
+        if (animationState === "thinking") {
+          window.alfieSoul.setState("idle", "purple");
+        } else if (animationState === "error") {
+          setTimeout(() => {
+            if (pendingApiCalls === 0 && window.alfieSoul?.getAnimationState() === "error") {
+              window.alfieSoul.setState("idle", "purple");
+            }
+          }, 2400);
+        }
       }
     }
   }
@@ -67,8 +79,10 @@ function toast(message) {
 function setConnection(online, label) {
   $("#connection-dot").classList.toggle("online", Boolean(online));
   $("#connection-label").textContent = label;
-  if (!online && window.alfieSoul?.getMood() !== "amber") {
-    window.alfieSoul?.setMood("red");
+  if (!online) {
+    window.alfieSoul?.setOffline("red");
+  } else if (window.alfieSoul?.getAnimationState() === "offline") {
+    window.alfieSoul?.setState("idle", "purple");
   }
 }
 
