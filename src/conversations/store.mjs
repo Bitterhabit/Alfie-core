@@ -116,6 +116,13 @@ export class ConversationStore {
           }
           message.actionCard = safeCard;
         }
+        if (rawMessage.metrics && typeof rawMessage.metrics === "object" && !Array.isArray(rawMessage.metrics)) {
+          message.metrics = rawMessage.metrics;
+        }
+        if (rawMessage.reaction && ["like", "flag"].includes(String(rawMessage.reaction))) {
+          message.reaction = String(rawMessage.reaction);
+          if (rawMessage.reactedAt) message.reactedAt = String(rawMessage.reactedAt).slice(0, 40);
+        }
         messages.push(message);
       }
       conversations.push({
@@ -331,12 +338,45 @@ export class ConversationStore {
       if (conversation.messages.length >= MAX_MESSAGES) {
         throw Object.assign(new Error("This conversation has reached its message limit."), { status: 409 });
       }
-      const message = { id: this.uuid(), role, content, createdAt: this.now() };
+      const metrics = (input.metrics && typeof input.metrics === "object" && !Array.isArray(input.metrics))
+        ? {
+            latencyMs: Number.isFinite(Number(input.metrics.latencyMs)) ? Math.round(Number(input.metrics.latencyMs)) : null,
+            totalTokens: Number.isFinite(Number(input.metrics.totalTokens)) ? Math.round(Number(input.metrics.totalTokens)) : null,
+            completionTokens: Number.isFinite(Number(input.metrics.completionTokens)) ? Math.round(Number(input.metrics.completionTokens)) : null,
+            model: typeof input.metrics.model === "string" ? input.metrics.model.slice(0, 100) : undefined
+          }
+        : undefined;
+      const reaction = (input.reaction && ["like", "flag"].includes(String(input.reaction))) ? String(input.reaction) : undefined;
+      const message = { id: this.uuid(), role, content, createdAt: this.now(), ...(metrics ? { metrics } : {}), ...(reaction ? { reaction, reactedAt: this.now() } : {}) };
       conversation.messages.push(message);
       conversation.updatedAt = message.createdAt;
       if (role === "user" && conversation.title === "New conversation") {
         conversation.title = content.replace(/\s+/g, " ").slice(0, 80);
       }
+      await this.save(userId, store);
+      return message;
+    });
+  }
+
+  async reactMessage(userId, conversationId, messageId, reaction) {
+    if (!CONVERSATION_ID_PATTERN.test(String(conversationId || ""))) {
+      throw Object.assign(new Error("Conversation not found."), { status: 404 });
+    }
+    const cleanReaction = ["like", "flag"].includes(String(reaction)) ? String(reaction) : null;
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      const conversation = store.conversations.find((item) => item.id === conversationId);
+      if (!conversation) throw Object.assign(new Error("Conversation not found."), { status: 404 });
+      const message = conversation.messages.find((item) => item.id === messageId);
+      if (!message) throw Object.assign(new Error("Message not found."), { status: 404 });
+      if (cleanReaction) {
+        message.reaction = cleanReaction;
+        message.reactedAt = this.now();
+      } else {
+        delete message.reaction;
+        delete message.reactedAt;
+      }
+      conversation.updatedAt = this.now();
       await this.save(userId, store);
       return message;
     });

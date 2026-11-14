@@ -3,5 +3,6 @@
 !.env.example
 node_modules/
 data/
+assets/
 backups/
 *.log

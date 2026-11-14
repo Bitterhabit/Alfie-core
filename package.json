@@ -8,12 +8,19 @@
     "node": ">=22"
   },
   "scripts": {
-    "start": "node src/server.mjs",
+    "dev": "node server.mjs",
+    "start": "node server.mjs",
+    "build": "node --check server.mjs src/server.mjs interface/src/server.mjs interface/public/app.js",
+    "lint": "node --check server.mjs src/server.mjs interface/src/server.mjs interface/public/app.js",
     "test": "node --test test/*.test.mjs interface/test/*.test.mjs"
   },
   "dependencies": {
+    "@google/genai": "^3.0.0",
     "ajv": "^8.17.1",
-    "ajv-formats": "^3.0.1"
+    "ajv-formats": "^3.0.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.13.0"
   },
   "exports": {
     "./client": "./src/client.mjs",

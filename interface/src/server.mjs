@@ -10,7 +10,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDirectory = path.resolve(here, "../public");
 const PORT = Number(process.env.PORT || 8781);
 const COOKIE_NAME = "alfie_ui_session";
-const COOKIE_SECURE = process.env.ALFIE_UI_COOKIE_SECURE !== "false";
+const isCookieSecure = () => process.env.ALFIE_UI_COOKIE_SECURE === "true";
 const MAX_BODY_BYTES = 1024 * 1024;
 
 function json(res, status, payload) {
@@ -35,14 +35,16 @@ function cookies(header = "") {
   return result;
 }
 
-function setSessionCookie(res, token, cookieSecure = COOKIE_SECURE) {
-  const flags = [`${COOKIE_NAME}=${encodeURIComponent(token)}`, "Path=/", "HttpOnly", "SameSite=Strict", "Max-Age=43200"];
+function setSessionCookie(res, token, cookieSecure = isCookieSecure()) {
+  const sameSite = cookieSecure ? "SameSite=None" : "SameSite=Lax";
+  const flags = [`${COOKIE_NAME}=${encodeURIComponent(token)}`, "Path=/", "HttpOnly", sameSite, "Max-Age=43200"];
   if (cookieSecure) flags.push("Secure");
   res.setHeader("set-cookie", flags.join("; "));
 }
 
-function clearSessionCookie(res, cookieSecure = COOKIE_SECURE) {
-  const flags = [`${COOKIE_NAME}=`, "Path=/", "HttpOnly", "SameSite=Strict", "Max-Age=0"];
+function clearSessionCookie(res, cookieSecure = isCookieSecure()) {
+  const sameSite = cookieSecure ? "SameSite=None" : "SameSite=Lax";
+  const flags = [`${COOKIE_NAME}=`, "Path=/", "HttpOnly", sameSite, "Max-Age=0"];
   if (cookieSecure) flags.push("Secure");
   res.setHeader("set-cookie", flags.join("; "));
 }
@@ -65,15 +67,25 @@ async function readJson(req) {
   }
 }
 
-function originAllowed(req, publicOrigin = process.env.ALFIE_UI_PUBLIC_ORIGIN, cookieSecure = COOKIE_SECURE) {
+function originAllowed(req, publicOrigin = process.env.ALFIE_UI_PUBLIC_ORIGIN, cookieSecure = isCookieSecure()) {
   const origin = req.headers.origin;
-  if (typeof origin !== "string") return false;
-  const configured = publicOrigin;
-  if (configured) return origin === configured;
+  if (!origin || typeof origin !== "string") return false;
+  const configured = publicOrigin || process.env.ALFIE_UI_PUBLIC_ORIGIN;
+  if (configured && configured !== "https://alfie.example.local" && configured.trim()) {
+    if (origin === configured) return true;
+  }
   try {
     const parsed = new URL(origin);
-    return parsed.host === req.headers.host &&
-      (parsed.protocol === "https:" || (!cookieSecure && parsed.protocol === "http:"));
+    const host = req.headers["x-forwarded-host"] || req.headers.host;
+    const isHostMatch = parsed.host === host || parsed.host === req.headers.host;
+    if (isHostMatch) return true;
+    if (process.env.APP_URL) {
+      try {
+        if (origin === new URL(process.env.APP_URL).origin) return true;
+      } catch {}
+    }
+    if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "0.0.0.0") return true;
+    return false;
   } catch { return false; }
 }
 
@@ -87,16 +99,19 @@ function sendError(res, error) {
 
 function securityHeaders(res) {
   res.setHeader("x-content-type-options", "nosniff");
-  res.setHeader("x-frame-options", "DENY");
+  if (process.env.ALFIE_UI_ALLOW_IFRAME === "false") {
+    res.setHeader("x-frame-options", "DENY");
+  }
   res.setHeader("referrer-policy", "same-origin");
   res.setHeader("permissions-policy", "camera=(), microphone=(), geolocation=()");
-  res.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
+  const frameAncestors = process.env.ALFIE_UI_ALLOW_IFRAME === "false" ? "frame-ancestors 'none'" : "frame-ancestors *";
+  res.setHeader("content-security-policy", `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; ${frameAncestors}`);
 }
 
 export function createAlfieInterfaceServer({
   authStore = new InterfaceAuthStore(),
   publicOrigin = process.env.ALFIE_UI_PUBLIC_ORIGIN,
-  cookieSecure = COOKIE_SECURE,
+  cookieSecure = isCookieSecure(),
   trustProxyHeaders = process.env.ALFIE_UI_TRUST_PROXY_HEADERS === "true",
   coreClient = createAlfieCoreClient({
     baseUrl: process.env.ALFIE_CORE_URL || "http://alfie-core:8780",
@@ -200,6 +215,22 @@ export function createAlfieInterfaceServer({
           return json(res, 200, { authenticated: false });
         }
 
+        const imageMatch = /^\/api\/core\/images\/([a-zA-Z0-9._-]{1,128})$/.exec(url.pathname);
+        if (method === "GET" && imageMatch) {
+          try {
+            const { buffer, mimeType } = await coreClient.getImage(imageMatch[1]);
+            res.writeHead(200, {
+              "content-type": mimeType,
+              "content-length": buffer.length,
+              "cache-control": "public, max-age=86400, immutable",
+              "x-content-type-options": "nosniff"
+            });
+            return res.end(buffer);
+          } catch (err) {
+            return json(res, err.status || 404, { error: err.message || "Visual asset not found." });
+          }
+        }
+
         const session = await requireSession(req, res);
         if (!session) return;
         const userId = session.user.id;
@@ -231,6 +262,7 @@ export function createAlfieInterfaceServer({
         }
         const conversationMatch = /^\/api\/core\/conversations\/([a-f0-9-]{36})$/.exec(url.pathname);
         const messageMatch = /^\/api\/core\/conversations\/([a-f0-9-]{36})\/messages$/.exec(url.pathname);
+        const reactionMatch = /^\/api\/core\/conversations\/([a-f0-9-]{36})\/messages\/([a-f0-9-]{36})\/reaction$/.exec(url.pathname);
         if (method === "GET" && conversationMatch) {
           return json(res, 200, await coreClient.getConversation(userId, conversationMatch[1]));
         }
@@ -246,6 +278,11 @@ export function createAlfieInterfaceServer({
         if (method === "POST" && messageMatch) {
           requireCsrf(req, session);
           return json(res, 201, await coreClient.appendMessage(userId, messageMatch[1], await readJson(req)));
+        }
+        if ((method === "POST" || method === "PUT") && reactionMatch) {
+          requireCsrf(req, session);
+          const body = await readJson(req);
+          return json(res, 200, await coreClient.reactMessage(userId, reactionMatch[1], reactionMatch[2], body.reaction));
         }
         if (method === "POST" && url.pathname === "/api/core/agent/run") {
           requireCsrf(req, session);
@@ -310,6 +347,11 @@ export function createAlfieInterfaceServer({
         if (method === "GET" && url.pathname === "/api/core/audit") return json(res, 200, await coreClient.listAudit(userId, Number(url.searchParams.get("limit") || 50)));
         if (method === "GET" && url.pathname === "/api/core/providers") return json(res, 200, await coreClient.request(userId, "/v1/providers"));
         if (method === "GET" && url.pathname === "/api/core/providers/health") return json(res, 200, await coreClient.request(userId, "/v1/providers/health"));
+        if (method === "POST" && url.pathname === "/api/core/images/generate") {
+          requireCsrf(req, session);
+          const body = await readJson(req);
+          return json(res, 201, await coreClient.generateImage(userId, body));
+        }
 
         return json(res, 404, { error: "Interface API route not found." });
       } catch (error) {
@@ -319,11 +361,31 @@ export function createAlfieInterfaceServer({
 
     if (method !== "GET" && method !== "HEAD") return json(res, 405, { error: "Method not allowed." });
     const relative = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
-    if (!["index.html", "app.js", "styles.css"].includes(relative)) return json(res, 404, { error: "Not found." });
+    const ALLOWED_ASSETS = {
+      "index.html": "text/html; charset=utf-8",
+      "app.js": "text/javascript; charset=utf-8",
+      "styles.css": "text/css; charset=utf-8",
+      "sw.js": "application/javascript; charset=utf-8",
+      "manifest.webmanifest": "application/manifest+json; charset=utf-8",
+      "manifest.json": "application/manifest+json; charset=utf-8",
+      "icon.svg": "image/svg+xml",
+      "icon-192.png": "image/png",
+      "icon-512.png": "image/png",
+      "apple-touch-icon.png": "image/png",
+      "vendor/react.production.min.js": "application/javascript; charset=utf-8",
+      "vendor/react-dom.production.min.js": "application/javascript; charset=utf-8",
+      "vendor/recharts.js": "application/javascript; charset=utf-8"
+    };
+    if (!ALLOWED_ASSETS[relative]) return json(res, 404, { error: "Not found." });
     try {
       const content = await fs.readFile(path.join(publicDirectory, relative));
-      const type = relative.endsWith(".html") ? "text/html; charset=utf-8" : relative.endsWith(".js") ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8";
-      res.writeHead(200, { "content-type": type, "cache-control": "no-cache", "x-content-type-options": "nosniff" });
+      const headers = {
+        "content-type": ALLOWED_ASSETS[relative],
+        "cache-control": relative === "sw.js" ? "no-cache, no-store, must-revalidate" : "no-cache",
+        "x-content-type-options": "nosniff"
+      };
+      if (relative === "sw.js") headers["service-worker-allowed"] = "/";
+      res.writeHead(200, headers);
       return res.end(method === "HEAD" ? undefined : content);
     } catch {
       return json(res, 404, { error: "Interface asset not found." });

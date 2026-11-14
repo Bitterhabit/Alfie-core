@@ -79,6 +79,9 @@ export function createAlfieCoreClient({
     createConversation(userId, body = {}) { return request(userId, "/v1/conversations", { method: "POST", body }); },
     getConversation(userId, id) { return request(userId, "/v1/conversations/" + encodeURIComponent(id)); },
     appendMessage(userId, id, body) { return request(userId, "/v1/conversations/" + encodeURIComponent(id) + "/messages", { method: "POST", body }); },
+    reactMessage(userId, conversationId, messageId, reaction) {
+      return request(userId, "/v1/conversations/" + encodeURIComponent(conversationId) + "/messages/" + encodeURIComponent(messageId) + "/reaction", { method: "POST", body: { reaction } });
+    },
     renameConversation(userId, id, title) { return request(userId, "/v1/conversations/" + encodeURIComponent(id), { method: "PATCH", body: { title } }); },
     deleteConversation(userId, id) { return request(userId, "/v1/conversations/" + encodeURIComponent(id), { method: "DELETE" }); },
     listMemories(userId, query = "") { return request(userId, "/v1/memories" + (query ? "?" + query : "")); },
@@ -91,6 +94,18 @@ export function createAlfieCoreClient({
     listPendingActions(userId) { return request(userId, "/v1/tools/pending"); },
     approveAction(userId, actionId) { return request(userId, "/v1/tools/approve", { method: "POST", body: { actionId } }); },
     rejectAction(userId, actionId) { return request(userId, "/v1/tools/reject", { method: "POST", body: { actionId } }); },
-    listAudit(userId, limit = 50) { return request(userId, "/v1/audit?limit=" + encodeURIComponent(limit)); }
+    listAudit(userId, limit = 50) { return request(userId, "/v1/audit?limit=" + encodeURIComponent(limit)); },
+    generateImage(userId, body) { return request(userId, "/v1/images/generate", { method: "POST", body }); },
+    async getImage(filename) {
+      const url = new URL("/v1/images/" + encodeURIComponent(filename), root);
+      const headers = { authorization: "Bearer " + serviceToken };
+      const response = await fetchImpl(url, { method: "GET", headers });
+      if (!response.ok) {
+        throw Object.assign(new Error("Visual asset not found."), { status: response.status });
+      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const mimeType = response.headers.get("content-type") || "application/octet-stream";
+      return { buffer, mimeType };
+    }
   });
 }

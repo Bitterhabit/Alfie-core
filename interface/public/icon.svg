@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="soulGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#b6a2ff" stop-opacity="0.9" />
+      <stop offset="45%" stop-color="#60a5fa" stop-opacity="0.6" />
+      <stop offset="75%" stop-color="#7d65e6" stop-opacity="0.3" />
+      <stop offset="100%" stop-color="#0e0b19" stop-opacity="0" />
+    </radialGradient>
+    <filter id="pixelate" x="0" y="0" width="100%" height="100%">
+      <feDropShadow dx="4" dy="4" stdDeviation="0" flood-color="#000000" flood-opacity="0.6"/>
+    </filter>
+  </defs>
+
+  <!-- Background Canvas -->
+  <rect width="512" height="512" rx="32" fill="#0e0b19"/>
+  <rect x="24" y="24" width="464" height="464" rx="16" fill="#161227" stroke="rgba(184,164,255,0.25)" stroke-width="6"/>
+
+  <!-- Glowing Soul Field -->
+  <circle cx="256" cy="256" r="190" fill="url(#soulGlow)"/>
+
+  <!-- Pixel Matrix Rings -->
+  <rect x="136" y="136" width="240" height="240" rx="4" fill="none" stroke="rgba(184,164,255,0.3)" stroke-width="4" stroke-dasharray="16 16"/>
+  <rect x="176" y="176" width="160" height="160" rx="4" fill="none" stroke="rgba(96,165,250,0.4)" stroke-width="4" stroke-dasharray="12 12"/>
+
+  <!-- Central Pixel Mark "A" -->
+  <!-- Crossbar and glyph built with sharp pixel rects -->
+  <g fill="#f3efff" filter="url(#pixelate)">
+    <!-- Top Bar -->
+    <rect x="220" y="160" width="72" height="24" rx="2" fill="#e2d8ff"/>
+    <!-- Left Leg -->
+    <rect x="180" y="184" width="40" height="168" rx="2"/>
+    <!-- Right Leg -->
+    <rect x="292" y="184" width="40" height="168" rx="2"/>
+    <!-- Middle Crossbar -->
+    <rect x="220" y="250" width="72" height="28" rx="2" fill="#b6a2ff"/>
+  </g>
+
+  <!-- Glowing Soul Core Beacon -->
+  <rect x="304" y="324" width="28" height="28" rx="2" fill="#7ddbb1" stroke="#d4ffe3" stroke-width="4"/>
+</svg>

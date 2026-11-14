@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "Alfie — Personal AI",
+  "short_name": "Alfie",
+  "description": "A quiet space to think, make things and get things done. Personal AI with memory, garden and tool governance.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#0e0b19",
+  "background_color": "#0e0b19",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

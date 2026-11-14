@@ -2,6 +2,7 @@ import Ajv from "ajv";
 import addFormats from "ajv-formats";
 import { createHash } from "node:crypto";
 import { containsUntrustedData, wrapUntrustedData } from "./untrustedData.mjs";
+import { createAssetInterceptorMiddleware } from "./assetMiddleware.mjs";
 
 function stable(value) {
   if (Array.isArray(value)) return value.map(stable);
@@ -22,7 +23,19 @@ function capOutput(value, maxChars = 2000) {
 }
 
 export class ToolDispatcher {
-  constructor({ registry, permissionStore, pendingActionStore, auditStore = null, now = () => Date.now(), maxOutputChars = 2000 } = {}) {
+  constructor({
+    registry,
+    permissionStore,
+    pendingActionStore,
+    auditStore = null,
+    now = () => Date.now(),
+    maxOutputChars = 2000,
+    assetsDirectory,
+    filePathPrefix = "./assets",
+    interceptAssets = true,
+    assetMiddleware = null,
+    middlewares = []
+  } = {}) {
     if (!registry || !permissionStore || !pendingActionStore) throw new TypeError("ToolDispatcher requires registry, permission store and pending-action store.");
     this.registry = registry;
     this.permissionStore = permissionStore;
@@ -34,6 +47,18 @@ export class ToolDispatcher {
     addFormats(this.ajv);
     this.validators = new Map();
     this.lastCallByTurn = new Map();
+    this.assetMiddleware = assetMiddleware || (interceptAssets ? createAssetInterceptorMiddleware({ assetsDirectory, filePathPrefix, now }) : null);
+    this.middlewares = [];
+    if (this.assetMiddleware) this.use(this.assetMiddleware);
+    for (const mw of middlewares) this.use(mw);
+  }
+
+  use(middleware) {
+    if (typeof middleware !== "function") {
+      throw new TypeError("Tool execution middleware must be a function.");
+    }
+    this.middlewares.push(middleware);
+    return this;
   }
 
   validate(tool, args) {
@@ -71,6 +96,22 @@ export class ToolDispatcher {
     finally { signal.removeEventListener("abort", abortListener); }
   }
 
+  async executeWithMiddleware(tool, args, context, signal) {
+    const ctx = { ...context, tool, args, signal };
+    const stack = this.middlewares;
+    let index = -1;
+    const dispatchStep = async (i) => {
+      if (i <= index) throw new Error("Tool middleware called next() multiple times.");
+      index = i;
+      const fn = stack[i];
+      if (!fn) {
+        return this.runHandler(tool, args, context, signal);
+      }
+      return fn(ctx, () => dispatchStep(i + 1));
+    };
+    return dispatchStep(0);
+  }
+
   async dispatch({ userId, toolId, args = {}, turnId, contextMessages = [], signal }) {
     const tool = this.registry.tools.get(toolId);
     if (!tool) throw Object.assign(new Error("Tool is not registered."), { status: 404 });
@@ -106,7 +147,7 @@ export class ToolDispatcher {
       return { status: "awaiting_user_approval", actionId: pending.id, toolId, risk: tool.risk, summary: tool.name, preview: pending.preview, arguments: pending.arguments, reason: pending.reason, expiresAt: new Date(pending.expiresAt).toISOString() };
     }
 
-    const result = await this.runHandler(tool, args, { userId, toolId }, signal);
+    const result = await this.executeWithMiddleware(tool, args, { userId, toolId, turnId }, signal);
     const bounded = capOutput(result, this.maxOutputChars);
     return { status: "completed", toolId, result: tool.trust === "external" || tool.untrustedOutput ? wrapUntrustedData(bounded, { maxChars: this.maxOutputChars }) : bounded };
   }
@@ -158,7 +199,7 @@ export class ToolDispatcher {
     });
     let result;
     try {
-      result = await this.runHandler(tool, action.arguments, { userId, toolId: tool.id, approved: true, approvalGuard: action.approvalGuard }, AbortSignal.timeout(30_000));
+      result = await this.executeWithMiddleware(tool, action.arguments, { userId, toolId: tool.id, approved: true, approvalGuard: action.approvalGuard }, AbortSignal.timeout(30_000));
     } catch (error) {
       if (this.auditStore) {
         try { await this.auditStore.record(userId, {

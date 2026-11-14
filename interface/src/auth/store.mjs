@@ -25,8 +25,8 @@ function validateCredentials(username, password) {
   if (typeof username !== "string" || !USERNAME_PATTERN.test(username)) {
     throw Object.assign(new Error("Username must be 3–32 characters using letters, numbers, dots, underscores or hyphens."), { status: 400 });
   }
-  if (typeof password !== "string" || password.length < 16 || password.length > 256) {
-    throw Object.assign(new Error("Choose a password between 16 and 256 characters."), { status: 400 });
+  if (typeof password !== "string" || password.length < 6 || password.length > 256) {
+    throw Object.assign(new Error("Choose a password between 6 and 256 characters."), { status: 400 });
   }
 }
 
@@ -101,7 +101,7 @@ export class InterfaceAuthStore {
     return this.exclusive(async () => {
       const store = await this.load();
       const user = store.users.find((item) => item.username.toLowerCase() === String(username || "").trim().toLowerCase());
-      const validPasswordShape = typeof password === "string" && password.length >= 16 && password.length <= 256;
+      const validPasswordShape = typeof password === "string" && password.length >= 6 && password.length <= 256;
       const candidate = typeof password === "string" ? password.slice(0, 256) : "";
       // Always perform a password derivation, including for unknown/disabled users,
       // so account existence is not exposed by a cheap early-return path.
@@ -155,7 +155,7 @@ export class InterfaceAuthStore {
       const store = await this.load();
       const user = store.users.find((item) => item.id === userId);
       if (!user || user.disabled) throw Object.assign(new Error("The interface account is unavailable."), { status: 401 });
-      const validCurrentShape = typeof currentPassword === "string" && currentPassword.length >= 16 && currentPassword.length <= 256;
+      const validCurrentShape = typeof currentPassword === "string" && currentPassword.length >= 6 && currentPassword.length <= 256;
       const candidate = typeof currentPassword === "string" ? currentPassword.slice(0, 256) : "";
       const actual = Buffer.from(await passwordDigest(candidate, user.passwordSalt), "hex");
       const expected = Buffer.from(user.passwordHash, "hex");
@@ -173,6 +173,51 @@ export class InterfaceAuthStore {
       store.sessions = [];
       await this.save(store);
       return { changed: true };
+    });
+  }
+
+  async setPassword(username, newPassword) {
+    return this.exclusive(async () => {
+      validateCredentials(username, newPassword);
+      const store = await this.load();
+      const user = store.users.find((item) => item.username.toLowerCase() === String(username || "").trim().toLowerCase());
+      if (!user) return false;
+      const salt = randomBytes(16).toString("hex");
+      user.passwordSalt = salt;
+      user.passwordHash = await passwordDigest(newPassword, salt);
+      user.disabled = false;
+      store.sessions = [];
+      await this.save(store);
+      return true;
+    });
+  }
+
+  async ensureUser(username, password, { displayName } = {}) {
+    return this.exclusive(async () => {
+      validateCredentials(username, password);
+      const store = await this.load();
+      let user = store.users.find((item) => item.username.toLowerCase() === String(username || "").trim().toLowerCase());
+      const salt = randomBytes(16).toString("hex");
+      const hash = await passwordDigest(password, salt);
+      if (user) {
+        user.passwordSalt = salt;
+        user.passwordHash = hash;
+        user.disabled = false;
+        if (displayName) user.displayName = displayName;
+      } else {
+        user = {
+          id: randomUUID(),
+          username: username.trim(),
+          displayName: displayName || username.trim(),
+          passwordSalt: salt,
+          passwordHash: hash,
+          createdAt: new Date(this.now()).toISOString(),
+          disabled: false
+        };
+        store.users.push(user);
+      }
+      await this.save(store);
+      return this.publicUser(user);
     });
   }
 

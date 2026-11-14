@@ -117,3 +117,53 @@ test("agent loop retrieves per-user memories and passes them into context assemb
   assert.equal(searchedUser, "user-1");
   assert.deepEqual(assembledMemories, [memory]);
 });
+
+test("emits tool_start progress events with dynamic tool action descriptions", async () => {
+  const registry = new ToolRegistry();
+  registry.register({
+    id: "get_calendar_events",
+    name: "Calendar events",
+    description: "Read calendar",
+    scope: "calendar:read",
+    trust: "external",
+    network: false,
+    externalAction: false,
+    handler: async () => [{ title: "Team sync" }]
+  });
+
+  const progressEvents = [];
+  const loop = new AgentLoop({
+    providerRegistry: {
+      complete: async () => ({
+        result: {
+          content: progressEvents.length === 0
+            ? JSON.stringify({ type: "tool_call", tool: "get_calendar_events", arguments: {} })
+            : JSON.stringify({ type: "final", message: "Checked calendar." })
+        },
+        endpoint: { model: "test-model", provider: "ollama" }
+      })
+    },
+    providerConfig: {},
+    toolRegistry: registry,
+    dispatcher: {
+      permissionStore: { list: async () => ["calendar:read"] },
+      resetTurn() {},
+      dispatch: async () => ({ status: "completed", result: [] })
+    },
+    contextAssembler: new ContextAssembler()
+  });
+
+  const result = await loop.run({
+    userId: "user-1",
+    messages: [{ role: "user", content: "What's on my calendar?" }],
+    onProgress: (evt) => progressEvents.push(evt)
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(progressEvents.length, 1);
+  assert.equal(progressEvents[0].type, "tool_start");
+  assert.equal(progressEvents[0].toolId, "get_calendar_events");
+  assert.equal(progressEvents[0].action, "Browsing calendar…");
+  assert.equal(progressEvents[0].isExternal, true);
+});
+

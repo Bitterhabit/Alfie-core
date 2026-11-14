@@ -1,5 +1,6 @@
 import { createServer as createHttpServer } from "node:http";
 import { timingSafeEqual, randomUUID } from "node:crypto";
+import path from "node:path";
 import { ProviderRegistry, normaliseConfig, publicConfig } from "./providers/registry.mjs";
 import { createPetrioIdentityAuth } from "./auth/petrioIdentity.mjs";
 import { createIdentityAuthRegistry, createSignedIdentityAuth } from "./auth/signedIdentity.mjs";
@@ -15,6 +16,8 @@ import { AgentLoop } from "./agent/loop.mjs";
 import { PendingActionStore } from "./agent/pendingActionStore.mjs";
 import { PetrioHarnessClient, registerPetrioHarnessTools } from "./integrations/petrioHarness.mjs";
 import { registerMemoryTools } from "./integrations/memoryTools.mjs";
+import { ImageGenerator } from "./integrations/imageGenerator.mjs";
+import { registerImageTools } from "./integrations/imageTools.mjs";
 
 const SERVICE_VERSION = "0.3.0";
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -91,7 +94,8 @@ function cleanMessages(value) {
   if (!Array.isArray(value)) throw Object.assign(new Error("A messages array is required."), { status: 400 });
   const messages = value.slice(-16).map((message) => ({
     role: ["user", "assistant"].includes(message?.role) ? message.role : "user",
-    content: String(message?.content || "").slice(0, 12000)
+    content: String(message?.content || "").slice(0, 12000),
+    ...(message?.reaction && ["like", "flag"].includes(String(message.reaction)) ? { reaction: String(message.reaction) } : {})
   })).filter((message) => message.content.trim());
   if (!messages.length) throw Object.assign(new Error("At least one non-empty message is required."), { status: 400 });
   return messages;
@@ -158,13 +162,16 @@ export function createAlfieCoreServer({
   toolRegistry = new ToolRegistry(),
   pendingActionStore = new PendingActionStore(),
   contextAssembler = new ContextAssembler(),
-  petrioHarnessClient = new PetrioHarnessClient({ serviceToken, identityAuth: petrioIdentityAuth })
+  petrioHarnessClient = new PetrioHarnessClient({ serviceToken, identityAuth: petrioIdentityAuth }),
+  imageGenerator = new ImageGenerator(),
+  assetsDirectory = process.env.ALFIE_ASSETS_DIR || path.resolve(process.cwd(), "assets")
 } = {}) {
   const providers = normaliseConfig(providerConfig);
   registerPetrioHarnessTools(toolRegistry, petrioHarnessClient);
   registerMemoryTools(toolRegistry, memoryStore);
-  const toolDispatcher = new ToolDispatcher({ registry: toolRegistry, permissionStore, pendingActionStore, auditStore });
-  const agentLoop = new AgentLoop({ providerRegistry, providerConfig: providers, toolRegistry, dispatcher: toolDispatcher, contextAssembler, memoryStore });
+  registerImageTools(toolRegistry, imageGenerator);
+  const toolDispatcher = new ToolDispatcher({ registry: toolRegistry, permissionStore, pendingActionStore, auditStore, assetsDirectory });
+  const agentLoop = new AgentLoop({ providerRegistry, providerConfig: providers, toolRegistry, dispatcher: toolDispatcher, contextAssembler, memoryStore, imageGenerator, assetsDirectory });
 
   return createHttpServer(async (req, res) => {
     const url = new URL(req.url || "/", "http://alfie-core.internal");
@@ -407,10 +414,11 @@ export function createAlfieCoreServer({
 
     const conversationMatch = /^\/v1\/conversations\/([a-f0-9-]{36})$/i.exec(url.pathname);
     const messageMatch = /^\/v1\/conversations\/([a-f0-9-]{36})\/messages$/i.exec(url.pathname);
+    const reactionMatch = /^\/v1\/conversations\/([a-f0-9-]{36})\/messages\/([a-f0-9-]{36})\/reaction$/i.exec(url.pathname);
     const isConversationCollection = url.pathname === "/v1/conversations";
     const isConversationDatabase = url.pathname === "/v1/conversations/database";
     const isConversationImport = url.pathname === "/v1/conversations/import";
-    if (isConversationCollection || isConversationDatabase || isConversationImport || conversationMatch || messageMatch) {
+    if (isConversationCollection || isConversationDatabase || isConversationImport || conversationMatch || messageMatch || reactionMatch) {
       let identity;
       try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
       catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
@@ -443,6 +451,11 @@ export function createAlfieCoreServer({
           const message = await conversationStore.appendMessage(identity.userId, messageMatch[1], body);
           return json(res, 201, { message });
         }
+        if (reactionMatch && (req.method === "POST" || req.method === "PUT")) {
+          const body = await readJsonBody(req);
+          const message = await conversationStore.reactMessage(identity.userId, reactionMatch[1], reactionMatch[2], body.reaction);
+          return json(res, 200, { message });
+        }
         if (conversationMatch && req.method === "PATCH") {
           const body = await readJsonBody(req);
           return json(res, 200, { conversation: await conversationStore.rename(identity.userId, conversationMatch[1], body.title) });
@@ -470,6 +483,41 @@ export function createAlfieCoreServer({
       return json(res, 200, { mode: providers.mode, endpoints: health });
     }
 
+    const imageFileMatch = /^\/v1\/images\/([a-zA-Z0-9._-]{1,128})$/.exec(url.pathname);
+    if (imageFileMatch && req.method === "GET") {
+      try {
+        const { buffer, mimeType } = await imageGenerator.getImage(imageFileMatch[1]);
+        res.writeHead(200, {
+          "content-type": mimeType,
+          "content-length": buffer.length,
+          "cache-control": "public, max-age=86400, immutable",
+          "x-content-type-options": "nosniff"
+        });
+        return res.end(buffer);
+      } catch (err) {
+        return json(res, err.status || 404, { error: err.message || "Visual asset not found." });
+      }
+    }
+
+    if (req.method === "POST" && url.pathname === "/v1/images/generate") {
+      let identity;
+      try {
+        identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search });
+      } catch (error) {
+        return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) });
+      }
+      try {
+        const body = await readJsonBody(req);
+        const image = await imageGenerator.generate({ prompt: body.prompt, style: body.style });
+        return json(res, 201, {
+          image,
+          markdown: `![${image.prompt}](${image.url})`
+        });
+      } catch (err) {
+        return json(res, err.status || 500, { error: err.message || "Failed to generate visual asset." });
+      }
+    }
+
 
     if (req.method === "POST" && url.pathname === "/v1/chat/stream") {
       const controller = new AbortController();
@@ -478,19 +526,32 @@ export function createAlfieCoreServer({
       try {
         const identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search });
         const body = await readJsonBody(req);
+        let headersSent = false;
+        const ensureStreamHeaders = (status = 200) => {
+          if (headersSent || res.headersSent) return;
+          headersSent = true;
+          res.writeHead(status, {
+            "content-type": "application/x-ndjson; charset=utf-8",
+            "cache-control": "no-cache, no-transform",
+            "x-accel-buffering": "no"
+          });
+          res.flushHeaders?.();
+        };
+
+        const onProgress = (event) => {
+          ensureStreamHeaders(200);
+          writeStreamEvent(res, event);
+        };
+
         const result = await agentLoop.run({
           userId: identity.userId, messages: cleanMessages(body.messages),
           dashboardState: body.dashboardState || {},
           mode: ["auto", "light", "standard", "work"].includes(body.mode) ? body.mode : providers.mode,
-          turnId: body.turnId || randomUUID(), signal: controller.signal
+          turnId: body.turnId || randomUUID(), signal: controller.signal,
+          onProgress
         });
         if (controller.signal.aborted) return;
-        res.writeHead(result.status === "awaiting_user_approval" ? 202 : 200, {
-          "content-type": "application/x-ndjson; charset=utf-8",
-          "cache-control": "no-cache, no-transform",
-          "x-accel-buffering": "no"
-        });
-        res.flushHeaders?.();
+        ensureStreamHeaders(result.status === "awaiting_user_approval" ? 202 : 200);
         writeStreamEvent(res, { type: "meta", status: result.status, steps: result.steps });
         if (result.message) writeStreamEvent(res, { type: "delta", content: result.message });
         if (result.status === "awaiting_user_approval") {

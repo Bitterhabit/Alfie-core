@@ -288,3 +288,33 @@ test("legacy import rejects oversized message content and action metadata", asyn
     assert.equal((await store.database("user-1")).conversations.length, 0);
   });
 });
+
+test("supports like and flag reactions for assistant messages and preserves across reloads", async () => {
+  await temporaryStore(async (store) => {
+    const conversation = await store.create("user-1");
+    const msg = await store.appendMessage("user-1", conversation.id, { role: "assistant", content: "Alfie response" });
+    assert.equal(msg.reaction, undefined);
+
+    // React with like
+    const liked = await store.reactMessage("user-1", conversation.id, msg.id, "like");
+    assert.equal(liked.reaction, "like");
+    assert.ok(liked.reactedAt);
+
+    // Reopen from disk
+    const reopened = new ConversationStore({ dataDirectory: store.dataDirectory });
+    let loaded = await reopened.get("user-1", conversation.id);
+    assert.equal(loaded.messages[0].reaction, "like");
+
+    // Switch to flag
+    const flagged = await reopened.reactMessage("user-1", conversation.id, msg.id, "flag");
+    assert.equal(flagged.reaction, "flag");
+
+    // Clear reaction
+    const cleared = await reopened.reactMessage("user-1", conversation.id, msg.id, null);
+    assert.equal(cleared.reaction, undefined);
+
+    loaded = await reopened.get("user-1", conversation.id);
+    assert.equal(loaded.messages[0].reaction, undefined);
+  });
+});
+
