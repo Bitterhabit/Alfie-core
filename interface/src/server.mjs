@@ -71,8 +71,8 @@ function originAllowed(req, publicOrigin = process.env.ALFIE_UI_PUBLIC_ORIGIN, c
   const origin = req.headers.origin;
   if (!origin || typeof origin !== "string") return false;
   const configured = publicOrigin || process.env.ALFIE_UI_PUBLIC_ORIGIN;
-  if (configured && configured !== "https://alfie.example.local" && configured.trim()) {
-    if (origin === configured) return true;
+  if (configured && configured.trim()) {
+    return origin === configured;
   }
   try {
     const parsed = new URL(origin);
@@ -98,14 +98,19 @@ function sendError(res, error) {
 }
 
 function securityHeaders(res) {
+  const allowSameOriginFrames = process.env.ALFIE_UI_ALLOW_IFRAME === "true";
   res.setHeader("x-content-type-options", "nosniff");
-  if (process.env.ALFIE_UI_ALLOW_IFRAME === "false") {
-    res.setHeader("x-frame-options", "DENY");
-  }
+  res.setHeader("x-frame-options", allowSameOriginFrames ? "SAMEORIGIN" : "DENY");
   res.setHeader("referrer-policy", "same-origin");
   res.setHeader("permissions-policy", "camera=(), microphone=(), geolocation=()");
-  const frameAncestors = process.env.ALFIE_UI_ALLOW_IFRAME === "false" ? "frame-ancestors 'none'" : "frame-ancestors *";
-  res.setHeader("content-security-policy", `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; ${frameAncestors}`);
+  res.setHeader("cross-origin-opener-policy", "same-origin");
+  res.setHeader("cross-origin-resource-policy", "same-origin");
+  res.setHeader("x-permitted-cross-domain-policies", "none");
+  const frameAncestors = allowSameOriginFrames ? "'self'" : "'none'";
+  res.setHeader(
+    "content-security-policy",
+    `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors ${frameAncestors}`
+  );
 }
 
 export function createAlfieInterfaceServer({
