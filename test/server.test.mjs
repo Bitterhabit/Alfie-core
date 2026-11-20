@@ -18,7 +18,7 @@ test("health is public and reports the service identity", async () => {
   await withServer({ serviceToken: "a".repeat(40) }, async (base) => {
     const response = await fetch(`${base}/health`);
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { status: "ok", service: "alfie-core", version: "0.3.0" });
+    assert.deepEqual(await response.json(), { status: "ok", service: "alfie-core", version: "0.9.0" });
   });
 });
 
