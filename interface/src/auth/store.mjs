@@ -25,8 +25,8 @@ function validateCredentials(username, password) {
   if (typeof username !== "string" || !USERNAME_PATTERN.test(username)) {
     throw Object.assign(new Error("Username must be 3–32 characters using letters, numbers, dots, underscores or hyphens."), { status: 400 });
   }
-  if (typeof password !== "string" || password.length < 6 || password.length > 256) {
-    throw Object.assign(new Error("Choose a password between 6 and 256 characters."), { status: 400 });
+  if (typeof password !== "string" || password.length < 16 || password.length > 256) {
+    throw Object.assign(new Error("Choose a password between 16 and 256 characters."), { status: 400 });
   }
 }
 

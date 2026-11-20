@@ -11,11 +11,13 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" type="image/svg+xml" href="/icon.svg">
   <link rel="apple-touch-icon" href="/icon.svg">
-  <link rel="stylesheet" href="/styles.css?v=alfie-workspace-0.6.0">
+  <link rel="stylesheet" href="/styles.css?v=alfie-workspace-0.9.0">
   <script src="/vendor/react.production.min.js"></script>
   <script src="/vendor/react-dom.production.min.js"></script>
   <script src="/vendor/recharts.js"></script>
-  <script src="/app.js?v=alfie-workspace-0.6.0" defer></script>
+  <script type="module" src="/shortcuts.mjs?v=alfie-workspace-0.9.0"></script>
+  <script type="module" src="/voice-waveform.mjs?v=alfie-workspace-0.9.0"></script>
+  <script src="/app.js?v=alfie-workspace-0.9.0" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -25,7 +27,7 @@
     <div class="login-doorway">
       <div class="login-soul-stage" id="login-soul-stage">
         <div class="login-soul-halo" aria-hidden="true"></div>
-        <div class="alfie-soul large" id="login-soul" data-soul data-soul-login="true" data-mood="purple" data-animation-state="idle" role="button" tabindex="0" title="Alfie's Soul — click to cycle mood">
+        <div class="alfie-soul large" id="login-soul" data-soul data-soul-login="true" data-mood="purple" data-animation-state="idle" role="button" tabindex="0" aria-keyshortcuts="Control+Shift+L Meta+Shift+L" title="Alfie's Soul — click or press Ctrl+Shift+L to cycle mood">
           <div class="soul-aura"></div>
           <div class="soul-matrix"></div>
           <div class="soul-rings"></div>
@@ -86,12 +88,12 @@
         <form id="login-form" class="login-form">
           <div class="login-field">
             <label for="login-username">Username</label>
-            <input id="login-username" name="username" autocomplete="username" value="admin" required minlength="3" maxlength="32">
+            <input id="login-username" name="username" autocomplete="username" placeholder="Your username" required minlength="3" maxlength="32">
           </div>
           <div class="login-field">
             <label for="login-password">Password</label>
             <div class="password-field">
-              <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="alfie123" required>
+              <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required>
               <button type="button" id="toggle-password" class="password-toggle" aria-label="Show password" aria-pressed="false" title="Show password">
                 <svg class="icon-eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/>
@@ -112,9 +114,27 @@
           </button>
         </form>
 
+        <form id="setup-form" class="login-form" hidden>
+          <div class="login-field">
+            <label for="setup-username">Administrator username</label>
+            <input id="setup-username" name="username" autocomplete="username" placeholder="Choose a username" required minlength="3" maxlength="32">
+          </div>
+          <div class="login-field">
+            <label for="setup-password">Password (16+ characters)</label>
+            <input id="setup-password" name="password" type="password" autocomplete="new-password" placeholder="At least 16 characters" required minlength="16" maxlength="256">
+          </div>
+          <div class="login-field">
+            <label for="setup-confirm">Confirm password</label>
+            <input id="setup-confirm" name="confirmPassword" type="password" autocomplete="new-password" placeholder="Repeat your password" required minlength="16" maxlength="256">
+          </div>
+          <button class="primary-button login-submit" type="submit">
+            <span>Create administrator</span>
+            <span class="login-submit-arrow" aria-hidden="true">→</span>
+          </button>
+        </form>
+
         <p id="login-error" class="error-message login-error" role="alert"></p>
-        <p id="setup-message" class="setup-message" hidden>Initial setup is required. Set ALFIE_UI_BOOTSTRAP_USERNAME and ALFIE_UI_BOOTSTRAP_PASSWORD in the server environment, then restart the interface.</p>
-        <p class="login-hint">Default access · <strong>admin</strong> / <strong>alfie123</strong></p>
+        <p id="setup-message" class="setup-message" hidden>First-run setup: create your private administrator account above, or set ALFIE_UI_BOOTSTRAP_USERNAME and ALFIE_UI_BOOTSTRAP_PASSWORD in the server environment.</p>
       </section>
 
       <footer class="login-footer">
@@ -140,8 +160,12 @@
         <button class="nav-item" data-view="tools" type="button"><span>⌘</span> Tools & access</button>
         <button class="nav-item" data-view="settings" type="button"><span>⚙</span> Settings</button>
       </nav>
+      <div class="sidebar-projects-section">
+        <div class="sidebar-heading"><span>PROJECTS</span><button id="new-project-btn" type="button" aria-label="New project" title="Create project">＋</button></div>
+        <div id="project-list" class="project-list" role="list" aria-label="Projects"></div>
+      </div>
       <div class="sidebar-section">
-        <div class="sidebar-heading"><span>RECENT CHATS</span><button id="refresh-conversations" type="button" aria-label="Refresh conversations">↻</button></div>
+        <div class="sidebar-heading"><span id="recent-chats-heading">RECENT CHATS</span><button id="refresh-conversations" type="button" aria-label="Refresh conversations">↻</button></div>
         <label class="history-search-wrap"><span class="sr-only">Search conversations</span><input id="history-search" class="history-search" type="search" placeholder="Search conversations…" autocomplete="off"></label>
         <div id="conversation-list" class="conversation-list"></div>
       </div>
@@ -155,7 +179,7 @@
     <main class="workspace">
       <header class="topbar">
         <div class="topbar-brand-wrap">
-          <div class="alfie-soul mini" data-soul data-mood="purple" data-animation-state="idle" role="button" tabindex="0" title="Alfie's Soul — click to cycle mood">
+          <div class="alfie-soul mini" data-soul data-mood="purple" data-animation-state="idle" role="button" tabindex="0" aria-keyshortcuts="Control+Shift+L Meta+Shift+L" title="Alfie's Soul — click or press Ctrl+Shift+L to cycle mood">
             <div class="soul-aura"></div>
             <div class="soul-matrix"></div>
             <div class="soul-core">
@@ -195,8 +219,15 @@
           <button id="mobile-logout" class="mobile-action" type="button" aria-label="Sign out">⇥</button>
         </div>
       </header>
-      <section id="mobile-history-sheet" class="mobile-history-sheet" hidden aria-label="Recent conversations">
-        <div class="mobile-history-header"><strong>Recent conversations</strong><button id="mobile-history-close" class="icon-button" type="button" aria-label="Close history">×</button></div>
+      <section id="mobile-history-sheet" class="mobile-history-sheet" hidden aria-label="Projects and recent conversations">
+        <div class="mobile-history-header">
+          <strong>Projects &amp; conversations</strong>
+          <div class="mobile-history-header-actions">
+            <button id="mobile-new-project-btn" class="secondary-button mobile-new-project-btn" type="button">＋ Project</button>
+            <button id="mobile-history-close" class="icon-button" type="button" aria-label="Close history">×</button>
+          </div>
+        </div>
+        <div id="mobile-project-list" class="project-list mobile-project-list" role="list" aria-label="Projects"></div>
         <input id="mobile-history-search" class="history-search mobile-history-search" type="search" placeholder="Search conversations…" autocomplete="off">
         <div id="mobile-conversation-list" class="conversation-list"></div>
       </section>
@@ -221,10 +252,56 @@
       </section>
 
       <section id="view-chat" class="view view-chat">
+        <div id="chat-context-bar" class="chat-context-bar">
+          <div class="chat-project-assign">
+            <label class="chat-project-label" for="chat-project-select">Project</label>
+            <select id="chat-project-select" class="chat-project-select" aria-label="Assign conversation to project">
+              <option value="">No project</option>
+            </select>
+          </div>
+          <div class="chat-context-actions">
+            <button id="vram-status-btn" class="vram-readout-btn" type="button" title="Inspect GPU VRAM status in Settings">
+              <span class="vram-readout-label">VRAM</span>
+              <span id="vram-readout-value" class="vram-readout-value">—</span>
+            </button>
+            <button id="continue-chat-btn" class="continue-chat-btn" type="button" title="Create a new chat seeded with context from this conversation" disabled>
+              Continue in new chat ↗
+            </button>
+          </div>
+        </div>
+        <section id="vram-warning-banner" class="vram-warning-banner" role="alert" aria-live="assertive" hidden>
+          <div class="vram-warning-copy">
+            <strong id="vram-warning-title">⚠ VRAM usage reached 80%</strong>
+            <p id="vram-warning-detail">Create a new chat carrying over this conversation’s context so you can keep working without losing momentum.</p>
+          </div>
+          <div class="vram-warning-actions">
+            <button id="vram-continue-btn" class="primary-button vram-continue-btn" type="button">Continue in new chat</button>
+            <button id="vram-dismiss-btn" class="secondary-button vram-dismiss-btn" type="button">Dismiss</button>
+          </div>
+        </section>
+        <section id="cloud-privacy-banner" class="cloud-privacy-banner" role="status" aria-live="polite" hidden>
+          <div class="cloud-privacy-banner-top">
+            <div class="cloud-privacy-banner-copy">
+              <strong id="cloud-privacy-title">🛡 External coding agent active</strong>
+              <p id="cloud-privacy-detail">Prompts leave your local machine. Emails, Calendar, Journal, Garden Memories, and Dashboard stay blocked.</p>
+            </div>
+            <div class="cloud-privacy-banner-actions">
+              <button id="cloud-privacy-toggle-btn" class="secondary-button cloud-privacy-configure-btn" type="button" aria-expanded="false" aria-controls="cloud-privacy-drawer">Private sections (0/5)</button>
+              <button id="cloud-privacy-configure-btn" class="secondary-button cloud-privacy-configure-btn" type="button">Privacy controls</button>
+            </div>
+          </div>
+          <div id="cloud-privacy-drawer" class="cloud-privacy-drawer" hidden>
+            <div class="cloud-privacy-drawer-head">
+              <span id="cloud-privacy-drawer-label">Optional private section access — off by default. Toggle only sections you want to share:</span>
+              <button id="cloud-privacy-lock-all-btn" class="secondary-button cloud-privacy-lock-btn" type="button" hidden>Block all private</button>
+            </div>
+            <div id="cloud-privacy-drawer-list" class="cloud-privacy-drawer-list" role="group" aria-label="Optional private sections for active cloud agent"></div>
+          </div>
+        </section>
         <div id="messages" class="messages">
           <div class="welcome-message">
             <div class="welcome-soul-container">
-              <div class="alfie-soul large" data-soul data-mood="purple" data-animation-state="idle" role="button" tabindex="0" title="Alfie's Soul — click to cycle mood">
+              <div class="alfie-soul large" data-soul data-mood="purple" data-animation-state="idle" role="button" tabindex="0" aria-keyshortcuts="Control+Shift+L Meta+Shift+L" title="Alfie's Soul — click or press Ctrl+Shift+L to cycle mood">
                 <div class="soul-aura"></div>
                 <div class="soul-matrix"></div>
                 <div class="soul-rings"></div>
@@ -301,7 +378,7 @@
             </button>
           </div>
           <div class="composer-input-wrapper">
-            <textarea name="message" rows="1" placeholder="Message Alfie or type /image &lt;prompt&gt;…" aria-label="Message Alfie or type /image followed by prompt" required></textarea>
+            <textarea name="message" rows="1" placeholder="Message Alfie or type /image &lt;prompt&gt;… (Ctrl+K)" aria-label="Message Alfie or type /image followed by prompt" aria-keyshortcuts="Control+K Meta+K" required></textarea>
           </div>
           <div class="composer-footer">
             <div class="composer-hints">
@@ -309,8 +386,25 @@
               <span class="composer-disclaimer">Type /image &lt;prompt&gt; to generate art.</span>
             </div>
             <div class="composer-controls">
+              <label class="mode-control agent-control" for="agent-provider">Agent<select id="agent-provider" name="agentProvider" aria-label="Select AI agent"><option value="local">Alfie Local</option><option value="gemini" disabled>Gemini (off)</option><option value="openai" disabled>ChatGPT (off)</option></select></label>
               <label class="mode-control" for="model-mode">Mode<select id="model-mode" name="mode"><option value="auto">Auto</option><option value="light">Light</option><option value="standard">Standard</option><option value="work">Work</option></select></label>
-              <button class="send-button" type="submit" aria-label="Send message">↑</button>
+              <div class="composer-action-group">
+                <button id="voice-input-btn" class="voice-button" type="button" aria-label="Start voice input" aria-pressed="false" title="Voice-to-text input">
+                  <svg class="voice-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                    <line x1="12" x2="12" y1="19" y2="22"/>
+                  </svg>
+                  <svg class="voice-waveform" width="18" height="16" viewBox="0 0 20 16" data-audio-level="0.00" data-audio-source="idle" aria-hidden="true">
+                    <rect class="voice-bar" data-bar="0" x="1" y="6.7" width="2.4" height="2.6" rx="1.2"/>
+                    <rect class="voice-bar" data-bar="1" x="5" y="6.4" width="2.4" height="3.2" rx="1.2"/>
+                    <rect class="voice-bar" data-bar="2" x="9" y="6.1" width="2.4" height="3.8" rx="1.2"/>
+                    <rect class="voice-bar" data-bar="3" x="13" y="6.4" width="2.4" height="3.2" rx="1.2"/>
+                    <rect class="voice-bar" data-bar="4" x="17" y="6.7" width="2.4" height="2.6" rx="1.2"/>
+                  </svg>
+                </button>
+                <button class="send-button" type="submit" aria-label="Send message">↑</button>
+              </div>
             </div>
           </div>
         </form>
@@ -506,10 +600,70 @@
               <span>Maps to <code>--soul-glow</code>, <code>--soul-core-1</code>, <code>--soul-core-2</code>, <code>--soul-accent</code>, <code>--soul-ring</code></span>
             </div>
           </section>
+          <section class="surface" id="settings-vram-surface">
+            <div class="vram-surface-head">
+              <h3>GPU VRAM &amp; Context Handoff</h3>
+              <span id="vram-connection-badge" class="cloud-status-tag">Waiting for PC</span>
+            </div>
+            <p class="muted">Monitors VRAM reported from your external GPU PC to this Proxmox server. Crossing 80% triggers a warning toast, optional desktop notification, and an in-chat handoff banner.</p>
+            <div id="vram-settings-summary" class="vram-settings-summary">
+              <div class="vram-settings-row">
+                <span id="vram-settings-device" class="vram-settings-device">Checking GPU telemetry…</span>
+                <strong id="vram-settings-percent" class="vram-settings-percent">—</strong>
+              </div>
+              <div class="vram-meter-track" role="progressbar" aria-label="GPU VRAM usage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="vram-meter-track">
+                <div class="vram-meter-fill" id="vram-meter-fill"></div>
+                <div class="vram-meter-threshold" aria-hidden="true" title="80% warning threshold"></div>
+              </div>
+              <p id="vram-settings-meta" class="muted vram-settings-meta">Warning threshold: 80%</p>
+            </div>
+            <div class="vram-settings-actions">
+              <button id="vram-refresh-btn" class="secondary-button" type="button">Refresh VRAM</button>
+              <button id="vram-simulate-high-btn" class="secondary-button" type="button">Test 84% VRAM alert</button>
+              <button id="vram-notify-permission-btn" class="secondary-button vram-notify-btn" type="button" hidden>Enable desktop alerts</button>
+              <button id="vram-clear-report-btn" class="secondary-button" type="button" hidden>Reset test reading</button>
+            </div>
+            <details id="vram-pc-setup" class="vram-pc-setup">
+              <summary>Connect external GPU PC (Proxmox → PC)</summary>
+              <div class="vram-pc-setup-body">
+                <div class="vram-pc-status-row">
+                  <span id="vram-token-status" class="cloud-status-tag is-missing">Set ALFIE_VRAM_REPORT_TOKEN</span>
+                  <span id="vram-remote-status" class="cloud-status-tag">Pull URL optional</span>
+                </div>
+                <p class="muted vram-pc-note">Set <code>ALFIE_VRAM_REPORT_TOKEN</code> (16+ chars) in your Proxmox server environment, then run the reporter on your GPU PC to push live <code>nvidia-smi</code> readings to <code id="vram-endpoint-url">/api/telemetry/vram</code>. Alternatively, set <code>ALFIE_VRAM_REMOTE_URL</code> on Proxmox to pull JSON/CSV from your PC.</p>
+                <div class="vram-snippet-bar">
+                  <div class="vram-snippet-tabs" role="tablist" aria-label="External PC reporter command">
+                    <button type="button" class="vram-snippet-tab active" data-vram-snippet="powershell" role="tab" aria-selected="true">Windows (PowerShell)</button>
+                    <button type="button" class="vram-snippet-tab" data-vram-snippet="node" role="tab" aria-selected="false">Node Script</button>
+                    <button type="button" class="vram-snippet-tab" data-vram-snippet="bash" role="tab" aria-selected="false">Linux (Bash)</button>
+                  </div>
+                  <button id="vram-copy-cmd-btn" class="secondary-button vram-copy-btn" type="button">Copy</button>
+                </div>
+                <pre class="vram-setup-pre"><code id="vram-setup-command"></code></pre>
+              </div>
+            </details>
+          </section>
+          <section class="surface surface-span-2" id="settings-cloud-agents-surface">
+            <div class="cloud-agents-header">
+              <div>
+                <h3>Cloud Coding Agents &amp; Privacy Controls</h3>
+                <p class="muted">Connect Gemini API and ChatGPT (OpenAI) for coding, with strictly optional per-provider access to your private sections.</p>
+              </div>
+              <button id="cloud-agents-refresh-btn" class="secondary-button" type="button">Refresh status</button>
+            </div>
+            <div class="cloud-privacy-callout" role="note" aria-label="External cloud privacy warning">
+              <strong>⚠ Privacy Warning — External Cloud Providers</strong>
+              <p>Enabling Gemini API or ChatGPT sends your chat prompts outside your local Alfie Core to Google or OpenAI servers. <strong>Access to your private sections (Emails, Calendar, Personal Journal, Garden Memories, and Dashboard) is strictly blocked by default and completely optional</strong> — enforced on the server before any request leaves Alfie.</p>
+              <p class="cloud-secret-note">API keys are never entered in the browser. Configure <code>GEMINI_API_KEY</code> and <code>OPENAI_API_KEY</code> on your server environment or in Settings &gt; Secrets.</p>
+            </div>
+            <div id="cloud-agents-list" class="cloud-agents-grid" aria-live="polite">
+              <p class="muted">Loading cloud coding agent settings…</p>
+            </div>
+          </section>
           <section class="surface"><h3>Account connection</h3><div id="account-status" class="settings-value">Checking…</div></section>
           <section class="surface"><h3>Model providers</h3><div id="provider-status" class="item-list"></div></section>
           <section class="surface"><h3>Core capabilities</h3><div id="core-status" class="item-list"></div></section>
-          <section class="surface"><h3>Change password</h3><form id="password-form" class="stack"><label>Current password<input name="currentPassword" type="password" autocomplete="current-password" minlength="6" maxlength="256" required></label><label>New password<input name="newPassword" type="password" autocomplete="new-password" minlength="6" maxlength="256" required></label><label>Confirm new password<input name="confirmPassword" type="password" autocomplete="new-password" minlength="6" maxlength="256" required></label><button class="secondary-button" type="submit">Update password</button><p class="muted">Changing your password signs out all active sessions, including this one.</p><p id="password-error" class="error-message" role="alert"></p></form></section>
+          <section class="surface"><h3>Change password</h3><form id="password-form" class="stack"><label>Current password<input name="currentPassword" type="password" autocomplete="current-password" minlength="6" maxlength="256" required></label><label>New password<input name="newPassword" type="password" autocomplete="new-password" minlength="16" maxlength="256" required></label><label>Confirm new password<input name="confirmPassword" type="password" autocomplete="new-password" minlength="16" maxlength="256" required></label><button class="secondary-button" type="submit">Update password</button><p class="muted">Changing your password signs out all active sessions, including this one.</p><p id="password-error" class="error-message" role="alert"></p></form></section>
         </div>
       </section>
       <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -542,6 +696,39 @@
     <footer class="lightbox-footer">
       <span>Click or scroll to zoom · Drag to pan when zoomed · Esc to close</span>
     </footer>
+  </div>
+
+  <div id="project-modal" class="project-modal" role="dialog" aria-modal="true" aria-labelledby="project-modal-title" hidden>
+    <div class="project-modal-backdrop" data-project-modal-close="backdrop"></div>
+    <form id="project-form" class="project-modal-card">
+      <div class="project-modal-header">
+        <h2 id="project-modal-title">New project</h2>
+        <button type="button" id="project-modal-close" class="icon-button" aria-label="Close project dialog">×</button>
+      </div>
+      <input type="hidden" name="projectId" value="">
+      <label>Project name
+        <input id="project-name-input" name="name" maxlength="80" placeholder="e.g. Local Harness Refactor" required>
+      </label>
+      <label>Shared project notes (carried into continuation chats)
+        <textarea id="project-description-input" name="description" rows="3" maxlength="600" placeholder="Goals, architecture decisions, or constraints shared across chats in this project…"></textarea>
+      </label>
+      <fieldset class="project-color-fieldset">
+        <legend>Project accent</legend>
+        <div class="project-color-choices" id="project-color-choices">
+          <button type="button" class="project-color-btn active" data-project-color="purple" aria-label="Purple accent"></button>
+          <button type="button" class="project-color-btn" data-project-color="blue" aria-label="Blue accent"></button>
+          <button type="button" class="project-color-btn" data-project-color="cyan" aria-label="Cyan accent"></button>
+          <button type="button" class="project-color-btn" data-project-color="emerald" aria-label="Emerald accent"></button>
+          <button type="button" class="project-color-btn" data-project-color="amber" aria-label="Amber accent"></button>
+          <button type="button" class="project-color-btn" data-project-color="rose" aria-label="Rose accent"></button>
+        </div>
+      </fieldset>
+      <p id="project-form-error" class="error-message" role="alert"></p>
+      <div class="project-modal-actions">
+        <button type="button" id="project-cancel-btn" class="secondary-button">Cancel</button>
+        <button type="submit" id="project-submit-btn" class="primary-button">Create project</button>
+      </div>
+    </form>
   </div>
 </body>
 </html>

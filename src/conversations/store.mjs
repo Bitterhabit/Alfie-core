@@ -125,9 +125,21 @@ export class ConversationStore {
         }
         messages.push(message);
       }
+      const projectId = CONVERSATION_ID_PATTERN.test(String(raw.projectId || "")) ? String(raw.projectId) : null;
+      const parentConversationId = CONVERSATION_ID_PATTERN.test(String(raw.parentConversationId || "")) ? String(raw.parentConversationId) : null;
+      const continuedFromTitle = typeof raw.continuedFromTitle === "string" && raw.continuedFromTitle.trim()
+        ? raw.continuedFromTitle.trim().slice(0, 120)
+        : null;
+      const handoffContext = typeof raw.handoffContext === "string" && raw.handoffContext.trim()
+        ? raw.handoffContext.trim().slice(0, 12000)
+        : null;
       conversations.push({
         id,
         title: String(raw.title || "New conversation").slice(0, 160),
+        projectId,
+        parentConversationId,
+        continuedFromTitle,
+        handoffContext,
         createdAt: String(raw.createdAt || this.now()).slice(0, 40),
         updatedAt: String(raw.updatedAt || this.now()).slice(0, 40),
         messages
@@ -281,18 +293,42 @@ export class ConversationStore {
     });
   }
 
-  async list(userId) {
+  async list(userId, options = {}) {
+    const projectFilter = options?.projectId;
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
-      return store.conversations
-        .slice()
+      let items = store.conversations.slice();
+      if (projectFilter === "unassigned") {
+        items = items.filter((item) => !item.projectId);
+      } else if (projectFilter && CONVERSATION_ID_PATTERN.test(String(projectFilter))) {
+        items = items.filter((item) => item.projectId === projectFilter);
+      }
+      return items
         .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
         .slice(0, 100)
-        .map(({ messages, ...summary }) => summary);
+        .map(({ messages, handoffContext, ...summary }) => ({
+          ...summary,
+          projectId: summary.projectId || null,
+          parentConversationId: summary.parentConversationId || null,
+          continuedFromTitle: summary.continuedFromTitle || null,
+          hasHandoffContext: Boolean(handoffContext && String(handoffContext).trim()),
+          messageCount: Array.isArray(messages) ? messages.length : 0
+        }));
     });
   }
 
-  async create(userId, title = "New conversation") {
+  async create(userId, titleOrOptions = "New conversation") {
+    const options = typeof titleOrOptions === "object" && titleOrOptions !== null
+      ? titleOrOptions
+      : { title: titleOrOptions };
+    const rawProjectId = options.projectId;
+    if (rawProjectId !== undefined && rawProjectId !== null && rawProjectId !== "" && !CONVERSATION_ID_PATTERN.test(String(rawProjectId))) {
+      throw Object.assign(new Error("Invalid project ID."), { status: 400, code: "PROJECT_ID_INVALID" });
+    }
+    const rawParentId = options.parentConversationId;
+    if (rawParentId !== undefined && rawParentId !== null && rawParentId !== "" && !CONVERSATION_ID_PATTERN.test(String(rawParentId))) {
+      throw Object.assign(new Error("Invalid parent conversation ID."), { status: 400 });
+    }
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
       if (store.conversations.length >= MAX_CONVERSATIONS) {
@@ -301,7 +337,15 @@ export class ConversationStore {
       const now = this.now();
       const conversation = {
         id: this.uuid(),
-        title: String(title || "New conversation").trim().slice(0, 120) || "New conversation",
+        title: String(options.title || "New conversation").trim().slice(0, 120) || "New conversation",
+        projectId: rawProjectId ? String(rawProjectId) : null,
+        parentConversationId: rawParentId ? String(rawParentId) : null,
+        continuedFromTitle: typeof options.continuedFromTitle === "string" && options.continuedFromTitle.trim()
+          ? options.continuedFromTitle.trim().slice(0, 120)
+          : null,
+        handoffContext: typeof options.handoffContext === "string" && options.handoffContext.trim()
+          ? options.handoffContext.trim().slice(0, 12000)
+          : null,
         createdAt: now,
         updatedAt: now,
         messages: []
@@ -401,6 +445,64 @@ export class ConversationStore {
       conversation.updatedAt = this.now();
       await this.save(userId, store);
       return { id: conversation.id, title: conversation.title, updatedAt: conversation.updatedAt };
+    });
+  }
+
+  async update(userId, conversationId, patch = {}) {
+    if (!CONVERSATION_ID_PATTERN.test(String(conversationId || ""))) {
+      throw Object.assign(new Error("Conversation not found."), { status: 404 });
+    }
+    const updates = {};
+    if (patch.title !== undefined) {
+      if (typeof patch.title !== "string") {
+        throw Object.assign(new Error("A conversation title is required."), { status: 400, code: "CONVERSATION_TITLE_INVALID" });
+      }
+      const cleanTitle = patch.title.replace(/\s+/g, " ").trim();
+      if (!cleanTitle || cleanTitle.length > 120) {
+        throw Object.assign(new Error("Conversation titles must contain between 1 and 120 characters."), { status: 400, code: "CONVERSATION_TITLE_INVALID" });
+      }
+      updates.title = cleanTitle;
+    }
+    if (patch.projectId !== undefined) {
+      if (patch.projectId === null || patch.projectId === "") {
+        updates.projectId = null;
+      } else if (CONVERSATION_ID_PATTERN.test(String(patch.projectId))) {
+        updates.projectId = String(patch.projectId);
+      } else {
+        throw Object.assign(new Error("Invalid project ID."), { status: 400, code: "PROJECT_ID_INVALID" });
+      }
+    }
+    if (!Object.keys(updates).length) {
+      throw Object.assign(new Error("Provide a title or projectId to update."), { status: 400 });
+    }
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      const conversation = store.conversations.find((item) => item.id === conversationId);
+      if (!conversation) throw Object.assign(new Error("Conversation not found."), { status: 404 });
+      Object.assign(conversation, updates, { updatedAt: this.now() });
+      await this.save(userId, store);
+      return {
+        id: conversation.id,
+        title: conversation.title,
+        projectId: conversation.projectId || null,
+        updatedAt: conversation.updatedAt
+      };
+    });
+  }
+
+  async clearProject(userId, projectId) {
+    if (!CONVERSATION_ID_PATTERN.test(String(projectId || ""))) return { cleared: 0 };
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      let cleared = 0;
+      for (const conversation of store.conversations) {
+        if (conversation.projectId === projectId) {
+          conversation.projectId = null;
+          cleared += 1;
+        }
+      }
+      if (cleared > 0) await this.save(userId, store);
+      return { cleared };
     });
   }
 

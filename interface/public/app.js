@@ -4,8 +4,18 @@ const state = {
   csrfToken: "",
   linked: false,
   activeConversationId: null,
+  activeConversation: null,
   messages: [],
   conversations: [],
+  projects: [],
+  selectedProjectId: "all",
+  vram: null,
+  vramDismissedKey: null,
+  vramLastAlerted: false,
+  vramPollTimer: null,
+  cloudAgents: [],
+  cloudPrivacyCategories: [],
+  selectedAgentProvider: "local",
   view: "chat",
   sending: false,
   conversationLoadToken: 0,
@@ -15,7 +25,7 @@ const state = {
 let pendingApiCalls = 0;
 
 async function api(route, options = {}) {
-  const isSilent = typeof route === "string" && (route.includes("/whoami") || route.includes("/auth/me"));
+  const isSilent = typeof route === "string" && (route.includes("/whoami") || route.includes("/auth/me") || route.includes("/system/vram"));
   const trackSoul = !isSilent && !state.sending && Boolean(window.alfieSoul);
   if (trackSoul) {
     if (pendingApiCalls === 0 && (window.alfieSoul.getAnimationState() === "idle" || window.alfieSoul.getAnimationState() === "listening")) {
@@ -46,6 +56,12 @@ async function api(route, options = {}) {
       throw error;
     }
     return payload;
+  } catch (error) {
+    const isAuthForm = route === "/api/auth/login" || route === "/api/auth/setup";
+    if (trackSoul && !isAuthForm) {
+      window.alfieSoul?.pulse("error", 2400, "idle", "purple");
+    }
+    throw error;
   } finally {
     if (trackSoul) {
       pendingApiCalls = Math.max(0, pendingApiCalls - 1);
@@ -56,19 +72,26 @@ async function api(route, options = {}) {
   }
 }
 
-function toast(message) {
+function toast(message, { variant = "default", durationMs = 3200 } = {}) {
   const el = $("#toast");
+  if (!el) return;
   el.textContent = message;
+  el.classList.toggle("toast-warning", variant === "warning");
+  el.setAttribute("role", variant === "warning" ? "alert" : "status");
   el.classList.add("visible");
   clearTimeout(toast.timeout);
-  toast.timeout = setTimeout(() => el.classList.remove("visible"), 3200);
+  toast.timeout = setTimeout(() => {
+    el.classList.remove("visible", "toast-warning");
+  }, durationMs);
 }
 
-function setConnection(online, label) {
+function setConnection(online, label, { offline = !online } = {}) {
   $("#connection-dot").classList.toggle("online", Boolean(online));
   $("#connection-label").textContent = label;
-  if (!online && window.alfieSoul?.getMood() !== "amber") {
-    window.alfieSoul?.setMood("red");
+  if (!online && offline) {
+    window.alfieSoul?.setOffline("red");
+  } else if (online && window.alfieSoul?.getAnimationState() === "offline") {
+    window.alfieSoul?.setState("idle", "purple");
   }
 }
 
@@ -832,9 +855,14 @@ function resetLoginCursorOffset() {
   stage.style.setProperty("--soul-look-y", "0px");
 }
 
-function showLogin() {
+function showLogin({ setupRequired = false } = {}) {
   const loginScreen = $("#login-screen");
   const appShell = $("#app-shell");
+  const loginForm = $("#login-form");
+  const setupForm = $("#setup-form");
+  const setupMessage = $("#setup-message");
+  const heading = $("#login-heading");
+  const subtitle = $(".login-subtitle");
   if (loginScreen) {
     loginScreen.classList.remove("is-leaving", "is-form-focused");
     loginScreen.hidden = false;
@@ -843,6 +871,11 @@ function showLogin() {
     appShell.classList.remove("is-entering");
     appShell.hidden = true;
   }
+  if (loginForm) loginForm.hidden = Boolean(setupRequired);
+  if (setupForm) setupForm.hidden = !setupRequired;
+  if (setupMessage) setupMessage.hidden = !setupRequired;
+  if (heading) heading.textContent = setupRequired ? "Welcome to Alfie." : "Welcome back.";
+  if (subtitle) subtitle.textContent = setupRequired ? "Create your private administrator account." : "Your space is ready.";
   resetLoginPasswordVisibility();
   resetLoginCursorOffset();
 }
@@ -888,7 +921,7 @@ function transitionToApp() {
 function initLoginCompanion() {
   document.querySelectorAll(".alfie-soul").forEach((el) => window.alfieSoul?.attach(el));
   const loginScreen = $("#login-screen");
-  const loginForm = $("#login-form");
+  const loginForms = [$("#login-form"), $("#setup-form")].filter(Boolean);
   const soulStage = $("#login-soul-stage");
   const toggleBtn = $("#toggle-password");
   const pwInput = $("#login-password");
@@ -908,20 +941,22 @@ function initLoginCompanion() {
     });
   }
 
-  if (loginScreen && loginForm) {
-    loginForm.addEventListener("focusin", () => {
-      loginScreen.classList.add("is-form-focused");
-      if (window.alfieSoul?.getAnimationState() === "idle") {
-        window.alfieSoul.setAnimationState("listening");
-      }
-    });
-    loginForm.addEventListener("focusout", (event) => {
-      if (event.relatedTarget && loginForm.contains(event.relatedTarget)) return;
-      loginScreen.classList.remove("is-form-focused");
-      if (window.alfieSoul?.getAnimationState() === "listening") {
-        window.alfieSoul.setAnimationState("idle");
-      }
-    });
+  if (loginScreen && loginForms.length) {
+    for (const form of loginForms) {
+      form.addEventListener("focusin", () => {
+        loginScreen.classList.add("is-form-focused");
+        if (window.alfieSoul?.getAnimationState() === "idle") {
+          window.alfieSoul.setAnimationState("listening");
+        }
+      });
+      form.addEventListener("focusout", (event) => {
+        if (event.relatedTarget && form.contains(event.relatedTarget)) return;
+        loginScreen.classList.remove("is-form-focused");
+        if (window.alfieSoul?.getAnimationState() === "listening") {
+          window.alfieSoul.setAnimationState("idle");
+        }
+      });
+    }
   }
 
   if (loginScreen && soulStage) {
@@ -995,7 +1030,7 @@ function showLinkRequired() {
   } else {
     setView(state.view);
   }
-  setConnection(false, "Account not linked");
+  setConnection(false, "Account not linked", { offline: false });
 }
 
 function showWorkspace() {
@@ -1018,13 +1053,11 @@ async function initialise() {
   try {
     const session = await api("/api/auth/me");
     if (session.setupRequired) {
-      showLogin();
-      $("#setup-message").hidden = false;
-      $("#login-error").textContent = "Create the first account by setting the bootstrap username and password in the server environment.";
+      showLogin({ setupRequired: true });
       return;
     }
     if (!session.authenticated) {
-      showLogin();
+      showLogin({ setupRequired: false });
       return;
     }
     state.user = session.user;
@@ -1032,13 +1065,15 @@ async function initialise() {
     showApp();
     try {
       await refreshIdentity();
-      if (state.linked) await loadConversations();
+      if (state.linked) {
+        await loadWorkspaceData();
+      }
     } catch (error) {
       setConnection(false, "Core unavailable");
       toast(error.message);
     }
   } catch (error) {
-    showLogin();
+    showLogin({ setupRequired: false });
     $("#login-error").textContent = error.message;
   }
 }
@@ -1060,7 +1095,7 @@ $("#login-form").addEventListener("submit", async (event) => {
     state.csrfToken = result.csrfToken;
     await transitionToApp();
     await refreshIdentity();
-    if (state.linked) await loadConversations();
+    if (state.linked) await loadWorkspaceData();
   } catch (error) {
     $("#login-error").textContent = error.message;
     window.alfieSoul?.pulse("error", 1600, "idle", "purple");
@@ -1069,16 +1104,63 @@ $("#login-form").addEventListener("submit", async (event) => {
   }
 });
 
+$("#setup-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const formEl = event.currentTarget;
+  const form = new FormData(formEl);
+  const username = String(form.get("username") || "").trim();
+  const password = String(form.get("password") || "");
+  const confirmPassword = String(form.get("confirmPassword") || "");
+  const errorEl = $("#login-error");
+  errorEl.textContent = "";
+  if (password !== confirmPassword) {
+    errorEl.textContent = "The passwords do not match.";
+    window.alfieSoul?.pulse("error", 1600, "idle", "purple");
+    return;
+  }
+  const button = formEl.querySelector('button[type="submit"]');
+  if (button) button.disabled = true;
+  window.alfieSoul?.startThinking("amber");
+  try {
+    const result = await api("/api/auth/setup", {
+      method: "POST",
+      body: JSON.stringify({ username, password })
+    });
+    formEl.reset();
+    state.user = result.user;
+    state.csrfToken = result.csrfToken;
+    await transitionToApp();
+    await refreshIdentity();
+    if (state.linked) await loadWorkspaceData();
+  } catch (error) {
+    errorEl.textContent = error.message;
+    window.alfieSoul?.pulse("error", 1600, "idle", "purple");
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
+
 async function logout() {
+  stopVramPolling();
   try { await api("/api/auth/logout", { method: "POST", body: "{}" }); }
   catch (error) { toast(error.message); }
   state.user = null;
   state.csrfToken = "";
   state.linked = false;
   state.activeConversationId = null;
+  state.activeConversation = null;
+  state.projects = [];
+  state.selectedProjectId = "all";
+  state.vram = null;
+  state.vramDismissedKey = null;
+  state.vramLastAlerted = false;
+  state.cloudAgents = [];
+  state.selectedAgentProvider = "local";
   state.conversationLoadToken += 1;
   state.conversationLoading = false;
   state.messages = [];
+  renderVramStatus();
+  syncAgentSelector();
   showLogin();
 }
 
@@ -1101,14 +1183,25 @@ $("#password-form").addEventListener("submit", async (event) => {
       method: "POST",
       body: JSON.stringify({ currentPassword, newPassword })
     });
+    stopVramPolling();
     form.reset();
     state.user = null;
     state.csrfToken = "";
     state.linked = false;
     state.activeConversationId = null;
+    state.activeConversation = null;
+    state.projects = [];
+    state.selectedProjectId = "all";
+    state.vram = null;
+    state.vramDismissedKey = null;
+    state.vramLastAlerted = false;
+    state.cloudAgents = [];
+    state.selectedAgentProvider = "local";
     state.conversationLoadToken += 1;
     state.conversationLoading = false;
     state.messages = [];
+    renderVramStatus();
+    syncAgentSelector();
     showLogin();
     $("#login-error").textContent = "Password updated. Sign in again with your new password.";
   } catch (failure) {
@@ -1145,7 +1238,7 @@ $("#standalone-button").addEventListener("click", async () => {
     state.linked = true;
     toast("Your independent Alfie workspace is ready.");
     await refreshIdentity();
-    await loadConversations();
+    await loadWorkspaceData();
   } catch (failure) {
     error.textContent = failure.message;
   } finally {
@@ -1165,7 +1258,7 @@ $("#link-form").addEventListener("submit", async (event) => {
     event.currentTarget.reset();
     toast("Your standalone interface is now linked to Petrio.");
     await refreshIdentity();
-    await loadConversations();
+    await loadWorkspaceData();
   } catch (error) {
     $("#link-error").textContent = error.message;
   } finally {
@@ -1188,19 +1281,1456 @@ try {
   if (savedMode && $("#model-mode")) $("#model-mode").value = savedMode;
 } catch {}
 
+function findProjectById(projectId) {
+  if (!projectId) return null;
+  return state.projects.find((item) => item.id === projectId) || null;
+}
+
+function getConversationProjectId(conversation) {
+  return conversation?.projectId || null;
+}
+
+function getProjectChatCount(projectId) {
+  if (projectId === "all") return state.conversations.length;
+  if (projectId === "unassigned") return state.conversations.filter((item) => !item.projectId).length;
+  return state.conversations.filter((item) => item.projectId === projectId).length;
+}
+
+function syncChatContextBar() {
+  const select = $("#chat-project-select");
+  const continueBtn = $("#continue-chat-btn");
+  if (select) {
+    const activeProjectId = getConversationProjectId(state.activeConversation)
+      || (state.selectedProjectId !== "all" && state.selectedProjectId !== "unassigned" ? state.selectedProjectId : "");
+    select.replaceChildren();
+    const unassignedOption = document.createElement("option");
+    unassignedOption.value = "";
+    unassignedOption.textContent = "No project";
+    select.appendChild(unassignedOption);
+    for (const project of state.projects) {
+      const opt = document.createElement("option");
+      opt.value = project.id;
+      opt.textContent = project.name;
+      select.appendChild(opt);
+    }
+    select.value = state.projects.some((p) => p.id === activeProjectId) ? activeProjectId : "";
+  }
+  if (continueBtn) {
+    const canContinue = Boolean(state.activeConversationId && (state.messages.length > 0 || state.activeConversation?.handoffContext));
+    continueBtn.disabled = !canContinue || state.sending || state.conversationLoading;
+  }
+}
+
+function syncNewChatButtonLabel() {
+  const newChatBtn = $("#new-chat");
+  const heading = $("#recent-chats-heading");
+  const activeProject = state.selectedProjectId !== "all" && state.selectedProjectId !== "unassigned"
+    ? findProjectById(state.selectedProjectId)
+    : null;
+  if (newChatBtn) {
+    newChatBtn.replaceChildren();
+    const plus = document.createElement("span");
+    plus.textContent = "＋";
+    const label = document.createElement("span");
+    label.className = "new-chat-label";
+    label.textContent = activeProject ? `New in ${activeProject.name}` : "New conversation";
+    newChatBtn.title = activeProject ? `Start a new conversation in ${activeProject.name}` : "Start a new conversation";
+    newChatBtn.append(plus, label);
+  }
+  if (heading) {
+    if (activeProject) heading.textContent = activeProject.name.toUpperCase();
+    else if (state.selectedProjectId === "unassigned") heading.textContent = "UNASSIGNED CHATS";
+    else heading.textContent = "RECENT CHATS";
+  }
+}
+
+function renderProjectList(host) {
+  if (!host) return;
+  host.replaceChildren();
+
+  function buildFilterRow({ id, name, color = "neutral", count = 0, project = null }) {
+    const row = document.createElement("div");
+    row.className = "project-row";
+    row.setAttribute("role", "listitem");
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "project-item" + (state.selectedProjectId === id ? " active" : "");
+    button.dataset.projectFilter = id;
+
+    const dot = document.createElement("span");
+    dot.className = "project-accent-dot";
+    dot.dataset.color = color;
+    dot.setAttribute("aria-hidden", "true");
+
+    const label = document.createElement("span");
+    label.className = "project-item-name";
+    label.textContent = name;
+
+    const countSpan = document.createElement("span");
+    countSpan.className = "project-item-count";
+    countSpan.textContent = String(count);
+
+    button.append(dot, label, countSpan);
+    button.addEventListener("click", () => {
+      state.selectedProjectId = id;
+      renderProjects();
+      renderConversations(state.conversations);
+      syncNewChatButtonLabel();
+      syncChatContextBar();
+    });
+    row.appendChild(button);
+
+    if (project) {
+      const actions = document.createElement("div");
+      actions.className = "project-actions";
+
+      const addChatBtn = document.createElement("button");
+      addChatBtn.type = "button";
+      addChatBtn.className = "project-action-btn";
+      addChatBtn.textContent = "＋";
+      addChatBtn.title = `New chat in ${project.name}`;
+      addChatBtn.setAttribute("aria-label", `New chat in ${project.name}`);
+      addChatBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        state.selectedProjectId = project.id;
+        renderProjects();
+        syncNewChatButtonLabel();
+        newConversation({ projectId: project.id }).catch((error) => toast(error.message));
+      });
+
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "project-action-btn";
+      editBtn.textContent = "✎";
+      editBtn.title = `Edit ${project.name}`;
+      editBtn.setAttribute("aria-label", `Edit project ${project.name}`);
+      editBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openProjectModal(project);
+      });
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "project-action-btn delete";
+      deleteBtn.textContent = "×";
+      deleteBtn.title = `Delete ${project.name}`;
+      deleteBtn.setAttribute("aria-label", `Delete project ${project.name}`);
+      deleteBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        deleteProject(project.id, project.name);
+      });
+
+      actions.append(addChatBtn, editBtn, deleteBtn);
+      row.appendChild(actions);
+    }
+
+    return row;
+  }
+
+  host.appendChild(buildFilterRow({
+    id: "all",
+    name: "All chats",
+    color: "neutral",
+    count: getProjectChatCount("all")
+  }));
+
+  for (const project of state.projects) {
+    host.appendChild(buildFilterRow({
+      id: project.id,
+      name: project.name,
+      color: project.color || "purple",
+      count: getProjectChatCount(project.id),
+      project
+    }));
+  }
+
+  if (state.projects.length > 0) {
+    host.appendChild(buildFilterRow({
+      id: "unassigned",
+      name: "Unassigned",
+      color: "neutral",
+      count: getProjectChatCount("unassigned")
+    }));
+  }
+}
+
+function renderProjects() {
+  renderProjectList($("#project-list"));
+  renderProjectList($("#mobile-project-list"));
+  syncNewChatButtonLabel();
+  syncChatContextBar();
+}
+
+async function loadProjects() {
+  const payload = await api("/api/core/projects");
+  state.projects = Array.isArray(payload.projects) ? payload.projects : [];
+  if (state.selectedProjectId !== "all" && state.selectedProjectId !== "unassigned") {
+    if (!state.projects.some((item) => item.id === state.selectedProjectId)) {
+      state.selectedProjectId = "all";
+    }
+  }
+  renderProjects();
+}
+
+let projectModalColor = "purple";
+
+function setProjectModalColor(color) {
+  projectModalColor = color || "purple";
+  document.querySelectorAll("#project-color-choices .project-color-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.projectColor === projectModalColor);
+  });
+}
+
+function openProjectModal(project = null) {
+  const modal = $("#project-modal");
+  const form = $("#project-form");
+  const title = $("#project-modal-title");
+  const submit = $("#project-submit-btn");
+  const err = $("#project-form-error");
+  if (!modal || !form) return;
+  form.reset();
+  if (err) err.textContent = "";
+  form.elements.projectId.value = project?.id || "";
+  form.elements.name.value = project?.name || "";
+  form.elements.description.value = project?.description || "";
+  setProjectModalColor(project?.color || "purple");
+  if (title) title.textContent = project ? "Edit project" : "New project";
+  if (submit) submit.textContent = project ? "Save changes" : "Create project";
+  modal.hidden = false;
+  $("#mobile-history-sheet").hidden = true;
+  $("#project-name-input")?.focus();
+}
+
+function closeProjectModal() {
+  const modal = $("#project-modal");
+  if (modal) modal.hidden = true;
+}
+
+async function deleteProject(projectId, projectName) {
+  if (!confirm(`Delete project "${projectName}"? Conversations inside it will be kept under Unassigned.`)) return;
+  try {
+    await api("/api/core/projects/" + encodeURIComponent(projectId), { method: "DELETE", body: "{}" });
+    if (state.selectedProjectId === projectId) state.selectedProjectId = "all";
+    if (state.activeConversation?.projectId === projectId) {
+      state.activeConversation = { ...state.activeConversation, projectId: null };
+    }
+    await Promise.all([loadProjects(), loadConversations()]);
+    toast(`Deleted project "${projectName}".`);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+$("#new-project-btn")?.addEventListener("click", () => openProjectModal(null));
+$("#mobile-new-project-btn")?.addEventListener("click", () => openProjectModal(null));
+$("#project-modal-close")?.addEventListener("click", closeProjectModal);
+$("#project-cancel-btn")?.addEventListener("click", closeProjectModal);
+$("#project-modal")?.querySelector("[data-project-modal-close='backdrop']")?.addEventListener("click", closeProjectModal);
+document.querySelectorAll("#project-color-choices .project-color-btn").forEach((btn) => {
+  btn.addEventListener("click", () => setProjectModalColor(btn.dataset.projectColor));
+});
+document.addEventListener("keydown", (event) => {
+  const modal = $("#project-modal");
+  if (event.key === "Escape" && modal && !modal.hidden) {
+    closeProjectModal();
+  }
+});
+
+$("#project-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const projectId = String(form.elements.projectId.value || "").trim();
+  const name = String(form.elements.name.value || "").trim();
+  const description = String(form.elements.description.value || "").trim();
+  const err = $("#project-form-error");
+  const submit = $("#project-submit-btn");
+  if (err) err.textContent = "";
+  if (!name) {
+    if (err) err.textContent = "Please enter a project name.";
+    return;
+  }
+  if (submit) submit.disabled = true;
+  try {
+    if (projectId) {
+      await api("/api/core/projects/" + encodeURIComponent(projectId), {
+        method: "PATCH",
+        body: JSON.stringify({ name, description, color: projectModalColor })
+      });
+      toast(`Updated project "${name}".`);
+    } else {
+      const created = await api("/api/core/projects", {
+        method: "POST",
+        body: JSON.stringify({ name, description, color: projectModalColor })
+      });
+      if (created?.project?.id) state.selectedProjectId = created.project.id;
+      toast(`Created project "${name}".`);
+    }
+    closeProjectModal();
+    await loadProjects();
+    renderConversations(state.conversations);
+  } catch (error) {
+    if (err) err.textContent = error.message;
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+});
+
+$("#chat-project-select")?.addEventListener("change", async (event) => {
+  const targetProjectId = event.currentTarget.value || null;
+  if (!state.activeConversationId) {
+    state.selectedProjectId = targetProjectId || "all";
+    renderProjects();
+    renderConversations(state.conversations);
+    return;
+  }
+  try {
+    const updated = await api("/api/core/conversations/" + encodeURIComponent(state.activeConversationId), {
+      method: "PATCH",
+      body: JSON.stringify({ projectId: targetProjectId })
+    });
+    const nextProjectId = updated?.conversation?.projectId ?? targetProjectId;
+    if (state.activeConversation) {
+      state.activeConversation = { ...state.activeConversation, projectId: nextProjectId };
+    }
+    await Promise.all([loadProjects(), loadConversations()]);
+    const proj = findProjectById(nextProjectId);
+    toast(proj ? `Moved chat to "${proj.name}".` : "Removed chat from project.");
+  } catch (error) {
+    toast(error.message);
+    syncChatContextBar();
+  }
+});
+
+function formatGbFromMb(mb) {
+  if (!Number.isFinite(Number(mb)) || Number(mb) <= 0) return null;
+  return (Number(mb) / 1024).toFixed(1) + " GB";
+}
+
+function getVramDismissKey(vram) {
+  const bucket = vram?.percent != null ? Math.floor(Number(vram.percent) / 5) * 5 : 0;
+  return `${state.activeConversationId || "none"}:${bucket}`;
+}
+
+function renderVramWarningBanner() {
+  const banner = $("#vram-warning-banner");
+  const titleEl = $("#vram-warning-title");
+  const detailEl = $("#vram-warning-detail");
+  const ctaBtn = $("#vram-continue-btn");
+  if (!banner) return;
+
+  const vram = state.vram;
+  const isWarning = Boolean(state.linked && vram?.warning === true && vram.available);
+  const dismissKey = getVramDismissKey(vram);
+  const dismissed = Boolean(state.vramDismissedKey && state.vramDismissedKey === dismissKey);
+
+  if (!isWarning || dismissed) {
+    banner.hidden = true;
+    return;
+  }
+
+  const pct = Math.round(Number(vram.percent || 0));
+  const usedGb = formatGbFromMb(vram.usedMb);
+  const totalGb = formatGbFromMb(vram.totalMb);
+  const memRange = usedGb && totalGb ? ` (${usedGb} / ${totalGb})` : "";
+  const activeProject = findProjectById(getConversationProjectId(state.activeConversation));
+
+  if (titleEl) {
+    titleEl.textContent = `⚠ VRAM usage at ${pct}%${memRange}`;
+  }
+  if (detailEl) {
+    if (state.activeConversationId && state.messages.length > 0) {
+      detailEl.textContent = activeProject
+        ? `Start a fresh chat in "${activeProject.name}" carrying over context from this conversation so you can keep working smoothly.`
+        : "Start a fresh chat carrying over context from this conversation so you can keep working without VRAM pressure.";
+    } else {
+      detailEl.textContent = "GPU memory is above the 80% threshold. Start a fresh chat to keep context lean.";
+    }
+  }
+  if (ctaBtn) {
+    ctaBtn.textContent = state.activeConversationId && state.messages.length > 0
+      ? "Continue in new chat"
+      : "Start fresh chat";
+  }
+  banner.hidden = false;
+}
+
+function renderVramStatus() {
+  const vram = state.vram;
+  const readoutBtn = $("#vram-status-btn");
+  const readoutVal = $("#vram-readout-value");
+  if (readoutVal) {
+    readoutVal.textContent = vram?.available && vram.percent != null
+      ? `${Math.round(Number(vram.percent))}%`
+      : "—";
+  }
+  if (readoutBtn) {
+    readoutBtn.classList.toggle("is-warning", Boolean(vram?.warning));
+  }
+
+  const deviceEl = $("#vram-settings-device");
+  const percentEl = $("#vram-settings-percent");
+  const fillEl = $("#vram-meter-fill");
+  const trackEl = $("#vram-meter-track");
+  const metaEl = $("#vram-settings-meta");
+  const clearBtn = $("#vram-clear-report-btn");
+  const connBadge = $("#vram-connection-badge");
+  const conn = vram?.connection || {};
+
+  if (connBadge) {
+    const mode = conn.mode || (vram?.available ? "local-gpu" : "unconfigured");
+    connBadge.className = "cloud-status-tag";
+    if (mode === "external-push") {
+      connBadge.classList.add("is-ready");
+      connBadge.textContent = conn.hostName ? `PC Live · ${conn.hostName}` : "External PC Live";
+    } else if (mode === "external-pull") {
+      connBadge.classList.add("is-ready");
+      connBadge.textContent = conn.hostName ? `PC Pull · ${conn.hostName}` : "External PC Pull";
+    } else if (mode === "remote-ollama") {
+      connBadge.classList.add("is-ready");
+      connBadge.textContent = conn.hostName ? `Ollama · ${conn.hostName}` : "Remote Ollama";
+    } else if (mode === "test-alert") {
+      connBadge.classList.add("is-active");
+      connBadge.textContent = "Test Reading";
+    } else if (mode === "local-gpu") {
+      connBadge.classList.add("is-ready");
+      connBadge.textContent = "Local GPU";
+    } else if (mode === "stale") {
+      connBadge.classList.add("is-missing");
+      connBadge.textContent = conn.hostName ? `PC Stale · ${conn.hostName}` : "PC Stale";
+    } else if (mode === "ollama-needs-total") {
+      connBadge.classList.add("is-missing");
+      connBadge.textContent = "Set Total VRAM";
+    } else {
+      connBadge.classList.add("is-missing");
+      connBadge.textContent = "Waiting for PC";
+    }
+  }
+
+  if (deviceEl && percentEl && fillEl && trackEl && metaEl) {
+    const threshold = vram?.thresholdPercent || 80;
+    const hostLabel = vram?.hostName || conn.hostName || null;
+    if (vram?.available && vram.percent != null) {
+      const pct = Math.round(Number(vram.percent));
+      const usedGb = formatGbFromMb(vram.usedMb);
+      const totalGb = formatGbFromMb(vram.totalMb);
+      const baseGpu = vram.gpuName || "GPU";
+      deviceEl.textContent = hostLabel && !baseGpu.includes(hostLabel)
+        ? `${baseGpu} · ${hostLabel}`
+        : baseGpu;
+      percentEl.textContent = `${pct}%`;
+      percentEl.classList.toggle("is-warning", Boolean(vram.warning));
+      fillEl.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+      fillEl.classList.toggle("is-warning", Boolean(vram.warning));
+      trackEl.setAttribute("aria-valuenow", String(pct));
+      const sourceLabel = vram.source === "external-pc"
+        ? "External PC push"
+        : (vram.source === "external-pc-pull" ? "External PC pull" : (vram.source || "probe"));
+      const parts = [
+        usedGb && totalGb ? `${usedGb} / ${totalGb}` : null,
+        `Source: ${sourceLabel}`,
+        `Warning threshold: ${threshold}%`,
+        vram.warning ? "Alert active" : "Within budget"
+      ].filter(Boolean);
+      metaEl.textContent = parts.join(" · ");
+    } else {
+      const usedGb = formatGbFromMb(vram?.usedMb);
+      if (conn.stale && hostLabel) {
+        deviceEl.textContent = `${hostLabel} (offline / stale)`;
+        metaEl.textContent = `No VRAM update received within ${conn.ttlSeconds || 120}s · Warning threshold: ${threshold}%. Make sure the PC reporter is running.`;
+      } else if (conn.mode === "ollama-needs-total" && hostLabel) {
+        deviceEl.textContent = `Ollama on ${hostLabel}${usedGb ? ` (${usedGb} loaded)` : ""}`;
+        metaEl.textContent = `Warning threshold: ${threshold}% · Set ALFIE_VRAM_TOTAL_MB on Proxmox or connect the external PC reporter below for exact %.`;
+      } else {
+        deviceEl.textContent = "Waiting for external PC GPU telemetry";
+        metaEl.textContent = `Warning threshold: ${threshold}% · Open "Connect external GPU PC" below to stream live VRAM from your PC to Proxmox.`;
+      }
+      percentEl.textContent = "—";
+      percentEl.classList.remove("is-warning");
+      fillEl.style.width = "0%";
+      fillEl.classList.remove("is-warning");
+      trackEl.setAttribute("aria-valuenow", "0");
+    }
+    if (clearBtn) {
+      clearBtn.hidden = !(vram?.source === "test-alert" || vram?.source === "reported");
+    }
+  }
+
+  renderVramPcSetup(conn);
+  renderVramWarningBanner();
+  syncVramNotificationButton();
+}
+
+let activeVramSnippetTab = "powershell";
+
+function buildVramSnippet(kind) {
+  const origin = typeof window !== "undefined" && window.location?.origin
+    ? window.location.origin
+    : "http://<PROXMOX_IP>:3000";
+  const endpoint = `${origin}/api/telemetry/vram`;
+  if (kind === "node") {
+    return [
+      `ALFIE_URL="${origin}" \\`,
+      `ALFIE_VRAM_REPORT_TOKEN="<YOUR_ALFIE_VRAM_REPORT_TOKEN>" \\`,
+      `node scripts/pc-vram-reporter.mjs`
+    ].join("\n");
+  }
+  if (kind === "bash") {
+    return [
+      `# Run every 5s on your Linux GPU PC (requires nvidia-smi & curl)`,
+      `while true; do`,
+      `  IFS=',' read -r gpu used total <<< "$(nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader,nounits | head -n 1)"`,
+      `  curl -fsS -X POST "${endpoint}" \\`,
+      `    -H "Authorization: Bearer $ALFIE_VRAM_REPORT_TOKEN" \\`,
+      `    -H "Content-Type: application/json" \\`,
+      `    -d "{\\"gpuName\\":\\"$gpu\\",\\"usedMb\\":$used,\\"totalMb\\":$total,\\"hostName\\":\\"$(hostname)\\"}" >/dev/null`,
+      `  sleep 5`,
+      `done`
+    ].join("\n");
+  }
+  return [
+    `# Run on your Windows GPU PC (PowerShell, requires nvidia-smi)`,
+    `$Token = "<YOUR_ALFIE_VRAM_REPORT_TOKEN>"`,
+    `while ($true) {`,
+    `  $csv = (nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader,nounits | Select-Object -First 1) -split ','`,
+    `  $body = @{ gpuName = $csv[0].Trim(); usedMb = [int]$csv[1]; totalMb = [int]$csv[2]; hostName = $env:COMPUTERNAME } | ConvertTo-Json`,
+    `  Invoke-RestMethod -Uri "${endpoint}" -Method Post -Headers @{ Authorization = "Bearer $Token" } -ContentType "application/json" -Body $body | Out-Null`,
+    `  Start-Sleep -Seconds 5`,
+    `}`
+  ].join("\n");
+}
+
+function renderVramPcSetup(conn = {}) {
+  const tokenEl = $("#vram-token-status");
+  const remoteEl = $("#vram-remote-status");
+  const endpointEl = $("#vram-endpoint-url");
+  const cmdEl = $("#vram-setup-command");
+
+  if (tokenEl) {
+    tokenEl.className = "cloud-status-tag " + (conn.pushTokenConfigured ? "is-ready" : "is-missing");
+    tokenEl.textContent = conn.pushTokenConfigured
+      ? "ALFIE_VRAM_REPORT_TOKEN ready"
+      : "Set ALFIE_VRAM_REPORT_TOKEN on Proxmox";
+  }
+  if (remoteEl) {
+    remoteEl.className = "cloud-status-tag" + (conn.remoteUrlConfigured ? " is-ready" : "");
+    remoteEl.textContent = conn.remoteUrlConfigured
+      ? "ALFIE_VRAM_REMOTE_URL active"
+      : "Pull URL optional";
+  }
+  if (endpointEl && typeof window !== "undefined" && window.location?.origin) {
+    endpointEl.textContent = `${window.location.origin}/api/telemetry/vram`;
+  }
+  if (cmdEl) {
+    cmdEl.textContent = buildVramSnippet(activeVramSnippetTab);
+  }
+  document.querySelectorAll("[data-vram-snippet]").forEach((btn) => {
+    const active = btn.dataset.vramSnippet === activeVramSnippetTab;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", String(active));
+  });
+}
+
+function isVramOverThreshold(vram) {
+  if (!vram?.available) return false;
+  const threshold = Number(vram.thresholdPercent || 80);
+  return vram.warning === true || (vram.percent != null && Number(vram.percent) >= threshold);
+}
+
+function syncVramNotificationButton() {
+  const btn = $("#vram-notify-permission-btn");
+  if (!btn) return;
+  if (typeof window === "undefined" || typeof window.Notification === "undefined") {
+    btn.hidden = true;
+    return;
+  }
+  btn.hidden = false;
+  const perm = window.Notification.permission;
+  btn.classList.toggle("is-granted", perm === "granted");
+  if (perm === "granted") {
+    btn.textContent = "Desktop alerts: On";
+    btn.disabled = true;
+  } else if (perm === "denied") {
+    btn.textContent = "Desktop alerts blocked";
+    btn.disabled = true;
+  } else {
+    btn.textContent = "Enable desktop alerts";
+    btn.disabled = false;
+  }
+}
+
+function triggerVramThresholdAlert(vram) {
+  const pct = Math.round(Number(vram?.percent || 0));
+  const threshold = Math.round(Number(vram?.thresholdPercent || 80));
+  const usedGb = formatGbFromMb(vram?.usedMb);
+  const totalGb = formatGbFromMb(vram?.totalMb);
+  const memRange = usedGb && totalGb ? ` (${usedGb} / ${totalGb})` : "";
+  const toastMessage = `⚠ VRAM at ${pct}%${memRange} — crossed ${threshold}% threshold. Start a new chat with carried-over context.`;
+
+  toast(toastMessage, { variant: "warning", durationMs: 6000 });
+
+  if (typeof window !== "undefined" && typeof window.Notification !== "undefined" && window.Notification.permission === "granted") {
+    try {
+      const notification = new window.Notification(`Alfie — VRAM usage at ${pct}%`, {
+        body: `GPU memory crossed the ${threshold}% threshold${memRange}. Start a new chat with carried-over context to keep working smoothly.`,
+        tag: "alfie-vram-threshold",
+        renotify: true
+      });
+      notification.onclick = () => {
+        try { window.focus(); } catch {}
+        setView("chat");
+        try { notification.close(); } catch {}
+      };
+    } catch {
+      // Browser or iframe blocked Notification construction; toast alert already shown above.
+    }
+  }
+}
+
+function applyVramSnapshot(vram) {
+  state.vram = vram || null;
+  const overThreshold = isVramOverThreshold(state.vram);
+  let crossedThreshold = false;
+  if (overThreshold && !state.vramLastAlerted) {
+    state.vramLastAlerted = true;
+    crossedThreshold = true;
+    if (window.alfieSoul?.getAnimationState() === "idle") {
+      window.alfieSoul?.setMood("amber");
+    }
+    triggerVramThresholdAlert(state.vram);
+  } else if (!overThreshold) {
+    state.vramLastAlerted = false;
+  }
+  renderVramStatus();
+  return crossedThreshold;
+}
+
+async function refreshVramStatus() {
+  if (!state.linked) return null;
+  try {
+    const payload = await api("/api/core/system/vram");
+    applyVramSnapshot(payload?.vram || null);
+    return state.vram;
+  } catch {
+    return null;
+  }
+}
+
+function startVramPolling() {
+  stopVramPolling();
+  state.vramPollTimer = setInterval(() => {
+    if (!document.hidden && state.linked && !state.sending) {
+      refreshVramStatus();
+    }
+  }, 20000);
+}
+
+function stopVramPolling() {
+  if (state.vramPollTimer) {
+    clearInterval(state.vramPollTimer);
+    state.vramPollTimer = null;
+  }
+}
+
+async function continueInNewChat({ reason = "context_handoff" } = {}) {
+  if (state.sending || state.conversationLoading) {
+    toast("Wait for the current response to finish first.");
+    return;
+  }
+  if (!state.activeConversationId) {
+    await newConversation();
+    return;
+  }
+  const token = ++state.conversationLoadToken;
+  state.conversationLoading = true;
+  syncChatContextBar();
+  try {
+    const payload = await api("/api/core/conversations/" + encodeURIComponent(state.activeConversationId) + "/handoff", {
+      method: "POST",
+      body: JSON.stringify({
+        reason,
+        projectId: getConversationProjectId(state.activeConversation)
+      })
+    });
+    if (token !== state.conversationLoadToken) return;
+    const nextConversation = payload.conversation;
+    state.activeConversationId = nextConversation.id;
+    state.activeConversation = nextConversation;
+    state.messages = nextConversation.messages || [];
+    state.vramDismissedKey = getVramDismissKey(state.vram);
+    if (nextConversation.projectId && state.selectedProjectId !== "all" && state.selectedProjectId !== nextConversation.projectId) {
+      state.selectedProjectId = nextConversation.projectId;
+    }
+    renderMessages();
+    renderVramWarningBanner();
+    await Promise.all([loadProjects(), loadConversations()]);
+    setView("chat");
+    window.alfieSoul?.pulse("completed", 1800, "idle", "purple");
+    const project = findProjectById(nextConversation.projectId);
+    toast(project
+      ? `Started "${nextConversation.title}" in ${project.name} with carried-over context.`
+      : `Started "${nextConversation.title}" with carried-over context.`);
+    $("#chat-form")?.elements?.message?.focus();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    if (token === state.conversationLoadToken) state.conversationLoading = false;
+    syncChatContextBar();
+  }
+}
+
+$("#continue-chat-btn")?.addEventListener("click", () => {
+  continueInNewChat({ reason: state.vram?.warning ? "vram_threshold" : "context_handoff" });
+});
+$("#vram-continue-btn")?.addEventListener("click", () => {
+  if (state.activeConversationId && state.messages.length > 0) {
+    continueInNewChat({ reason: "vram_threshold" });
+  } else {
+    state.vramDismissedKey = getVramDismissKey(state.vram);
+    newConversation().catch((error) => toast(error.message));
+  }
+});
+$("#vram-dismiss-btn")?.addEventListener("click", () => {
+  state.vramDismissedKey = getVramDismissKey(state.vram);
+  renderVramWarningBanner();
+});
+$("#vram-status-btn")?.addEventListener("click", () => {
+  setView("settings");
+  $("#settings-vram-surface")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+});
+$("#vram-refresh-btn")?.addEventListener("click", async () => {
+  const wasAlerted = state.vramLastAlerted;
+  await refreshVramStatus();
+  if (!(!wasAlerted && state.vramLastAlerted)) {
+    toast("VRAM telemetry refreshed.");
+  }
+});
+$("#vram-notify-permission-btn")?.addEventListener("click", async () => {
+  if (typeof window === "undefined" || typeof window.Notification === "undefined") {
+    toast("Browser notifications are not supported here — toast alerts remain active.");
+    return;
+  }
+  try {
+    const result = await window.Notification.requestPermission();
+    syncVramNotificationButton();
+    if (result === "granted") {
+      toast("Desktop VRAM alerts enabled.");
+    } else if (result === "denied") {
+      toast("Desktop notifications blocked by browser — toast alerts remain active.");
+    }
+  } catch {
+    toast("Could not request browser notification permission — toast alerts remain active.");
+  }
+});
+$("#vram-simulate-high-btn")?.addEventListener("click", async () => {
+  try {
+    const payload = await api("/api/core/system/vram/report", {
+      method: "POST",
+      body: JSON.stringify({
+        percent: 84,
+        usedMb: 20644,
+        totalMb: 24576,
+        gpuName: "Local GPU (84% test)",
+        source: "test-alert"
+      })
+    });
+    state.vramDismissedKey = null;
+    state.vramLastAlerted = false;
+    applyVramSnapshot(payload.vram);
+  } catch (error) {
+    toast(error.message);
+  }
+});
+$("#vram-clear-report-btn")?.addEventListener("click", async () => {
+  try {
+    const payload = await api("/api/core/system/vram/report", {
+      method: "POST",
+      body: JSON.stringify({ clear: true })
+    });
+    state.vramDismissedKey = null;
+    applyVramSnapshot(payload.vram);
+    toast("Reset test VRAM reading.");
+  } catch (error) {
+    toast(error.message);
+  }
+});
+document.querySelectorAll("[data-vram-snippet]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    activeVramSnippetTab = btn.dataset.vramSnippet || "powershell";
+    renderVramPcSetup(state.vram?.connection || {});
+  });
+});
+$("#vram-copy-cmd-btn")?.addEventListener("click", async () => {
+  const snippet = buildVramSnippet(activeVramSnippetTab);
+  try {
+    await navigator.clipboard.writeText(snippet);
+    toast("External PC VRAM reporter command copied.");
+  } catch {
+    toast("Copy failed — select the command text manually.");
+  }
+});
+
+function findCloudAgent(providerId) {
+  return (state.cloudAgents || []).find((agent) => agent.provider === providerId) || null;
+}
+
+const PERSONAL_VISIBILITY_KEYS = [
+  "allowMail",
+  "allowCalendar",
+  "allowJournal",
+  "allowPersonalMemories",
+  "allowDashboardState"
+];
+
+function getCloudPrivacyCategories() {
+  return state.cloudPrivacyCategories && state.cloudPrivacyCategories.length
+    ? state.cloudPrivacyCategories
+    : [
+        { key: "allowMail", label: "Emails & Inbox", group: "personal", description: "Mail summaries, inbox context, and email tools." },
+        { key: "allowCalendar", label: "Calendar & Schedule", group: "personal", description: "Upcoming events, selected dates, and calendar tools." },
+        { key: "allowJournal", label: "Personal Journal", group: "personal", description: "Private journal reflections, diary entries, and activity logs." },
+        { key: "allowPersonalMemories", label: "Garden Memories", group: "personal", description: "Saved personal memories and memory search/write tools." },
+        { key: "allowDashboardState", label: "Dashboard & Notifications", group: "personal", description: "System notifications, Petrio status, quest progress, and health." },
+        { key: "allowProjectContext", label: "Project Notes & Handoff", group: "coding", description: "Active project notes and carried-over coding context." },
+        { key: "allowCodeTools", label: "Code & Utility Tools", group: "coding", description: "Repository audit, project roadmap, and visual asset tools." },
+        { key: "redactPersonalIdentifiers", label: "Scrub Email Addresses", group: "coding", description: "Automatically redact email addresses from outbound prompts." }
+      ];
+}
+
+function summarizeLocalVisibility(visibility = {}) {
+  const categories = getCloudPrivacyCategories();
+  const blocked = [];
+  const allowed = [];
+  const personalExposed = [];
+  for (const cat of categories) {
+    if (cat.key === "redactPersonalIdentifiers") continue;
+    if (visibility[cat.key]) {
+      allowed.push(cat.label);
+      if (cat.group === "personal") personalExposed.push(cat.label);
+    } else {
+      blocked.push(cat.label);
+    }
+  }
+  return {
+    blocked,
+    allowed,
+    personalExposed,
+    personalTotal: PERSONAL_VISIBILITY_KEYS.length,
+    personalDataIsolated: personalExposed.length === 0
+  };
+}
+
+function renderCloudPrivacyDrawer(agent, summary) {
+  const drawer = $("#cloud-privacy-drawer");
+  const listHost = $("#cloud-privacy-drawer-list");
+  const labelEl = $("#cloud-privacy-drawer-label");
+  const lockAllBtn = $("#cloud-privacy-lock-all-btn");
+  const toggleBtn = $("#cloud-privacy-toggle-btn");
+  if (!drawer || !listHost) return;
+
+  if (toggleBtn) {
+    toggleBtn.textContent = `Private sections (${summary.personalExposed.length}/${summary.personalTotal})`;
+  }
+  if (labelEl) {
+    labelEl.textContent = `Optional private sections for ${agent.name} — unchecked sections remain blocked on the server:`;
+  }
+  if (lockAllBtn) {
+    lockAllBtn.hidden = summary.personalDataIsolated;
+  }
+
+  const personalCats = getCloudPrivacyCategories().filter((c) => c.group === "personal");
+  listHost.replaceChildren();
+
+  for (const cat of personalCats) {
+    const allowed = Boolean(agent.visibility?.[cat.key]);
+    const chip = document.createElement("label");
+    chip.className = "cloud-drawer-chip" + (allowed ? " is-allowed" : "");
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = allowed;
+    cb.setAttribute("aria-label", `Allow ${agent.name} access to ${cat.label}`);
+
+    const text = document.createElement("span");
+    text.textContent = cat.label;
+
+    const badge = document.createElement("span");
+    badge.className = "cloud-drawer-chip-state";
+    badge.textContent = allowed ? "On" : "Off";
+
+    cb.addEventListener("change", async () => {
+      cb.disabled = true;
+      const nextVis = { ...(agent.visibility || {}), [cat.key]: cb.checked };
+      const anyPersonal = PERSONAL_VISIBILITY_KEYS.some((k) => Boolean(nextVis[k]));
+      try {
+        await api("/api/core/cloud-agents/" + encodeURIComponent(agent.provider), {
+          method: "PATCH",
+          body: JSON.stringify({
+            privateAccessOptIn: anyPersonal,
+            visibility: nextVis
+          })
+        });
+        await loadCloudAgents();
+        toast(cb.checked
+          ? `${agent.name} now has optional access to ${cat.label}.`
+          : `Blocked ${cat.label} for ${agent.name}.`);
+      } catch (error) {
+        cb.checked = !cb.checked;
+        toast(error.message || "Could not update private section access.", { variant: "warning" });
+      } finally {
+        cb.disabled = false;
+      }
+    });
+
+    chip.append(cb, text, badge);
+    listHost.appendChild(chip);
+  }
+}
+
+function renderCloudPrivacyBanner() {
+  const banner = $("#cloud-privacy-banner");
+  const titleEl = $("#cloud-privacy-title");
+  const detailEl = $("#cloud-privacy-detail");
+  const drawer = $("#cloud-privacy-drawer");
+  const toggleBtn = $("#cloud-privacy-toggle-btn");
+  if (!banner) return;
+
+  const activeProvider = state.selectedAgentProvider || "local";
+  if (activeProvider === "local") {
+    banner.hidden = true;
+    banner.classList.remove("is-personal-exposed");
+    if (drawer) drawer.hidden = true;
+    if (toggleBtn) toggleBtn.setAttribute("aria-expanded", "false");
+    return;
+  }
+
+  const agent = findCloudAgent(activeProvider);
+  if (!agent || !agent.enabled || !agent.privacyWarningAccepted) {
+    banner.hidden = true;
+    if (drawer) drawer.hidden = true;
+    if (toggleBtn) toggleBtn.setAttribute("aria-expanded", "false");
+    return;
+  }
+
+  const summary = summarizeLocalVisibility(agent.visibility || {});
+  const keyNote = agent.secretConfigured ? "" : ` · Server ${agent.envVar} not set yet`;
+  if (titleEl) {
+    titleEl.textContent = summary.personalDataIsolated
+      ? `🛡 ${agent.name} (${agent.model}) · Coding-only privacy mode${keyNote}`
+      : `⚠ ${agent.name} (${agent.model}) · Optional private access (${summary.personalExposed.join(", ")})${keyNote}`;
+  }
+  if (detailEl) {
+    const blockedText = summary.blocked.length ? `Blocked: ${summary.blocked.join(", ")}.` : "No categories blocked.";
+    const allowedText = summary.allowed.length ? `Allowed: ${summary.allowed.join(", ")}.` : "Chat prompt only.";
+    detailEl.textContent = `Prompts leave your local machine. ${blockedText} ${allowedText}`;
+  }
+  renderCloudPrivacyDrawer(agent, summary);
+  banner.classList.toggle("is-personal-exposed", !summary.personalDataIsolated);
+  banner.hidden = false;
+}
+
+function syncAgentSelector() {
+  const select = $("#agent-provider");
+  if (!select) return;
+  const gemini = findCloudAgent("gemini");
+  const openai = findCloudAgent("openai");
+
+  select.replaceChildren();
+  const localOpt = document.createElement("option");
+  localOpt.value = "local";
+  localOpt.textContent = "Alfie Local";
+  select.appendChild(localOpt);
+
+  const cloudDefs = [
+    { id: "gemini", fallbackName: "Gemini", agent: gemini },
+    { id: "openai", fallbackName: "ChatGPT", agent: openai }
+  ];
+  for (const def of cloudDefs) {
+    const opt = document.createElement("option");
+    opt.value = def.id;
+    const isEnabled = Boolean(def.agent?.enabled && def.agent?.privacyWarningAccepted);
+    opt.disabled = !isEnabled;
+    if (isEnabled) {
+      const summary = summarizeLocalVisibility(def.agent.visibility || {});
+      const privateNote = summary.personalExposed.length > 0
+        ? `+${summary.personalExposed.length} private`
+        : "Coding";
+      opt.textContent = def.agent.secretConfigured
+        ? `${def.fallbackName} (${privateNote})`
+        : `${def.fallbackName} (Key needed)`;
+    } else {
+      opt.textContent = `${def.fallbackName} (enable in Settings)`;
+    }
+    select.appendChild(opt);
+  }
+
+  const current = state.selectedAgentProvider || "local";
+  const currentAgent = current !== "local" ? findCloudAgent(current) : null;
+  if (current !== "local" && !(currentAgent?.enabled && currentAgent?.privacyWarningAccepted)) {
+    state.selectedAgentProvider = "local";
+    try { localStorage.setItem("alfie_agent_provider", "local"); } catch {}
+  }
+  select.value = state.selectedAgentProvider || "local";
+  renderCloudPrivacyBanner();
+}
+
+function renderCloudAgentsSettings() {
+  const host = $("#cloud-agents-list");
+  if (!host) return;
+  host.replaceChildren();
+
+  if (!state.cloudAgents.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "Cloud coding agent controls are unavailable.";
+    host.appendChild(empty);
+    return;
+  }
+
+  const categories = getCloudPrivacyCategories();
+  const personalCats = categories.filter((c) => c.group === "personal");
+  const codingCats = categories.filter((c) => c.group === "coding");
+
+  for (const agent of state.cloudAgents) {
+    const card = document.createElement("form");
+    card.className = "cloud-agent-card" + (agent.enabled ? " is-enabled" : "");
+    card.dataset.cloudProvider = agent.provider;
+
+    const head = document.createElement("div");
+    head.className = "cloud-agent-card-head";
+
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "cloud-agent-title";
+    const nameEl = document.createElement("strong");
+    nameEl.textContent = agent.name;
+    const vendorEl = document.createElement("span");
+    vendorEl.className = "cloud-agent-vendor";
+    vendorEl.textContent = `${agent.vendor} · Coding & optional private access`;
+    titleWrap.append(nameEl, vendorEl);
+
+    const badges = document.createElement("div");
+    badges.className = "cloud-agent-badges";
+    const keyTag = document.createElement("span");
+    keyTag.className = "cloud-status-tag " + (agent.secretConfigured ? "is-ready" : "is-missing");
+    keyTag.textContent = agent.secretConfigured ? `${agent.envVar} ready` : `Set ${agent.envVar}`;
+    const enabledTag = document.createElement("span");
+    enabledTag.className = "cloud-status-tag" + (agent.enabled ? " is-active" : "");
+    enabledTag.textContent = agent.enabled ? "Enabled" : "Disabled";
+    badges.append(keyTag, enabledTag);
+    head.append(titleWrap, badges);
+    card.appendChild(head);
+
+    // Model selector
+    const modelRow = document.createElement("div");
+    modelRow.className = "cloud-agent-row";
+    const modelLabel = document.createElement("label");
+    const modelId = `cloud-model-${agent.provider}`;
+    modelLabel.htmlFor = modelId;
+    modelLabel.textContent = "Model";
+    const modelSelect = document.createElement("select");
+    modelSelect.id = modelId;
+    modelSelect.name = "model";
+    for (const model of (agent.models || [])) {
+      const opt = document.createElement("option");
+      opt.value = model.id;
+      opt.textContent = model.label;
+      if (model.id === agent.model) opt.selected = true;
+      modelSelect.appendChild(opt);
+    }
+    modelRow.append(modelLabel, modelSelect);
+    card.appendChild(modelRow);
+
+    // Privacy warning acknowledgement
+    const ackLabel = document.createElement("label");
+    ackLabel.className = "cloud-warning-ack";
+    const ackCheckbox = document.createElement("input");
+    ackCheckbox.type = "checkbox";
+    ackCheckbox.name = "privacyWarningAccepted";
+    ackCheckbox.checked = Boolean(agent.privacyWarningAccepted);
+    ackCheckbox.id = `cloud-ack-${agent.provider}`;
+    const ackText = document.createElement("span");
+    ackText.textContent = agent.privacyWarning;
+    ackLabel.append(ackCheckbox, ackText);
+    card.appendChild(ackLabel);
+
+    // Enable toggle
+    const enableLabel = document.createElement("label");
+    enableLabel.className = "cloud-enable-row";
+    const enableText = document.createElement("span");
+    enableText.textContent = `Enable ${agent.name} in chat selector`;
+    const enableCheckbox = document.createElement("input");
+    enableCheckbox.type = "checkbox";
+    enableCheckbox.name = "enabled";
+    enableCheckbox.checked = Boolean(agent.enabled);
+    enableCheckbox.id = `cloud-enable-${agent.provider}`;
+    enableLabel.append(enableText, enableCheckbox);
+    card.appendChild(enableLabel);
+
+    const draftVisibility = { ...(agent.visibility || {}) };
+    let draftPrivateOptIn = Boolean(
+      agent.privateAccessOptIn || PERSONAL_VISIBILITY_KEYS.some((key) => Boolean(draftVisibility[key]))
+    );
+    const visibilityCheckboxes = new Map();
+
+    const summaryBox = document.createElement("div");
+    summaryBox.className = "cloud-summary-box";
+
+    function updateSummaryBox() {
+      const summary = summarizeLocalVisibility(draftVisibility);
+      summaryBox.classList.toggle("is-warning", !summary.personalDataIsolated);
+      const blockedStr = summary.blocked.length ? summary.blocked.join(", ") : "None";
+      const allowedStr = summary.allowed.length ? summary.allowed.join(", ") : "Chat prompt only";
+      if (summary.personalDataIsolated) {
+        summaryBox.textContent = `Coding-only isolation active · All ${summary.personalTotal} private sections blocked. Allowed: ${allowedStr}.`;
+      } else {
+        summaryBox.textContent = `⚠ Optional private access for ${agent.vendor}: ${summary.personalExposed.join(", ")} · Blocked: ${blockedStr}.`;
+      }
+    }
+
+    function buildVisibilityRows(list) {
+      const itemsHost = document.createElement("div");
+      itemsHost.className = "cloud-visibility-list";
+
+      for (const cat of list) {
+        const row = document.createElement("label");
+        row.className = "cloud-visibility-row";
+
+        const main = document.createElement("div");
+        main.className = "cloud-vis-main";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.name = `vis_${cat.key}`;
+        cb.checked = Boolean(draftVisibility[cat.key]);
+        visibilityCheckboxes.set(cat.key, cb);
+
+        const copy = document.createElement("div");
+        copy.className = "cloud-vis-copy";
+        const title = document.createElement("strong");
+        title.textContent = cat.label;
+        const desc = document.createElement("small");
+        desc.textContent = cat.description;
+        copy.append(title, desc);
+        main.append(cb, copy);
+
+        const stateBadge = document.createElement("span");
+        function syncBadge() {
+          const on = cb.checked;
+          if (cat.key === "redactPersonalIdentifiers") {
+            stateBadge.textContent = on ? "Scrubbing on" : "Off";
+            stateBadge.className = "cloud-vis-state " + (on ? "is-blocked" : "is-allowed-personal");
+          } else if (cat.group === "personal") {
+            stateBadge.textContent = on ? "Allowed" : "Blocked";
+            stateBadge.className = "cloud-vis-state " + (on ? "is-allowed-personal" : "is-blocked");
+          } else {
+            stateBadge.textContent = on ? "Allowed" : "Blocked";
+            stateBadge.className = "cloud-vis-state " + (on ? "is-allowed-coding" : "is-blocked");
+          }
+        }
+        syncBadge();
+
+        cb.addEventListener("change", () => {
+          draftVisibility[cat.key] = cb.checked;
+          syncBadge();
+          updateSummaryBox();
+        });
+
+        row.append(main, stateBadge);
+        itemsHost.appendChild(row);
+      }
+      return itemsHost;
+    }
+
+    // Optional private sections master opt-in box
+    const privateBox = document.createElement("div");
+    privateBox.className = "cloud-private-optin-box" + (draftPrivateOptIn ? " is-opted-in" : "");
+
+    const optInRow = document.createElement("label");
+    optInRow.className = "cloud-private-optin-row";
+    const optInCopy = document.createElement("div");
+    optInCopy.className = "cloud-private-optin-copy";
+    const optInTitle = document.createElement("strong");
+    optInTitle.textContent = "Optional access to private sections";
+    const optInDesc = document.createElement("small");
+    optInDesc.textContent = `Off by default. Turn on only if you want ${agent.name} to access specific private sections below.`;
+    optInCopy.append(optInTitle, optInDesc);
+
+    const optInCheckbox = document.createElement("input");
+    optInCheckbox.type = "checkbox";
+    optInCheckbox.name = "privateAccessOptIn";
+    optInCheckbox.id = `cloud-private-optin-${agent.provider}`;
+    optInCheckbox.checked = draftPrivateOptIn;
+    optInRow.append(optInCopy, optInCheckbox);
+
+    const lockedNote = document.createElement("p");
+    lockedNote.className = "cloud-private-locked-note";
+    lockedNote.textContent = "All 5 private sections (Emails, Calendar, Journal, Garden Memories, Dashboard) are blocked.";
+
+    const optInPanel = document.createElement("div");
+    optInPanel.className = "cloud-visibility-group";
+    const optInWarn = document.createElement("p");
+    optInWarn.className = "cloud-private-optin-warn";
+    optInWarn.textContent = `Choose which private sections ${agent.vendor} may read. Unchecked sections stay blocked on the server.`;
+    const personalRows = buildVisibilityRows(personalCats);
+    optInPanel.append(optInWarn, personalRows);
+
+    function syncPrivateOptInUi() {
+      privateBox.classList.toggle("is-opted-in", draftPrivateOptIn);
+      lockedNote.hidden = draftPrivateOptIn;
+      optInPanel.hidden = !draftPrivateOptIn;
+      for (const key of PERSONAL_VISIBILITY_KEYS) {
+        const cb = visibilityCheckboxes.get(key);
+        if (cb) {
+          cb.disabled = !draftPrivateOptIn;
+          if (!draftPrivateOptIn && cb.checked) {
+            cb.checked = false;
+            draftVisibility[key] = false;
+            cb.dispatchEvent(new Event("change"));
+          }
+        }
+      }
+      updateSummaryBox();
+    }
+
+    optInCheckbox.addEventListener("change", () => {
+      draftPrivateOptIn = optInCheckbox.checked;
+      syncPrivateOptInUi();
+    });
+
+    privateBox.append(optInRow, lockedNote, optInPanel);
+    card.appendChild(privateBox);
+    syncPrivateOptInUi();
+
+    // Coding & workspace context group
+    const codingGroup = document.createElement("div");
+    codingGroup.className = "cloud-visibility-group";
+    const codingHeading = document.createElement("p");
+    codingHeading.className = "cloud-visibility-heading";
+    codingHeading.textContent = "Coding & workspace context";
+    codingGroup.append(codingHeading, buildVisibilityRows(codingCats));
+    card.appendChild(codingGroup);
+
+    updateSummaryBox();
+    card.appendChild(summaryBox);
+
+    const errEl = document.createElement("p");
+    errEl.className = "error-message cloud-agent-error";
+    errEl.setAttribute("role", "alert");
+    card.appendChild(errEl);
+
+    enableCheckbox.addEventListener("change", () => {
+      errEl.textContent = "";
+      if (enableCheckbox.checked && !ackCheckbox.checked) {
+        enableCheckbox.checked = false;
+        errEl.textContent = `Check the privacy warning above before enabling ${agent.name}.`;
+        ackCheckbox.focus();
+      }
+    });
+
+    ackCheckbox.addEventListener("change", () => {
+      errEl.textContent = "";
+      if (!ackCheckbox.checked) {
+        enableCheckbox.checked = false;
+      }
+    });
+
+    const actions = document.createElement("div");
+    actions.className = "cloud-agent-actions";
+
+    const strictBtn = document.createElement("button");
+    strictBtn.type = "button";
+    strictBtn.className = "secondary-button";
+    strictBtn.textContent = "Strict coding only";
+    strictBtn.addEventListener("click", () => {
+      draftPrivateOptIn = false;
+      optInCheckbox.checked = false;
+      const defaults = {
+        allowMail: false,
+        allowCalendar: false,
+        allowJournal: false,
+        allowPersonalMemories: false,
+        allowDashboardState: false,
+        allowProjectContext: true,
+        allowCodeTools: true,
+        redactPersonalIdentifiers: true
+      };
+      for (const [k, val] of Object.entries(defaults)) {
+        draftVisibility[k] = val;
+        const cb = visibilityCheckboxes.get(k);
+        if (cb) {
+          cb.checked = val;
+          cb.dispatchEvent(new Event("change"));
+        }
+      }
+      syncPrivateOptInUi();
+      toast(`${agent.name} reset to strict coding-only privacy.`);
+    });
+
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "submit";
+    saveBtn.className = "primary-button";
+    saveBtn.textContent = `Save ${agent.name}`;
+
+    actions.append(strictBtn, saveBtn);
+    card.appendChild(actions);
+
+    card.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      errEl.textContent = "";
+      if (enableCheckbox.checked && !ackCheckbox.checked) {
+        errEl.textContent = `Review and accept the privacy warning before enabling ${agent.name}.`;
+        return;
+      }
+      saveBtn.disabled = true;
+      try {
+        await api("/api/core/cloud-agents/" + encodeURIComponent(agent.provider), {
+          method: "PATCH",
+          body: JSON.stringify({
+            enabled: enableCheckbox.checked,
+            privacyWarningAccepted: ackCheckbox.checked,
+            privateAccessOptIn: optInCheckbox.checked,
+            model: modelSelect.value,
+            visibility: draftVisibility
+          })
+        });
+        await loadCloudAgents();
+        toast(`${agent.name} privacy & access settings saved.`);
+      } catch (error) {
+        errEl.textContent = error.message;
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
+
+    host.appendChild(card);
+  }
+}
+
+async function loadCloudAgents() {
+  if (!state.linked) return null;
+  try {
+    const payload = await api("/api/core/cloud-agents");
+    state.cloudAgents = Array.isArray(payload?.agents) ? payload.agents : [];
+    state.cloudPrivacyCategories = Array.isArray(payload?.categories) ? payload.categories : [];
+    syncAgentSelector();
+    renderCloudAgentsSettings();
+    return state.cloudAgents;
+  } catch {
+    return null;
+  }
+}
+
+$("#agent-provider")?.addEventListener("change", (event) => {
+  const next = event.currentTarget.value || "local";
+  state.selectedAgentProvider = next;
+  try { localStorage.setItem("alfie_agent_provider", next); } catch {}
+  renderCloudPrivacyBanner();
+  if (next === "local") {
+    toast("Switched to Alfie Local.");
+  } else {
+    const agent = findCloudAgent(next);
+    const label = agent ? `${agent.name} (${agent.model})` : next;
+    toast(`Active agent: ${label} — private section access follows your optional privacy controls.`);
+  }
+});
+
+$("#cloud-privacy-toggle-btn")?.addEventListener("click", () => {
+  const drawer = $("#cloud-privacy-drawer");
+  const toggleBtn = $("#cloud-privacy-toggle-btn");
+  if (!drawer || !toggleBtn) return;
+  const willOpen = drawer.hidden;
+  drawer.hidden = !willOpen;
+  toggleBtn.setAttribute("aria-expanded", String(willOpen));
+});
+
+$("#cloud-privacy-lock-all-btn")?.addEventListener("click", async () => {
+  const activeProvider = state.selectedAgentProvider;
+  if (!activeProvider || activeProvider === "local") return;
+  const agent = findCloudAgent(activeProvider);
+  if (!agent) return;
+  try {
+    await api("/api/core/cloud-agents/" + encodeURIComponent(agent.provider), {
+      method: "PATCH",
+      body: JSON.stringify({ preset: "coding-only" })
+    });
+    await loadCloudAgents();
+    toast(`Blocked all private sections for ${agent.name}.`);
+  } catch (error) {
+    toast(error.message || "Could not lock private sections.", { variant: "warning" });
+  }
+});
+
+$("#cloud-privacy-configure-btn")?.addEventListener("click", () => {
+  setView("settings");
+  loadCloudAgents().then(() => {
+    $("#settings-cloud-agents-surface")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+});
+
+$("#cloud-agents-refresh-btn")?.addEventListener("click", async () => {
+  await loadCloudAgents();
+  toast("Cloud agent status refreshed.");
+});
+
+try {
+  const savedAgent = localStorage.getItem("alfie_agent_provider");
+  if (savedAgent && ["local", "gemini", "openai"].includes(savedAgent)) {
+    state.selectedAgentProvider = savedAgent;
+  }
+} catch {}
+
+window.alfieCloudAgents = {
+  getState: () => ({
+    agents: state.cloudAgents,
+    selectedAgentProvider: state.selectedAgentProvider
+  }),
+  refresh: loadCloudAgents
+};
+
+async function loadWorkspaceData() {
+  await Promise.all([loadProjects(), loadConversations(), loadCloudAgents()]);
+  await refreshVramStatus();
+  startVramPolling();
+}
+
 function renderConversationList(host, conversations = []) {
   if (!host) return;
   host.replaceChildren();
   const searchId = host.id === "mobile-conversation-list" ? "#mobile-history-search" : "#history-search";
   const query = String($(searchId)?.value || "").trim().toLowerCase();
-  const visibleConversations = conversations.filter((item) => !query || String(item.title || "New conversation").toLowerCase().includes(query));
+  const projectScoped = conversations.filter((item) => {
+    if (state.selectedProjectId === "all") return true;
+    if (state.selectedProjectId === "unassigned") return !item.projectId;
+    return item.projectId === state.selectedProjectId;
+  });
+  const visibleConversations = projectScoped.filter((item) => !query || String(item.title || "New conversation").toLowerCase().includes(query));
   for (const item of visibleConversations) {
     const row = document.createElement("div");
     row.className = "conversation-row";
     const button = document.createElement("button");
     button.type = "button";
     button.className = "conversation-item" + (item.id === state.activeConversationId ? " active" : "");
-    button.textContent = item.title || "New conversation";
+
+    const inner = document.createElement("span");
+    inner.className = "conversation-item-inner";
+    const titleSpan = document.createElement("span");
+    titleSpan.className = "conversation-item-title";
+    titleSpan.textContent = item.title || "New conversation";
+    inner.appendChild(titleSpan);
+
+    const metaParts = [];
+    if (state.selectedProjectId === "all" && item.projectId) {
+      const proj = findProjectById(item.projectId);
+      if (proj) metaParts.push(proj.name);
+    }
+    if (item.hasHandoffContext) metaParts.push("Carried context");
+    if (metaParts.length) {
+      const metaSpan = document.createElement("span");
+      metaSpan.className = "conversation-item-meta";
+      metaSpan.textContent = metaParts.join(" · ");
+      inner.appendChild(metaSpan);
+    }
+
+    button.appendChild(inner);
     button.addEventListener("click", () => {
       const mobileSheet = $("#mobile-history-sheet");
       if (mobileSheet) mobileSheet.hidden = true;
@@ -1229,7 +2759,9 @@ function renderConversationList(host, conversations = []) {
   if (!visibleConversations.length) {
     const empty = document.createElement("p");
     empty.className = "sidebar-empty";
-    empty.textContent = conversations.length ? "No conversations match that search." : "Your conversations will appear here.";
+    if (query) empty.textContent = "No conversations match that search.";
+    else if (state.selectedProjectId !== "all") empty.textContent = "No chats in this project yet.";
+    else empty.textContent = "Your conversations will appear here.";
     host.appendChild(empty);
   }
 }
@@ -1237,6 +2769,7 @@ function renderConversationList(host, conversations = []) {
 function renderConversations(conversations = []) {
   renderConversationList($("#conversation-list"), conversations);
   renderConversationList($("#mobile-conversation-list"), conversations);
+  renderProjects();
 }
 
 async function loadConversations() {
@@ -1245,6 +2778,7 @@ async function loadConversations() {
   state.conversations = conversations;
   renderConversations(conversations);
   if (!state.activeConversationId && conversations.length) await loadConversation(conversations[0].id);
+  else syncChatContextBar();
 }
 
 async function loadConversation(id) {
@@ -1255,8 +2789,11 @@ async function loadConversation(id) {
     const payload = await api("/api/core/conversations/" + encodeURIComponent(id));
     if (token !== state.conversationLoadToken) return;
     state.activeConversationId = id;
+    state.activeConversation = payload.conversation || null;
     state.messages = payload.conversation?.messages || [];
     renderMessages();
+    syncChatContextBar();
+    renderVramWarningBanner();
     const list = await api("/api/core/conversations");
     if (token === state.conversationLoadToken) {
       state.conversations = list.conversations || [];
@@ -1264,29 +2801,43 @@ async function loadConversation(id) {
     }
   } finally {
     if (token === state.conversationLoadToken) state.conversationLoading = false;
+    syncChatContextBar();
   }
 }
 
-async function newConversation({ fromSend = false } = {}) {
+async function newConversation({ fromSend = false, projectId = undefined } = {}) {
   if (state.sending && !fromSend) { toast("Wait for Alfie's current reply before starting another conversation."); return; }
   const token = ++state.conversationLoadToken;
   state.conversationLoading = true;
   $("#mobile-history-sheet").hidden = true;
+  const resolvedProjectId = projectId !== undefined
+    ? projectId
+    : (state.selectedProjectId !== "all" && state.selectedProjectId !== "unassigned" ? state.selectedProjectId : null);
   try {
-    const payload = await api("/api/core/conversations", { method: "POST", body: JSON.stringify({ title: "New conversation" }) });
+    const payload = await api("/api/core/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        title: "New conversation",
+        ...(resolvedProjectId ? { projectId: resolvedProjectId } : {})
+      })
+    });
     if (token !== state.conversationLoadToken) return;
     state.activeConversationId = payload.conversation.id;
+    state.activeConversation = payload.conversation;
     state.messages = [];
     renderMessages();
+    syncChatContextBar();
+    renderVramWarningBanner();
     await loadConversations();
     setView("chat");
   } finally {
     if (token === state.conversationLoadToken) state.conversationLoading = false;
+    syncChatContextBar();
   }
 }
 
 $("#new-chat").addEventListener("click", () => newConversation().catch((error) => toast(error.message)));
-$("#refresh-conversations").addEventListener("click", () => loadConversations().catch((error) => toast(error.message)));
+$("#refresh-conversations").addEventListener("click", () => Promise.all([loadProjects(), loadConversations()]).catch((error) => toast(error.message)));
 ["#history-search", "#mobile-history-search"].forEach((selector) => {
   $(selector)?.addEventListener("input", () => renderConversations(state.conversations));
 });
@@ -1302,6 +2853,9 @@ async function renameConversation(id, currentTitle) {
       method: "PATCH",
       body: JSON.stringify({ title })
     });
+    if (state.activeConversation?.id === id) {
+      state.activeConversation = { ...state.activeConversation, title };
+    }
     await loadConversations();
     toast("Conversation renamed.");
   } catch (error) { toast(error.message); }
@@ -1314,14 +2868,30 @@ async function deleteConversation(id) {
     await api("/api/core/conversations/" + encodeURIComponent(id), { method: "DELETE", body: "{}" });
     if (state.activeConversationId === id) {
       state.activeConversationId = null;
+      state.activeConversation = null;
       state.messages = [];
       state.conversationLoadToken += 1;
       renderMessages();
+      syncChatContextBar();
+      renderVramWarningBanner();
     }
     await loadConversations();
     toast("Conversation deleted.");
   } catch (error) { toast(error.message); }
 }
+
+window.alfieProjects = {
+  getState: () => ({
+    projects: state.projects,
+    selectedProjectId: state.selectedProjectId,
+    activeConversationId: state.activeConversationId,
+    activeConversation: state.activeConversation,
+    vram: state.vram
+  }),
+  refreshVram: refreshVramStatus,
+  continueInNewChat,
+  openProjectModal
+};
 
 const LIGHTBOX_MIN_ZOOM = 0.5;
 const LIGHTBOX_MAX_ZOOM = 4;
@@ -1981,6 +3551,10 @@ function createMetricsBadge(message) {
     addRow("Model", model);
   }
 
+  if (metrics.privacyLabel) {
+    addRow("Privacy", metrics.privacyLabel);
+  }
+
   tooltip.appendChild(dl);
   badge.appendChild(tooltip);
   return badge;
@@ -2197,10 +3771,60 @@ $("#scroll-to-bottom")?.addEventListener("click", () => {
   scrollChatToBottom({ force: true, smooth: true });
 });
 
+function createHandoffContextCard(conversation) {
+  if (!conversation?.handoffContext) return null;
+  const details = document.createElement("details");
+  details.className = "handoff-context-card";
+  details.id = "handoff-context-card";
+  if (!state.messages.length) details.open = true;
+
+  const summary = document.createElement("summary");
+  summary.className = "handoff-context-summary";
+  const label = document.createElement("span");
+  label.textContent = conversation.continuedFromTitle
+    ? `Continued from "${conversation.continuedFromTitle}"`
+    : "Continued with carried-over context";
+  const meta = document.createElement("span");
+  meta.className = "handoff-context-summary-meta";
+  const proj = findProjectById(conversation.projectId);
+  meta.textContent = proj ? `${proj.name} · Carried context` : "Carried context";
+  summary.append(label, meta);
+
+  const body = document.createElement("div");
+  body.className = "handoff-context-body";
+  renderMarkdown(body, conversation.handoffContext);
+
+  if (conversation.parentConversationId && state.conversations.some((c) => c.id === conversation.parentConversationId)) {
+    const footer = document.createElement("div");
+    footer.className = "handoff-context-footer";
+    const openParent = document.createElement("button");
+    openParent.type = "button";
+    openParent.className = "secondary-button";
+    openParent.textContent = "Open previous chat";
+    openParent.addEventListener("click", () => {
+      loadConversation(conversation.parentConversationId).catch((error) => toast(error.message));
+    });
+    footer.appendChild(openParent);
+    body.appendChild(footer);
+  }
+
+  details.append(summary, body);
+  return details;
+}
+
 function renderMessages() {
   const host = $("#messages");
   host.replaceChildren();
+  const handoffCard = createHandoffContextCard(state.activeConversation);
+  if (handoffCard) {
+    host.appendChild(handoffCard);
+  }
   if (!state.messages.length) {
+    if (handoffCard) {
+      updateScrollToBottomIndicator();
+      syncChatContextBar();
+      return;
+    }
     const welcome = document.createElement("div");
     welcome.className = "welcome-message";
     const currentMood = window.alfieSoul?.getMood() || "purple";
@@ -2232,9 +3856,11 @@ function renderMessages() {
     host.appendChild(welcome);
     welcome.querySelectorAll("[data-prompt]").forEach((button) => button.addEventListener("click", () => sendMessage(button.dataset.prompt)));
     updateScrollToBottomIndicator();
+    syncChatContextBar();
     return;
   }
   for (const message of state.messages) appendMessageElement(message);
+  syncChatContextBar();
   scrollChatToBottom({ force: true });
 }
 
@@ -2243,7 +3869,10 @@ async function persistMessage(role, content, conversationId = state.activeConver
     method: "POST",
     body: JSON.stringify({ role, content, ...(metrics ? { metrics } : {}) })
   });
-  if (conversationId === state.activeConversationId) state.messages.push(payload.message || { role, content, ...(metrics ? { metrics } : {}) });
+  if (conversationId === state.activeConversationId) {
+    state.messages.push(payload.message || { role, content, ...(metrics ? { metrics } : {}) });
+    syncChatContextBar();
+  }
   return payload.message;
 }
 
@@ -2325,17 +3954,33 @@ async function sendMessage(rawText) {
     assistantBody.appendChild(thinking.element);
     chatAutoScrollEnabled = true;
     scrollChatToBottom({ force: true });
+    const outgoingMessages = [];
+    if (state.activeConversation?.handoffContext) {
+      outgoingMessages.push({
+        role: "user",
+        content: "[Carried-over context from previous conversation]\n" + state.activeConversation.handoffContext
+      });
+    }
+    const recentSlice = state.messages.slice(outgoingMessages.length ? -15 : -16).map(({ role, content: text, reaction }) => ({
+      role,
+      content: text,
+      ...(reaction ? { reaction } : {})
+    }));
+    outgoingMessages.push(...recentSlice);
+    const activeProject = findProjectById(getConversationProjectId(state.activeConversation));
+    const dashboardState = activeProject?.description
+      ? { attachedContext: `Project: ${activeProject.name}\n${activeProject.description}` }
+      : {};
+    const selectedAgentProvider = $("#agent-provider")?.value || state.selectedAgentProvider || "local";
     const response = await fetch("/api/core/chat/stream", {
       method: "POST",
       credentials: "same-origin",
       headers: { "content-type": "application/json", "x-csrf-token": state.csrfToken },
       body: JSON.stringify({
-        messages: state.messages.slice(-16).map(({ role, content: text, reaction }) => ({
-          role,
-          content: text,
-          ...(reaction ? { reaction } : {})
-        })),
-        mode: $("#model-mode").value
+        messages: outgoingMessages,
+        mode: $("#model-mode").value,
+        agentProvider: selectedAgentProvider,
+        dashboardState
       })
     });
     if (!response.ok) {
@@ -2490,7 +4135,13 @@ async function sendMessage(rawText) {
       ? Number(finalEvent.metrics.totalTokens)
       : completionTokens;
     const model = finalEvent?.model || finalEvent?.metrics?.model || $("#model-mode").value || null;
-    const metrics = { latencyMs, completionTokens, totalTokens, model };
+    const privacyReport = finalEvent?.privacyReport || null;
+    const privacyLabel = privacyReport
+      ? (privacyReport.personalDataIsolated
+          ? `${privacyReport.providerLabel} · Personal data blocked`
+          : `${privacyReport.providerLabel} · Custom visibility`)
+      : null;
+    const metrics = { latencyMs, completionTokens, totalTokens, model, ...(privacyLabel ? { privacyLabel } : {}) };
 
     const messageArticle = assistantBody.closest(".message");
     const header = messageArticle?.querySelector(".message-header");
@@ -2506,6 +4157,7 @@ async function sendMessage(rawText) {
       messageArticle.appendChild(createReactionControls(savedMessage || { role: "assistant", content: assistantText, metrics }));
     }
     await loadConversations();
+    await refreshVramStatus();
     window.alfieSoul?.pulse("completed", 2200, "idle", "purple");
     if (finalEvent?.status === "awaiting_user_approval") {
       toast("Alfie is waiting for your approval.");
@@ -2556,19 +4208,420 @@ async function sendMessage(rawText) {
   }
 }
 
+let activeSpeechRecognition = null;
+let voiceListening = false;
+let voiceBaseText = "";
+let voiceFinalTranscript = "";
+let voiceSessionToken = 0;
+let voiceAnalyserToken = 0;
+let voiceAudioContext = null;
+let voiceAudioSource = null;
+let voiceMediaStream = null;
+let voiceAnalyser = null;
+let voiceTimeData = null;
+let voiceFreqData = null;
+let voiceRafId = null;
+let voiceSpeechEnergy = 0;
+let voiceSpeechDetected = false;
+let voiceBarHeights = [2.6, 3.2, 3.8, 3.2, 2.6];
+
+function getVoiceWaveformApi() {
+  return typeof window !== "undefined" ? window.AlfieVoiceWaveform || null : null;
+}
+
+function getSpeechRecognitionCtor() {
+  if (typeof window === "undefined") return null;
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function getVoiceWaveformSvg() {
+  const btn = $("#voice-input-btn");
+  return btn ? btn.querySelector(".voice-waveform") : null;
+}
+
+function getVoiceWaveformBars() {
+  const svg = getVoiceWaveformSvg();
+  return svg ? Array.from(svg.querySelectorAll(".voice-bar")) : [];
+}
+
+function setVoiceWaveformMeta(level, source) {
+  const svg = getVoiceWaveformSvg();
+  if (!svg) return;
+  svg.dataset.audioLevel = Number.isFinite(level) ? Math.max(0, Math.min(1, level)).toFixed(2) : "0.00";
+  svg.dataset.audioSource = source || "idle";
+}
+
+function resetVoiceWaveformBars() {
+  const api = getVoiceWaveformApi();
+  const defaults = api ? [...api.WAVEFORM_RESTING_HEIGHTS] : [2.6, 3.2, 3.8, 3.2, 2.6];
+  const bars = getVoiceWaveformBars();
+  voiceBarHeights = defaults.slice(0, bars.length || 5);
+  if (api) {
+    api.applyBarHeightsToSvg(bars, voiceBarHeights);
+  } else {
+    bars.forEach((bar, index) => {
+      const h = voiceBarHeights[index] || 2.6;
+      bar.setAttribute("height", h.toFixed(2));
+      bar.setAttribute("y", ((16 - h) / 2).toFixed(2));
+    });
+  }
+  setVoiceWaveformMeta(0, "idle");
+}
+
+function teardownVoiceAudioAnalyser() {
+  voiceAnalyserToken = 0;
+  voiceAnalyser = null;
+  voiceTimeData = null;
+  voiceFreqData = null;
+  if (voiceAudioSource) {
+    try {
+      voiceAudioSource.disconnect();
+    } catch {}
+    voiceAudioSource = null;
+  }
+  if (voiceMediaStream) {
+    try {
+      voiceMediaStream.getTracks().forEach((track) => track.stop());
+    } catch {}
+    voiceMediaStream = null;
+  }
+  if (voiceAudioContext) {
+    try {
+      voiceAudioContext.close().catch(() => {});
+    } catch {}
+    voiceAudioContext = null;
+  }
+}
+
+function attachVoiceAudioAnalyser(sessionToken) {
+  if (!sessionToken || voiceAnalyserToken === sessionToken) return;
+  const AudioCtx = typeof window !== "undefined" ? (window.AudioContext || window.webkitAudioContext) : null;
+  if (!AudioCtx || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+    return;
+  }
+
+  teardownVoiceAudioAnalyser();
+  voiceAnalyserToken = sessionToken;
+
+  let ctx = null;
+  try {
+    ctx = new AudioCtx();
+    if (ctx.state === "suspended" && typeof ctx.resume === "function") {
+      ctx.resume().catch(() => {});
+    }
+    voiceAudioContext = ctx;
+  } catch {
+    voiceAnalyserToken = 0;
+    return;
+  }
+
+  navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    }
+  })
+    .then((stream) => {
+      if (sessionToken !== voiceSessionToken || !ctx || voiceAudioContext !== ctx) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      if (ctx.state === "suspended" && typeof ctx.resume === "function") {
+        ctx.resume().catch(() => {});
+      }
+      voiceMediaStream = stream;
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.55;
+      analyser.minDecibels = -85;
+      analyser.maxDecibels = -18;
+      source.connect(analyser);
+      voiceAudioSource = source;
+      voiceAnalyser = analyser;
+      voiceTimeData = new Uint8Array(analyser.fftSize);
+      voiceFreqData = new Uint8Array(analyser.frequencyBinCount);
+      if (voiceListening) {
+        setVoiceWaveformMeta(0, "analyser");
+      }
+    })
+    .catch(() => {
+      if (sessionToken === voiceSessionToken) {
+        teardownVoiceAudioAnalyser();
+      }
+    });
+}
+
+function stopVoiceWaveform() {
+  voiceSessionToken += 1;
+  if (voiceRafId !== null) {
+    cancelAnimationFrame(voiceRafId);
+    voiceRafId = null;
+  }
+  voiceSpeechEnergy = 0;
+  voiceSpeechDetected = false;
+  teardownVoiceAudioAnalyser();
+  resetVoiceWaveformBars();
+}
+
+function startVoiceWaveform() {
+  if (voiceRafId !== null) {
+    cancelAnimationFrame(voiceRafId);
+    voiceRafId = null;
+  }
+  const bars = getVoiceWaveformBars();
+  if (!bars.length) return;
+  const api = getVoiceWaveformApi();
+
+  const prefersReduced = typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (prefersReduced) {
+    const staticHeights = api ? api.WAVEFORM_REDUCED_MOTION_HEIGHTS : [5.4, 9.6, 13.0, 9.2, 5.4];
+    if (api) {
+      api.applyBarHeightsToSvg(bars, staticHeights);
+    } else {
+      bars.forEach((bar, i) => {
+        const h = staticHeights[i] || 6;
+        bar.setAttribute("height", h.toFixed(2));
+        bar.setAttribute("y", ((16 - h) / 2).toFixed(2));
+      });
+    }
+    setVoiceWaveformMeta(0.5, "reduced-motion");
+    return;
+  }
+
+  if (voiceSessionToken === 0) {
+    voiceSessionToken = 1;
+  }
+  attachVoiceAudioAnalyser(voiceSessionToken);
+  const minHeight = api ? api.WAVEFORM_MIN_BAR_HEIGHT : 2.6;
+  voiceBarHeights = new Array(bars.length).fill(minHeight);
+
+  const renderFrame = (timestamp) => {
+    if (!voiceListening) {
+      voiceRafId = null;
+      return;
+    }
+
+    const t = (timestamp || performance.now()) * 0.0085;
+    voiceSpeechEnergy = Math.max(voiceSpeechDetected ? 0.42 : 0.08, voiceSpeechEnergy * 0.92);
+
+    let hasAnalyserSignal = false;
+    if (voiceAnalyser && voiceTimeData && voiceFreqData) {
+      try {
+        voiceAnalyser.getByteTimeDomainData(voiceTimeData);
+        voiceAnalyser.getByteFrequencyData(voiceFreqData);
+        hasAnalyserSignal = true;
+      } catch {
+        hasAnalyserSignal = false;
+      }
+    }
+
+    let targetHeights;
+    let currentVolume = 0;
+    if (hasAnalyserSignal && api) {
+      const metrics = api.computeBarHeightsFromAnalyser({
+        timeDomainData: voiceTimeData,
+        frequencyData: voiceFreqData,
+        barCount: bars.length
+      });
+      targetHeights = metrics.bars.map((bar) => bar.height);
+      currentVolume = metrics.volume;
+      setVoiceWaveformMeta(currentVolume, "analyser");
+    } else if (api) {
+      const metrics = api.computeBarHeightsFromSpeechEnergy({
+        energy: voiceSpeechEnergy,
+        barCount: bars.length,
+        phase: t
+      });
+      targetHeights = metrics.bars.map((bar) => bar.height);
+      currentVolume = metrics.volume;
+      setVoiceWaveformMeta(currentVolume, "speech-events");
+    } else {
+      targetHeights = bars.map(() => minHeight + voiceSpeechEnergy * 9);
+      currentVolume = voiceSpeechEnergy;
+      setVoiceWaveformMeta(currentVolume, "speech-events");
+    }
+
+    voiceBarHeights = api
+      ? api.smoothBarHeights(voiceBarHeights, targetHeights)
+      : targetHeights;
+
+    if (api) {
+      api.applyBarHeightsToSvg(bars, voiceBarHeights);
+    } else {
+      bars.forEach((bar, i) => {
+        const h = voiceBarHeights[i] || minHeight;
+        bar.setAttribute("height", h.toFixed(2));
+        bar.setAttribute("y", ((16 - h) / 2).toFixed(2));
+      });
+    }
+
+    voiceRafId = requestAnimationFrame(renderFrame);
+  };
+
+  voiceRafId = requestAnimationFrame(renderFrame);
+}
+
+function setVoiceButtonState(listening) {
+  voiceListening = Boolean(listening);
+  const btn = $("#voice-input-btn");
+  if (!btn) return;
+  btn.classList.toggle("is-listening", voiceListening);
+  btn.setAttribute("aria-pressed", String(voiceListening));
+  btn.setAttribute("aria-label", voiceListening ? "Stop voice input" : "Start voice input");
+  btn.title = voiceListening ? "Listening… click to stop" : "Voice-to-text input";
+  if (voiceListening) {
+    startVoiceWaveform();
+  } else {
+    stopVoiceWaveform();
+  }
+}
+
+function stopVoiceInput() {
+  stopVoiceWaveform();
+  if (activeSpeechRecognition) {
+    try { activeSpeechRecognition.stop(); } catch {}
+  }
+}
+
+function initVoiceInput() {
+  const btn = $("#voice-input-btn");
+  if (!btn) return;
+  resetVoiceWaveformBars();
+  const SpeechCtor = getSpeechRecognitionCtor();
+  if (!SpeechCtor) {
+    btn.classList.add("is-unsupported");
+    btn.title = "Voice input is not supported in this browser";
+  }
+
+  btn.addEventListener("click", () => {
+    const Ctor = getSpeechRecognitionCtor();
+    if (!Ctor) {
+      toast("Voice input requires a browser with Web Speech API support (Chrome, Edge, or Safari).");
+      return;
+    }
+
+    if (voiceListening && activeSpeechRecognition) {
+      stopVoiceInput();
+      return;
+    }
+
+    try {
+      voiceSessionToken += 1;
+      const sessionToken = voiceSessionToken;
+      // Start Web Audio AnalyserNode inside the click user-gesture so AudioContext starts active
+      attachVoiceAudioAnalyser(sessionToken);
+
+      const recognition = new Ctor();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = navigator.language || "en-US";
+
+      voiceBaseText = composerInput.value.trimEnd();
+      voiceFinalTranscript = "";
+      activeSpeechRecognition = recognition;
+
+      recognition.onstart = () => {
+        if (sessionToken !== voiceSessionToken) return;
+        voiceSpeechEnergy = 0.25;
+        setVoiceButtonState(true);
+        if (window.alfieSoul?.getAnimationState() === "idle") {
+          window.alfieSoul?.startListening("purple");
+        }
+        composerInput.focus();
+      };
+
+      recognition.onsoundstart = () => {
+        voiceSpeechDetected = true;
+        voiceSpeechEnergy = Math.max(voiceSpeechEnergy, 0.58);
+      };
+
+      recognition.onspeechstart = () => {
+        voiceSpeechDetected = true;
+        voiceSpeechEnergy = Math.max(voiceSpeechEnergy, 0.85);
+      };
+
+      recognition.onspeechend = () => {
+        voiceSpeechDetected = false;
+      };
+
+      recognition.onsoundend = () => {
+        voiceSpeechDetected = false;
+      };
+
+      recognition.onresult = (event) => {
+        voiceSpeechDetected = true;
+        voiceSpeechEnergy = 0.94;
+        let interim = "";
+        let finalized = "";
+        for (let i = 0; i < event.results.length; i++) {
+          const result = event.results[i];
+          const text = result?.[0]?.transcript || "";
+          if (result.isFinal) finalized += text;
+          else interim += text;
+        }
+        voiceFinalTranscript = finalized.trim();
+        const spoken = [voiceFinalTranscript, interim.trim()].filter(Boolean).join(" ").trim();
+        const combined = voiceBaseText
+          ? (spoken ? `${voiceBaseText} ${spoken}` : voiceBaseText)
+          : spoken;
+        composerInput.value = combined;
+        composerInput.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+
+      recognition.onerror = (event) => {
+        const err = event?.error || "unknown";
+        if (err === "aborted") return;
+        if (err === "not-allowed" || err === "service-not-allowed") {
+          toast("Microphone permission was denied. Allow microphone access in your browser to use voice input.", { variant: "warning", durationMs: 4800 });
+        } else if (err === "no-speech") {
+          toast("No speech detected. Try speaking closer to your microphone.");
+        } else if (err === "audio-capture") {
+          toast("No microphone was detected on this device.", { variant: "warning" });
+        } else if (err === "network") {
+          toast("Speech recognition network error — check your connection and try again.");
+        } else {
+          toast("Voice input stopped due to a browser speech error.");
+        }
+      };
+
+      recognition.onend = () => {
+        if (activeSpeechRecognition === recognition) {
+          activeSpeechRecognition = null;
+        }
+        setVoiceButtonState(false);
+        if (!composerInput.value.trim() && window.alfieSoul?.getAnimationState() === "listening") {
+          window.alfieSoul?.setAnimationState("idle");
+        }
+      };
+
+      recognition.start();
+    } catch {
+      activeSpeechRecognition = null;
+      setVoiceButtonState(false);
+      toast("Could not start voice input. Check microphone permissions and try again.");
+    }
+  });
+}
+
 $("#chat-form").addEventListener("submit", (event) => {
   event.preventDefault();
+  stopVoiceInput();
   sendMessage(event.currentTarget.elements.message.value);
 });
 
 const composerInput = $("#chat-form").elements.message;
+initVoiceInput();
 composerInput.addEventListener("focus", () => {
   if (window.alfieSoul?.getAnimationState() === "idle") {
     window.alfieSoul?.setAnimationState("listening");
   }
 });
 composerInput.addEventListener("blur", () => {
-  if (window.alfieSoul?.getAnimationState() === "listening") {
+  if (!voiceListening && window.alfieSoul?.getAnimationState() === "listening") {
     window.alfieSoul?.setAnimationState("idle");
   }
 });
@@ -3084,6 +5137,7 @@ async function loadSettings() {
     }
     if (!health.endpoints?.length) providers.textContent = "No model endpoints configured.";
     core.textContent = (status.implemented || []).length + " capabilities active · " + (status.planned || []).length + " planned";
+    await Promise.all([refreshVramStatus(), loadCloudAgents()]);
   } catch (error) {
     account.textContent = error.message;
     providers.textContent = "Provider information unavailable.";

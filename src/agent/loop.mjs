@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createAssetInterceptorMiddleware } from "./assetMiddleware.mjs";
+import { applyCloudPrivacyPolicy, isToolAllowedByVisibility } from "../privacy/policy.mjs";
 
 export const MAX_STEPS = 4;
 export const WALL_CLOCK_TIMEOUT = 30_000;
@@ -81,6 +82,8 @@ export class AgentLoop {
     contextAssembler,
     memoryStore = null,
     imageGenerator = null,
+    cloudAgentStore = null,
+    cloudAdapters = null,
     assetsDirectory,
     filePathPrefix = "./assets",
     assetMiddleware = null,
@@ -95,6 +98,8 @@ export class AgentLoop {
     this.contextAssembler = contextAssembler;
     this.memoryStore = memoryStore;
     this.imageGenerator = imageGenerator;
+    this.cloudAgentStore = cloudAgentStore;
+    this.cloudAdapters = cloudAdapters;
     this.now = now;
     this.maxSteps = Math.min(MAX_STEPS, Math.max(1, maxSteps));
     this.wallClockTimeout = Math.min(WALL_CLOCK_TIMEOUT, Math.max(1000, wallClockTimeout));
@@ -105,17 +110,40 @@ export class AgentLoop {
     });
   }
 
-  async run({ userId, messages, dashboardState = {}, mode = "auto", turnId = randomUUID(), signal: parentSignal, onProgress }) {
+  async run({ userId, messages, dashboardState = {}, mode = "auto", agentProvider = "local", turnId = randomUUID(), signal: parentSignal, onProgress }) {
     const started = this.now();
     const controller = new AbortController();
     const abortFromParent = () => controller.abort(parentSignal?.reason || new Error("Client disconnected."));
     if (parentSignal?.aborted) abortFromParent();
     else parentSignal?.addEventListener("abort", abortFromParent, { once: true });
     const timer = setTimeout(() => controller.abort(new Error("Alfie turn exceeded the 30-second execution budget.")), this.wallClockTimeout);
+
+    const requestedProvider = ["gemini", "openai"].includes(agentProvider) ? agentProvider : "local";
+    let cloudAgent = null;
+    if (requestedProvider !== "local") {
+      if (!this.cloudAgentStore || !this.cloudAdapters) {
+        clearTimeout(timer);
+        parentSignal?.removeEventListener("abort", abortFromParent);
+        throw Object.assign(new Error("Cloud coding agents are not configured on this Alfie Core instance."), { status: 503 });
+      }
+      cloudAgent = await this.cloudAgentStore.getAgent(userId, requestedProvider);
+      if (!cloudAgent.privacyWarningAccepted || !cloudAgent.enabled) {
+        clearTimeout(timer);
+        parentSignal?.removeEventListener("abort", abortFromParent);
+        throw Object.assign(
+          new Error(`Enable ${cloudAgent.name} and acknowledge its privacy warning in Settings before using it in chat.`),
+          { status: 403, code: "CLOUD_AGENT_DISABLED" }
+        );
+      }
+    }
+
     const history = messages.slice(-16).map((message) => ({ role: message.role, content: String(message.content || "").slice(0, 12000) }));
     const userText = [...history].reverse().find((message) => message.role === "user")?.content || "";
+
+    // Enforce privacy BEFORE even querying MemoryStore when using a cloud agent.
     let memories = [];
-    if (this.memoryStore?.search) {
+    const shouldSearchMemories = !cloudAgent || cloudAgent.visibility?.allowPersonalMemories === true;
+    if (shouldSearchMemories && this.memoryStore?.search) {
       try {
         memories = await awaitWithAbort(this.memoryStore.search(userId, userText, { limit: 6 }), controller.signal);
       } catch (error) {
@@ -124,9 +152,11 @@ export class AgentLoop {
         memories = [];
       }
     }
+
     let previousCall = null;
     let steps = 0;
     const toolsUsed = [];
+    let lastPrivacyReport = null;
     try {
       while (steps < this.maxSteps) {
         if (controller.signal.aborted || this.now() - started >= this.wallClockTimeout) {
@@ -134,25 +164,70 @@ export class AgentLoop {
           return { status: "timeout", message: "I reached the 30-second processing limit. Please try a smaller request.", steps };
         }
         const grantedScopes = await this.dispatcher.permissionStore.list(userId);
-        const context = this.contextAssembler.assemble({
-          userText, history, dashboardState, memories, registry: this.toolRegistry, grantedScopes
-        });
-        let selected;
-        try {
-          selected = await awaitWithAbort(this.providerRegistry.complete(this.providerConfig, context.messages, mode, { signal: controller.signal }), controller.signal);
-        } catch (providerError) {
-          if (controller.signal.aborted) throw providerError;
-          selected = await this.coreAssistantComplete({
-            userId,
-            userText,
-            history,
-            context,
+        let effectiveDashboardState = dashboardState;
+        let effectiveMemories = memories;
+        let effectiveScopes = grantedScopes;
+        let effectiveHistory = history;
+        let privacyNotice = "";
+
+        if (cloudAgent) {
+          const policyResult = applyCloudPrivacyPolicy({
+            provider: cloudAgent.provider,
+            model: cloudAgent.model,
+            visibility: cloudAgent.visibility,
+            dashboardState,
             memories,
-            steps,
-            turnId,
-            onProgress,
-            signal: controller.signal
+            grantedScopes,
+            toolRegistry: this.toolRegistry,
+            history
           });
+          effectiveDashboardState = policyResult.dashboardState;
+          effectiveMemories = policyResult.memories;
+          effectiveScopes = policyResult.grantedScopes;
+          effectiveHistory = policyResult.history;
+          privacyNotice = policyResult.systemNotice;
+          lastPrivacyReport = policyResult.privacyReport;
+        }
+
+        const context = this.contextAssembler.assemble({
+          userText,
+          history: effectiveHistory,
+          dashboardState: effectiveDashboardState,
+          memories: effectiveMemories,
+          registry: this.toolRegistry,
+          grantedScopes: effectiveScopes,
+          privacyNotice
+        });
+
+        let selected;
+        if (cloudAgent) {
+          selected = await awaitWithAbort(
+            this.cloudAdapters.complete({
+              provider: cloudAgent.provider,
+              model: cloudAgent.model,
+              messages: context.messages,
+              hasTools: context.tools.length > 0,
+              signal: controller.signal
+            }),
+            controller.signal
+          );
+        } else {
+          try {
+            selected = await awaitWithAbort(this.providerRegistry.complete(this.providerConfig, context.messages, mode, { signal: controller.signal }), controller.signal);
+          } catch (providerError) {
+            if (controller.signal.aborted) throw providerError;
+            selected = await this.coreAssistantComplete({
+              userId,
+              userText,
+              history,
+              context,
+              memories,
+              steps,
+              turnId,
+              onProgress,
+              signal: controller.signal
+            });
+          }
         }
         steps += 1;
         let action;
@@ -182,6 +257,7 @@ export class AgentLoop {
             provider: selected.endpoint?.provider,
             endpointId: selected.endpoint?.id,
             metrics: { latencyMs, completionTokens, promptTokens, totalTokens },
+            ...(lastPrivacyReport ? { privacyReport: lastPrivacyReport } : {}),
             ...(toolsUsed.length ? { toolsUsed } : {})
           };
         }
@@ -198,6 +274,20 @@ export class AgentLoop {
         previousCall = callSignature;
 
         const toolDef = this.toolRegistry?.tools?.get ? this.toolRegistry.tools.get(action.tool) : (this.toolRegistry?.get ? this.toolRegistry.get(action.tool) : null);
+
+        // Defense-in-depth: block cloud agent from invoking any tool restricted by user's privacy policy
+        // even if that scope is granted for local Alfie use.
+        if (cloudAgent && (!toolDef || !isToolAllowedByVisibility(toolDef, cloudAgent.visibility))) {
+          history.push({ role: "assistant", content: JSON.stringify(action).slice(0, 2000) });
+          history.push({
+            role: "user",
+            content: JSON.stringify({
+              error: `Tool "${action.tool}" is blocked by the user's cloud agent privacy policy for ${cloudAgent.name}. Do not attempt to access restricted personal data.`
+            })
+          });
+          continue;
+        }
+
         const actionText = formatToolAction(action.tool, toolDef);
         const isExternal = Boolean(toolDef?.trust === "external" || !toolDef || toolDef?.scope?.startsWith("petrio:") || toolDef?.scope?.startsWith("calendar:") || toolDef?.scope?.startsWith("journal:"));
         toolsUsed.push({ toolId: action.tool, toolName: toolDef?.name || action.tool, action: actionText, isExternal });

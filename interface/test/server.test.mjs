@@ -209,3 +209,291 @@ test("standalone workspace setup requires CSRF and provisions an independent Cor
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+test("generated image route requires authentication and uses private caching", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-ui-images-"));
+  const authStore = new InterfaceAuthStore({ dataDirectory: directory });
+  await authStore.bootstrap("alfie-admin", "test-password-for-ci-only-123456");
+  const coreClient = {
+    getImage: async (name) => ({ buffer: Buffer.from(`png:${name}`), mimeType: "image/png" })
+  };
+  const server = createAlfieInterfaceServer({ authStore, coreClient, cookieSecure: false });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = "http://127.0.0.1:" + server.address().port;
+  try {
+    const unauth = await fetch(base + "/api/core/images/sprite-1.png");
+    assert.equal(unauth.status, 401);
+
+    const login = await fetch(base + "/api/auth/login", {
+      method: "POST",
+      headers: { origin: base, "content-type": "application/json" },
+      body: JSON.stringify({ username: "alfie-admin", password: "test-password-for-ci-only-123456" })
+    });
+    assert.equal(login.status, 200);
+    const cookie = login.headers.get("set-cookie").split(";")[0];
+
+    const authed = await fetch(base + "/api/core/images/sprite-1.png", { headers: { cookie } });
+    assert.equal(authed.status, 200);
+    assert.equal(authed.headers.get("content-type"), "image/png");
+    assert.match(authed.headers.get("cache-control"), /^private,/);
+    assert.equal(await authed.text(), "png:sprite-1.png");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("interface defaults enforce Secure SameSite=Strict cookies, strict security headers, and hardened origin validation", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-ui-hardening-"));
+  const authStore = new InterfaceAuthStore({ dataDirectory: directory });
+  await authStore.bootstrap("alfie-admin", "test-password-for-ci-only-123456");
+  const prevSecure = process.env.ALFIE_UI_COOKIE_SECURE;
+  const prevIframe = process.env.ALFIE_UI_ALLOW_IFRAME;
+  const prevOrigin = process.env.ALFIE_UI_PUBLIC_ORIGIN;
+  delete process.env.ALFIE_UI_COOKIE_SECURE;
+  delete process.env.ALFIE_UI_ALLOW_IFRAME;
+  delete process.env.ALFIE_UI_PUBLIC_ORIGIN;
+
+  const server = createAlfieInterfaceServer({ authStore, coreClient: {} });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const base = "http://127.0.0.1:" + port;
+  try {
+    const health = await fetch(base + "/health");
+    assert.equal(health.headers.get("x-frame-options"), "DENY");
+    assert.equal(health.headers.get("cross-origin-opener-policy"), "same-origin");
+    assert.equal(health.headers.get("cross-origin-resource-policy"), "same-origin");
+    assert.equal(health.headers.get("x-permitted-cross-domain-policies"), "none");
+    const csp = health.headers.get("content-security-policy") || "";
+    assert.match(csp, /script-src 'self';/);
+    assert.doesNotMatch(csp, /script-src[^;]*'unsafe-inline'/);
+    assert.match(csp, /frame-ancestors 'none'/);
+
+    // HTTP origin rejected when cookieSecure defaults to true
+    const httpRejected = await fetch(base + "/api/auth/login", {
+      method: "POST",
+      headers: { origin: base, "content-type": "application/json" },
+      body: JSON.stringify({ username: "alfie-admin", password: "test-password-for-ci-only-123456" })
+    });
+    assert.equal(httpRejected.status, 403);
+
+    // Spoofed x-forwarded-host rejected when trustProxyHeaders is false
+    const spoofedProxy = await fetch(base + "/api/auth/login", {
+      method: "POST",
+      headers: { origin: "https://evil.example", "x-forwarded-host": "evil.example", "content-type": "application/json" },
+      body: JSON.stringify({ username: "alfie-admin", password: "test-password-for-ci-only-123456" })
+    });
+    assert.equal(spoofedProxy.status, 403);
+
+    // Matching HTTPS host succeeds and emits Secure + SameSite=Strict
+    const httpsLogin = await fetch(base + "/api/auth/login", {
+      method: "POST",
+      headers: { origin: `https://127.0.0.1:${port}`, "content-type": "application/json" },
+      body: JSON.stringify({ username: "alfie-admin", password: "test-password-for-ci-only-123456" })
+    });
+    assert.equal(httpsLogin.status, 200);
+    const setCookie = httpsLogin.headers.get("set-cookie") || "";
+    assert.match(setCookie, /HttpOnly/);
+    assert.match(setCookie, /SameSite=Strict/);
+    assert.match(setCookie, /Secure/);
+  } finally {
+    if (prevSecure !== undefined) process.env.ALFIE_UI_COOKIE_SECURE = prevSecure;
+    if (prevIframe !== undefined) process.env.ALFIE_UI_ALLOW_IFRAME = prevIframe;
+    if (prevOrigin !== undefined) process.env.ALFIE_UI_PUBLIC_ORIGIN = prevOrigin;
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("first-run /api/auth/setup creates the initial admin once and rejects subsequent calls", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-ui-setup-"));
+  const authStore = new InterfaceAuthStore({ dataDirectory: directory });
+  const server = createAlfieInterfaceServer({ authStore, cookieSecure: false, coreClient: {} });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = "http://127.0.0.1:" + server.address().port;
+  try {
+    const before = await (await fetch(base + "/api/auth/me")).json();
+    assert.equal(before.setupRequired, true);
+
+    const weak = await fetch(base + "/api/auth/setup", {
+      method: "POST",
+      headers: { origin: base, "content-type": "application/json" },
+      body: JSON.stringify({ username: "owner", password: "short-password" })
+    });
+    assert.equal(weak.status, 400);
+
+    // Wrong localhost port is rejected (no arbitrary localhost bypass)
+    const wrongPort = await fetch(base + "/api/auth/setup", {
+      method: "POST",
+      headers: { origin: "http://localhost:9999", "content-type": "application/json" },
+      body: JSON.stringify({ username: "owner", password: "a-very-strong-first-run-password-2026" })
+    });
+    assert.equal(wrongPort.status, 403);
+
+    const created = await fetch(base + "/api/auth/setup", {
+      method: "POST",
+      headers: { origin: base, "content-type": "application/json" },
+      body: JSON.stringify({ username: "owner", password: "a-very-strong-first-run-password-2026" })
+    });
+    assert.equal(created.status, 201);
+    const createdBody = await created.json();
+    assert.equal(createdBody.authenticated, true);
+    assert.equal(createdBody.user.username, "owner");
+
+    const second = await fetch(base + "/api/auth/setup", {
+      method: "POST",
+      headers: { origin: base, "content-type": "application/json" },
+      body: JSON.stringify({ username: "attacker", password: "another-very-strong-password-2026" })
+    });
+    assert.equal(second.status, 409);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("projects, context handoff, and VRAM telemetry routes enforce CSRF and proxy cleanly", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-ui-projects-"));
+  const authStore = new InterfaceAuthStore({ dataDirectory: directory });
+  await authStore.bootstrap("alfie-admin", "test-password-for-ci-only-123456");
+  const convId = "11111111-1111-1111-1111-111111111111";
+  const projId = "22222222-2222-2222-2222-222222222222";
+  const coreClient = {
+    listProjects: async () => ({ projects: [{ id: projId, name: "Alpha", conversationCount: 1 }] }),
+    createProject: async (_userId, body) => ({ project: { id: projId, name: body.name, color: body.color || "purple", conversationCount: 0 } }),
+    updateProject: async (_userId, id, body) => ({ project: { id, ...body } }),
+    deleteProject: async () => ({ deleted: true, unassignedConversations: 1 }),
+    handoffConversation: async (_userId, id, body) => ({
+      conversation: { id: "33333333-3333-3333-3333-333333333333", title: "Session (Part 2)", parentConversationId: id, projectId: body.projectId || null, handoffContext: "# Summary" }
+    }),
+    getVramStatus: async () => ({ vram: { available: true, percent: 84, warning: true, thresholdPercent: 80 } }),
+    reportVramStatus: async (_userId, body) => ({ vram: { available: true, percent: body.percent, warning: body.percent >= 80, thresholdPercent: 80 } })
+  };
+  const server = createAlfieInterfaceServer({ authStore, coreClient, cookieSecure: false });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = "http://127.0.0.1:" + server.address().port;
+  try {
+    const login = await fetch(base + "/api/auth/login", {
+      method: "POST",
+      headers: { origin: base, "content-type": "application/json" },
+      body: JSON.stringify({ username: "alfie-admin", password: "test-password-for-ci-only-123456" })
+    });
+    const cookie = login.headers.get("set-cookie").split(";")[0];
+    const session = await login.json();
+
+    // POST /api/core/projects without CSRF blocked
+    const blockedProject = await fetch(base + "/api/core/projects", {
+      method: "POST",
+      headers: { origin: base, cookie, "content-type": "application/json" },
+      body: JSON.stringify({ name: "Alpha" })
+    });
+    assert.equal(blockedProject.status, 403);
+
+    // POST /api/core/projects with CSRF succeeds
+    const createdProject = await fetch(base + "/api/core/projects", {
+      method: "POST",
+      headers: { origin: base, cookie, "content-type": "application/json", "x-csrf-token": session.csrfToken },
+      body: JSON.stringify({ name: "Alpha", color: "cyan" })
+    });
+    assert.equal(createdProject.status, 201);
+    assert.equal((await createdProject.json()).project.name, "Alpha");
+
+    // GET /api/core/system/vram returns warning status
+    const vramRes = await fetch(base + "/api/core/system/vram", { headers: { cookie } });
+    assert.equal(vramRes.status, 200);
+    assert.equal((await vramRes.json()).vram.warning, true);
+
+    // POST /api/core/conversations/:id/handoff requires CSRF and returns continuation chat
+    const blockedHandoff = await fetch(`${base}/api/core/conversations/${convId}/handoff`, {
+      method: "POST",
+      headers: { origin: base, cookie, "content-type": "application/json" },
+      body: JSON.stringify({ reason: "vram_threshold" })
+    });
+    assert.equal(blockedHandoff.status, 403);
+
+    const handoffRes = await fetch(`${base}/api/core/conversations/${convId}/handoff`, {
+      method: "POST",
+      headers: { origin: base, cookie, "content-type": "application/json", "x-csrf-token": session.csrfToken },
+      body: JSON.stringify({ reason: "vram_threshold", projectId: projId })
+    });
+    assert.equal(handoffRes.status, 201);
+    const handoffPayload = await handoffRes.json();
+    assert.equal(handoffPayload.conversation.title, "Session (Part 2)");
+    assert.equal(handoffPayload.conversation.projectId, projId);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("cloud agent settings and privacy preview routes enforce auth and CSRF", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-ui-cloud-agents-"));
+  const authStore = new InterfaceAuthStore({ dataDirectory: directory });
+  await authStore.bootstrap("alfie-admin", "test-password-for-ci-only-123456");
+  const coreClient = {
+    listCloudAgents: async () => ({
+      agents: [
+        { provider: "gemini", name: "Gemini API", enabled: false, privacyWarningAccepted: false, model: "gemini-4-hydrogen" },
+        { provider: "openai", name: "ChatGPT (OpenAI)", enabled: false, privacyWarningAccepted: false, model: "gpt-4.1-mini" }
+      ]
+    }),
+    updateCloudAgent: async (_userId, provider, body) => ({
+      agent: { provider, enabled: Boolean(body.enabled), privacyWarningAccepted: Boolean(body.privacyWarningAccepted), model: body.model || "gemini-4-hydrogen" }
+    }),
+    previewCloudAgentPrivacy: async (_userId, provider) => ({
+      provider,
+      summary: { personalDataIsolated: true, blockedCategories: ["Emails & Inbox", "Calendar & Schedule"] }
+    })
+  };
+  const server = createAlfieInterfaceServer({ authStore, coreClient, cookieSecure: false });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = "http://127.0.0.1:" + server.address().port;
+  try {
+    const unauth = await fetch(base + "/api/core/cloud-agents");
+    assert.equal(unauth.status, 401);
+
+    const login = await fetch(base + "/api/auth/login", {
+      method: "POST",
+      headers: { origin: base, "content-type": "application/json" },
+      body: JSON.stringify({ username: "alfie-admin", password: "test-password-for-ci-only-123456" })
+    });
+    const cookie = login.headers.get("set-cookie").split(";")[0];
+    const session = await login.json();
+
+    const listRes = await fetch(base + "/api/core/cloud-agents", { headers: { cookie } });
+    assert.equal(listRes.status, 200);
+    assert.equal((await listRes.json()).agents.length, 2);
+
+    // PATCH without CSRF blocked
+    const blockedPatch = await fetch(base + "/api/core/cloud-agents/gemini", {
+      method: "PATCH",
+      headers: { origin: base, cookie, "content-type": "application/json" },
+      body: JSON.stringify({ privacyWarningAccepted: true, enabled: true })
+    });
+    assert.equal(blockedPatch.status, 403);
+
+    // PATCH with CSRF succeeds
+    const okPatch = await fetch(base + "/api/core/cloud-agents/gemini", {
+      method: "PATCH",
+      headers: { origin: base, cookie, "content-type": "application/json", "x-csrf-token": session.csrfToken },
+      body: JSON.stringify({ privacyWarningAccepted: true, enabled: true, model: "gemini-4-hydrogen" })
+    });
+    assert.equal(okPatch.status, 200);
+    assert.equal((await okPatch.json()).agent.enabled, true);
+
+    // POST privacy-preview with CSRF succeeds
+    const previewRes = await fetch(base + "/api/core/cloud-agents/openai/privacy-preview", {
+      method: "POST",
+      headers: { origin: base, cookie, "content-type": "application/json", "x-csrf-token": session.csrfToken },
+      body: JSON.stringify({})
+    });
+    assert.equal(previewRes.status, 200);
+    assert.equal((await previewRes.json()).summary.personalDataIsolated, true);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+
+

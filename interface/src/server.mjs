@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -10,7 +11,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDirectory = path.resolve(here, "../public");
 const PORT = Number(process.env.PORT || 8781);
 const COOKIE_NAME = "alfie_ui_session";
-const isCookieSecure = () => process.env.ALFIE_UI_COOKIE_SECURE === "true";
+const isCookieSecure = () => process.env.ALFIE_UI_COOKIE_SECURE !== "false";
 const MAX_BODY_BYTES = 1024 * 1024;
 
 function json(res, status, payload) {
@@ -35,26 +36,35 @@ function cookies(header = "") {
   return result;
 }
 
+function sessionCookieFlags(cookieSecure) {
+  const requestedSameSite = String(process.env.ALFIE_UI_COOKIE_SAMESITE || "").trim().toLowerCase();
+  const sameSite = !cookieSecure
+    ? "SameSite=Lax"
+    : (requestedSameSite === "none" ? "SameSite=None" : "SameSite=Strict");
+  const flags = ["Path=/", "HttpOnly", sameSite];
+  if (cookieSecure) {
+    flags.push("Secure");
+    if (requestedSameSite === "none") flags.push("Partitioned");
+  }
+  return flags;
+}
+
 function setSessionCookie(res, token, cookieSecure = isCookieSecure()) {
-  const sameSite = cookieSecure ? "SameSite=None" : "SameSite=Lax";
-  const flags = [`${COOKIE_NAME}=${encodeURIComponent(token)}`, "Path=/", "HttpOnly", sameSite, "Max-Age=43200"];
-  if (cookieSecure) flags.push("Secure");
+  const flags = [`${COOKIE_NAME}=${encodeURIComponent(token)}`, ...sessionCookieFlags(cookieSecure), "Max-Age=43200"];
   res.setHeader("set-cookie", flags.join("; "));
 }
 
 function clearSessionCookie(res, cookieSecure = isCookieSecure()) {
-  const sameSite = cookieSecure ? "SameSite=None" : "SameSite=Lax";
-  const flags = [`${COOKIE_NAME}=`, "Path=/", "HttpOnly", sameSite, "Max-Age=0"];
-  if (cookieSecure) flags.push("Secure");
+  const flags = [`${COOKIE_NAME}=`, ...sessionCookieFlags(cookieSecure), "Max-Age=0"];
   res.setHeader("set-cookie", flags.join("; "));
 }
 
-async function readJson(req) {
+async function readJson(req, maxBytes = MAX_BODY_BYTES) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw Object.assign(new Error("Request body is too large."), { status: 413 });
+    if (size > maxBytes) throw Object.assign(new Error("Request body is too large."), { status: 413 });
     chunks.push(chunk);
   }
   if (!size) return {};
@@ -67,26 +77,41 @@ async function readJson(req) {
   }
 }
 
-function originAllowed(req, publicOrigin = process.env.ALFIE_UI_PUBLIC_ORIGIN, cookieSecure = isCookieSecure()) {
+function originAllowed(req, {
+  publicOrigin = process.env.ALFIE_UI_PUBLIC_ORIGIN,
+  cookieSecure = isCookieSecure(),
+  trustProxyHeaders = process.env.ALFIE_UI_TRUST_PROXY_HEADERS === "true",
+  allowLocalHttpOrigin = false
+} = {}) {
   const origin = req.headers.origin;
   if (!origin || typeof origin !== "string") return false;
-  const configured = publicOrigin || process.env.ALFIE_UI_PUBLIC_ORIGIN;
-  if (configured && configured !== "https://alfie.example.local" && configured.trim()) {
-    if (origin === configured) return true;
+  const configured = typeof publicOrigin === "string" && publicOrigin.trim() && publicOrigin.trim() !== "https://alfie.example.local"
+    ? publicOrigin.trim()
+    : "";
+  if (configured) {
+    return origin === configured;
   }
   try {
     const parsed = new URL(origin);
-    const host = req.headers["x-forwarded-host"] || req.headers.host;
-    const isHostMatch = parsed.host === host || parsed.host === req.headers.host;
-    if (isHostMatch) return true;
+    const isLocalLoopback = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+    const protocolAllowed = parsed.protocol === "https:"
+      || (!cookieSecure && parsed.protocol === "http:")
+      || (allowLocalHttpOrigin && isLocalLoopback && parsed.protocol === "http:");
+    if (!protocolAllowed) return false;
+    const forwardedHost = trustProxyHeaders && typeof req.headers["x-forwarded-host"] === "string"
+      ? req.headers["x-forwarded-host"].split(",")[0].trim()
+      : "";
+    const host = forwardedHost || req.headers.host;
+    if (host && parsed.host === host) return true;
     if (process.env.APP_URL) {
       try {
         if (origin === new URL(process.env.APP_URL).origin) return true;
       } catch {}
     }
-    if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "0.0.0.0") return true;
     return false;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 function sendError(res, error) {
@@ -98,14 +123,28 @@ function sendError(res, error) {
 }
 
 function securityHeaders(res) {
+  const allowIframe = process.env.ALFIE_UI_ALLOW_IFRAME === "true";
+  const rawAncestors = allowIframe ? String(process.env.ALFIE_UI_FRAME_ANCESTORS || "").trim() : "";
+  const safeAncestors = rawAncestors && !/[;\r\n]/.test(rawAncestors) ? rawAncestors : "";
+  const frameAncestors = !allowIframe
+    ? "frame-ancestors 'none'"
+    : (safeAncestors ? `frame-ancestors ${safeAncestors}` : "frame-ancestors 'self'");
+
   res.setHeader("x-content-type-options", "nosniff");
-  if (process.env.ALFIE_UI_ALLOW_IFRAME === "false") {
+  if (!allowIframe) {
     res.setHeader("x-frame-options", "DENY");
+  } else if (!safeAncestors) {
+    res.setHeader("x-frame-options", "SAMEORIGIN");
   }
   res.setHeader("referrer-policy", "same-origin");
-  res.setHeader("permissions-policy", "camera=(), microphone=(), geolocation=()");
-  const frameAncestors = process.env.ALFIE_UI_ALLOW_IFRAME === "false" ? "frame-ancestors 'none'" : "frame-ancestors *";
-  res.setHeader("content-security-policy", `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; ${frameAncestors}`);
+  res.setHeader("permissions-policy", "camera=(), microphone=(self), geolocation=()");
+  res.setHeader("cross-origin-opener-policy", "same-origin");
+  res.setHeader("cross-origin-resource-policy", "same-origin");
+  res.setHeader("x-permitted-cross-domain-policies", "none");
+  res.setHeader(
+    "content-security-policy",
+    `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-src 'none'; object-src 'none'; ${frameAncestors}`
+  );
 }
 
 export function createAlfieInterfaceServer({
@@ -113,6 +152,7 @@ export function createAlfieInterfaceServer({
   publicOrigin = process.env.ALFIE_UI_PUBLIC_ORIGIN,
   cookieSecure = isCookieSecure(),
   trustProxyHeaders = process.env.ALFIE_UI_TRUST_PROXY_HEADERS === "true",
+  allowLocalHttpOrigin = false,
   coreClient = createAlfieCoreClient({
     baseUrl: process.env.ALFIE_CORE_URL || "http://alfie-core:8780",
     serviceToken: process.env.ALFIE_CORE_SERVICE_TOKEN || "",
@@ -121,9 +161,59 @@ export function createAlfieInterfaceServer({
       providerId: "standalone-ui"
     })
   }),
+  vramReportToken = process.env.ALFIE_VRAM_REPORT_TOKEN || "",
   now = () => Date.now()
 } = {}) {
   const loginAttempts = new Map();
+  const telemetryAttempts = new Map();
+
+  function verifyTelemetryBearer(req) {
+    const expected = String(vramReportToken || process.env.ALFIE_VRAM_REPORT_TOKEN || "").trim();
+    if (Buffer.byteLength(expected, "utf8") < 16) {
+      throw Object.assign(
+        new Error("External PC VRAM reporting is not configured. Set ALFIE_VRAM_REPORT_TOKEN (16+ characters) on the server."),
+        { status: 503, code: "VRAM_TOKEN_NOT_CONFIGURED" }
+      );
+    }
+    const authHeader = String(req.headers.authorization || "");
+    const match = /^Bearer\s+(\S+)$/i.exec(authHeader);
+    if (!match) {
+      throw Object.assign(new Error("Authorization: Bearer <ALFIE_VRAM_REPORT_TOKEN> header is required."), {
+        status: 401,
+        code: "VRAM_TOKEN_INVALID"
+      });
+    }
+    const providedHash = createHash("sha256").update(match[1], "utf8").digest();
+    const expectedHash = createHash("sha256").update(expected, "utf8").digest();
+    if (!timingSafeEqual(providedHash, expectedHash)) {
+      throw Object.assign(new Error("Invalid VRAM telemetry bearer token."), {
+        status: 401,
+        code: "VRAM_TOKEN_INVALID"
+      });
+    }
+  }
+
+  function checkTelemetryRateLimit(ip) {
+    const current = now();
+    if (telemetryAttempts.size > 256) {
+      for (const [key, list] of telemetryAttempts.entries()) {
+        if (!list.some((ts) => current - ts < 60_000)) telemetryAttempts.delete(key);
+      }
+    }
+    const bucket = telemetryAttempts.get(ip) || [];
+    const recent = bucket.filter((ts) => current - ts < 60_000);
+    if (recent.length >= 60) {
+      telemetryAttempts.set(ip, recent);
+      throw Object.assign(new Error("Too many VRAM telemetry updates. Slow polling to <= 1/sec."), { status: 429 });
+    }
+    recent.push(current);
+    telemetryAttempts.set(ip, recent);
+  }
+
+  function clientIp(req) {
+    const forwardedIp = trustProxyHeaders ? req.headers["cf-connecting-ip"] : null;
+    return String(forwardedIp || req.socket.remoteAddress || "unknown").slice(0, 100);
+  }
 
   async function sessionFor(req) {
     const token = cookies(req.headers.cookie)[COOKIE_NAME];
@@ -141,7 +231,9 @@ export function createAlfieInterfaceServer({
   }
 
   function requireCsrf(req, session) {
-    if (!originAllowed(req, publicOrigin, cookieSecure)) throw Object.assign(new Error("Request origin was not accepted."), { status: 403 });
+    if (!originAllowed(req, { publicOrigin, cookieSecure, trustProxyHeaders, allowLocalHttpOrigin })) {
+      throw Object.assign(new Error("Request origin was not accepted."), { status: 403 });
+    }
     const token = req.headers["x-csrf-token"];
     if (typeof token !== "string" || token !== session.csrfToken) {
       throw Object.assign(new Error("The session security token is missing or expired. Refresh the page and try again."), { status: 403, code: "CSRF_INVALID" });
@@ -159,6 +251,20 @@ export function createAlfieInterfaceServer({
 
     if (url.pathname.startsWith("/api/")) {
       try {
+        if (method === "POST" && url.pathname === "/api/telemetry/vram") {
+          checkTelemetryRateLimit(clientIp(req));
+          verifyTelemetryBearer(req);
+          const body = await readJson(req, 8192);
+          if (!body || typeof body !== "object" || Array.isArray(body)) {
+            return json(res, 400, { error: "Telemetry payload must be a JSON object." });
+          }
+          if (typeof coreClient.reportExternalVram !== "function") {
+            return json(res, 503, { error: "Core client does not support external VRAM reporting." });
+          }
+          const result = await coreClient.reportExternalVram(body);
+          return json(res, 200, result);
+        }
+
         if (method === "GET" && url.pathname === "/api/auth/me") {
           if (await authStore.setupRequired()) return json(res, 200, { authenticated: false, setupRequired: true });
           const session = await sessionFor(req);
@@ -166,10 +272,29 @@ export function createAlfieInterfaceServer({
           return json(res, 200, { authenticated: true, user: session.user, csrfToken: session.csrfToken });
         }
 
+        if (method === "POST" && url.pathname === "/api/auth/setup") {
+          if (!originAllowed(req, { publicOrigin, cookieSecure, trustProxyHeaders, allowLocalHttpOrigin })) {
+            return json(res, 403, { error: "Request origin was not accepted." });
+          }
+          if (!(await authStore.setupRequired())) {
+            return json(res, 409, { error: "Initial administrator setup has already been completed." });
+          }
+          const ip = clientIp(req);
+          const body = await readJson(req);
+          const created = await authStore.bootstrap(body.username, body.password);
+          if (!created.created) {
+            return json(res, 409, { error: "Initial administrator setup has already been completed." });
+          }
+          const result = await authStore.login(body.username, body.password, { ip });
+          setSessionCookie(res, result.token, cookieSecure);
+          return json(res, 201, { authenticated: true, user: result.user, csrfToken: result.csrfToken });
+        }
+
         if (method === "POST" && url.pathname === "/api/auth/login") {
-          if (!originAllowed(req, publicOrigin, cookieSecure)) return json(res, 403, { error: "Request origin was not accepted." });
-          const forwardedIp = trustProxyHeaders ? req.headers["cf-connecting-ip"] : null;
-          const ip = String(forwardedIp || req.socket.remoteAddress || "unknown").slice(0, 100);
+          if (!originAllowed(req, { publicOrigin, cookieSecure, trustProxyHeaders, allowLocalHttpOrigin })) {
+            return json(res, 403, { error: "Request origin was not accepted." });
+          }
+          const ip = clientIp(req);
           // Expired buckets are discarded and the map is bounded against random-IP memory growth.
           for (const [key, value] of loginAttempts) {
             if (value.resetAt <= now()) loginAttempts.delete(key);
@@ -215,6 +340,10 @@ export function createAlfieInterfaceServer({
           return json(res, 200, { authenticated: false });
         }
 
+        const session = await requireSession(req, res);
+        if (!session) return;
+        const userId = session.user.id;
+
         const imageMatch = /^\/api\/core\/images\/([a-zA-Z0-9._-]{1,128})$/.exec(url.pathname);
         if (method === "GET" && imageMatch) {
           try {
@@ -222,7 +351,7 @@ export function createAlfieInterfaceServer({
             res.writeHead(200, {
               "content-type": mimeType,
               "content-length": buffer.length,
-              "cache-control": "public, max-age=86400, immutable",
+              "cache-control": "private, max-age=86400, immutable",
               "x-content-type-options": "nosniff"
             });
             return res.end(buffer);
@@ -230,10 +359,6 @@ export function createAlfieInterfaceServer({
             return json(res, err.status || 404, { error: err.message || "Visual asset not found." });
           }
         }
-
-        const session = await requireSession(req, res);
-        if (!session) return;
-        const userId = session.user.id;
 
         if (method === "POST" && url.pathname === "/api/auth/link") {
           requireCsrf(req, session);
@@ -253,22 +378,59 @@ export function createAlfieInterfaceServer({
         if (method === "GET" && url.pathname === "/api/core/status") {
           return json(res, 200, await coreClient.status(userId));
         }
+        if (method === "GET" && url.pathname === "/api/core/projects") {
+          return json(res, 200, await coreClient.listProjects(userId));
+        }
+        if (method === "POST" && url.pathname === "/api/core/projects") {
+          requireCsrf(req, session);
+          return json(res, 201, await coreClient.createProject(userId, await readJson(req)));
+        }
+        const projectMatch = /^\/api\/core\/projects\/([a-f0-9-]{36})$/.exec(url.pathname);
+        if (method === "GET" && projectMatch) {
+          return json(res, 200, await coreClient.getProject(userId, projectMatch[1]));
+        }
+        if (method === "PATCH" && projectMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.updateProject(userId, projectMatch[1], await readJson(req)));
+        }
+        if (method === "DELETE" && projectMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.deleteProject(userId, projectMatch[1]));
+        }
+        if (method === "GET" && url.pathname === "/api/core/system/vram") {
+          return json(res, 200, await coreClient.getVramStatus(userId));
+        }
+        if (method === "POST" && url.pathname === "/api/core/system/vram/report") {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.reportVramStatus(userId, await readJson(req)));
+        }
         if (method === "GET" && url.pathname === "/api/core/conversations") {
-          return json(res, 200, await coreClient.listConversations(userId));
+          return json(res, 200, await coreClient.listConversations(userId, url.searchParams.toString()));
         }
         if (method === "POST" && url.pathname === "/api/core/conversations") {
           requireCsrf(req, session);
           return json(res, 201, await coreClient.createConversation(userId, await readJson(req)));
         }
         const conversationMatch = /^\/api\/core\/conversations\/([a-f0-9-]{36})$/.exec(url.pathname);
+        const handoffMatch = /^\/api\/core\/conversations\/([a-f0-9-]{36})\/handoff$/.exec(url.pathname);
         const messageMatch = /^\/api\/core\/conversations\/([a-f0-9-]{36})\/messages$/.exec(url.pathname);
         const reactionMatch = /^\/api\/core\/conversations\/([a-f0-9-]{36})\/messages\/([a-f0-9-]{36})\/reaction$/.exec(url.pathname);
+        if (method === "POST" && handoffMatch) {
+          requireCsrf(req, session);
+          return json(res, 201, await coreClient.handoffConversation(userId, handoffMatch[1], await readJson(req)));
+        }
         if (method === "GET" && conversationMatch) {
           return json(res, 200, await coreClient.getConversation(userId, conversationMatch[1]));
         }
         if (method === "PATCH" && conversationMatch) {
           requireCsrf(req, session);
           const body = await readJson(req);
+          if (typeof coreClient.updateConversation === "function") {
+            return json(res, 200, await coreClient.updateConversation(userId, conversationMatch[1], {
+              ...(body.title !== undefined ? { title: body.title } : {}),
+              ...(body.projectId !== undefined ? { projectId: body.projectId } : {})
+            }));
+          }
           return json(res, 200, { conversation: await coreClient.renameConversation(userId, conversationMatch[1], body.title) });
         }
         if (method === "DELETE" && conversationMatch) {
@@ -347,6 +509,19 @@ export function createAlfieInterfaceServer({
         if (method === "GET" && url.pathname === "/api/core/audit") return json(res, 200, await coreClient.listAudit(userId, Number(url.searchParams.get("limit") || 50)));
         if (method === "GET" && url.pathname === "/api/core/providers") return json(res, 200, await coreClient.request(userId, "/v1/providers"));
         if (method === "GET" && url.pathname === "/api/core/providers/health") return json(res, 200, await coreClient.request(userId, "/v1/providers/health"));
+        if (method === "GET" && url.pathname === "/api/core/cloud-agents") {
+          return json(res, 200, await coreClient.listCloudAgents(userId));
+        }
+        const cloudAgentMatch = /^\/api\/core\/cloud-agents\/(gemini|openai)$/.exec(url.pathname);
+        if (method === "PATCH" && cloudAgentMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.updateCloudAgent(userId, cloudAgentMatch[1], await readJson(req)));
+        }
+        const cloudPreviewMatch = /^\/api\/core\/cloud-agents\/(gemini|openai)\/privacy-preview$/.exec(url.pathname);
+        if (method === "POST" && cloudPreviewMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.previewCloudAgentPrivacy(userId, cloudPreviewMatch[1], await readJson(req)));
+        }
         if (method === "POST" && url.pathname === "/api/core/images/generate") {
           requireCsrf(req, session);
           const body = await readJson(req);
@@ -364,6 +539,8 @@ export function createAlfieInterfaceServer({
     const ALLOWED_ASSETS = {
       "index.html": "text/html; charset=utf-8",
       "app.js": "text/javascript; charset=utf-8",
+      "shortcuts.mjs": "text/javascript; charset=utf-8",
+      "voice-waveform.mjs": "text/javascript; charset=utf-8",
       "styles.css": "text/css; charset=utf-8",
       "sw.js": "application/javascript; charset=utf-8",
       "manifest.webmanifest": "application/manifest+json; charset=utf-8",

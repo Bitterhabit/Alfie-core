@@ -10,8 +10,8 @@
   "scripts": {
     "dev": "node server.mjs",
     "start": "node server.mjs",
-    "build": "node --check server.mjs src/server.mjs interface/src/server.mjs interface/public/app.js",
-    "lint": "node --check server.mjs src/server.mjs interface/src/server.mjs interface/public/app.js",
+    "build": "node --check server.mjs src/server.mjs interface/src/server.mjs interface/public/shortcuts.mjs interface/public/voice-waveform.mjs interface/public/app.js",
+    "lint": "node --check server.mjs src/server.mjs interface/src/server.mjs interface/public/shortcuts.mjs interface/public/voice-waveform.mjs interface/public/app.js",
     "test": "node --test test/*.test.mjs interface/test/*.test.mjs"
   },
   "dependencies": {

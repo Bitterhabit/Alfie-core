@@ -75,14 +75,44 @@ export function createAlfieCoreClient({
     saveConversationsDatabase(userId, database, expectedRevision = null) {
       return request(userId, "/v1/conversations/database", { method: "PUT", body: { database, expectedRevision } });
     },
-    listConversations(userId) { return request(userId, "/v1/conversations"); },
+    listProjects(userId) { return request(userId, "/v1/projects"); },
+    createProject(userId, body = {}) { return request(userId, "/v1/projects", { method: "POST", body }); },
+    getProject(userId, id) { return request(userId, "/v1/projects/" + encodeURIComponent(id)); },
+    updateProject(userId, id, body = {}) { return request(userId, "/v1/projects/" + encodeURIComponent(id), { method: "PATCH", body }); },
+    deleteProject(userId, id) { return request(userId, "/v1/projects/" + encodeURIComponent(id), { method: "DELETE" }); },
+    getVramStatus(userId) { return request(userId, "/v1/system/vram"); },
+    reportVramStatus(userId, body = {}) { return request(userId, "/v1/system/vram/report", { method: "POST", body }); },
+    async reportExternalVram(body = {}) {
+      const url = new URL("/v1/system/vram/host-report", root);
+      const response = await fetchImpl(url, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer " + serviceToken,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+        redirect: "error"
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw Object.assign(new Error(payload.error || "External VRAM report failed."), {
+          status: response.status,
+          code: payload.code
+        });
+      }
+      return payload;
+    },
+    listConversations(userId, query = "") { return request(userId, "/v1/conversations" + (query ? "?" + query : "")); },
     createConversation(userId, body = {}) { return request(userId, "/v1/conversations", { method: "POST", body }); },
     getConversation(userId, id) { return request(userId, "/v1/conversations/" + encodeURIComponent(id)); },
+    handoffConversation(userId, id, body = {}) { return request(userId, "/v1/conversations/" + encodeURIComponent(id) + "/handoff", { method: "POST", body }); },
     appendMessage(userId, id, body) { return request(userId, "/v1/conversations/" + encodeURIComponent(id) + "/messages", { method: "POST", body }); },
     reactMessage(userId, conversationId, messageId, reaction) {
       return request(userId, "/v1/conversations/" + encodeURIComponent(conversationId) + "/messages/" + encodeURIComponent(messageId) + "/reaction", { method: "POST", body: { reaction } });
     },
     renameConversation(userId, id, title) { return request(userId, "/v1/conversations/" + encodeURIComponent(id), { method: "PATCH", body: { title } }); },
+    updateConversation(userId, id, body = {}) { return request(userId, "/v1/conversations/" + encodeURIComponent(id), { method: "PATCH", body }); },
     deleteConversation(userId, id) { return request(userId, "/v1/conversations/" + encodeURIComponent(id), { method: "DELETE" }); },
     listMemories(userId, query = "") { return request(userId, "/v1/memories" + (query ? "?" + query : "")); },
     createMemory(userId, body) { return request(userId, "/v1/memories", { method: "POST", body }); },
@@ -95,6 +125,13 @@ export function createAlfieCoreClient({
     approveAction(userId, actionId) { return request(userId, "/v1/tools/approve", { method: "POST", body: { actionId } }); },
     rejectAction(userId, actionId) { return request(userId, "/v1/tools/reject", { method: "POST", body: { actionId } }); },
     listAudit(userId, limit = 50) { return request(userId, "/v1/audit?limit=" + encodeURIComponent(limit)); },
+    listCloudAgents(userId) { return request(userId, "/v1/cloud-agents"); },
+    updateCloudAgent(userId, provider, body = {}) {
+      return request(userId, "/v1/cloud-agents/" + encodeURIComponent(provider), { method: "PATCH", body });
+    },
+    previewCloudAgentPrivacy(userId, provider, body = {}) {
+      return request(userId, "/v1/cloud-agents/" + encodeURIComponent(provider) + "/privacy-preview", { method: "POST", body });
+    },
     generateImage(userId, body) { return request(userId, "/v1/images/generate", { method: "POST", body }); },
     async getImage(filename) {
       const url = new URL("/v1/images/" + encodeURIComponent(filename), root);

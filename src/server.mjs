@@ -18,6 +18,12 @@ import { PetrioHarnessClient, registerPetrioHarnessTools } from "./integrations/
 import { registerMemoryTools } from "./integrations/memoryTools.mjs";
 import { ImageGenerator } from "./integrations/imageGenerator.mjs";
 import { registerImageTools } from "./integrations/imageTools.mjs";
+import { ProjectStore } from "./projects/store.mjs";
+import { buildHandoffBrief } from "./conversations/handoff.mjs";
+import { VramMonitor } from "./system/vramMonitor.mjs";
+import { CloudAgentStore } from "./providers/cloudAgentStore.mjs";
+import { CloudAgentAdapters } from "./providers/cloudAdapters.mjs";
+import { filterGrantedScopes, summarizePrivacy } from "./privacy/policy.mjs";
 
 const SERVICE_VERSION = "0.3.0";
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -156,6 +162,8 @@ export function createAlfieCoreServer({
   identityLinkStore = new IdentityLinkStore(),
   petrioIdentityAuth = createPetrioIdentityAuth(),
   conversationStore = new ConversationStore(),
+  projectStore = new ProjectStore(),
+  vramMonitor = new VramMonitor(),
   memoryStore = new MemoryStore(),
   auditStore = new AuditStore(),
   permissionStore = new PermissionStore(),
@@ -164,6 +172,8 @@ export function createAlfieCoreServer({
   contextAssembler = new ContextAssembler(),
   petrioHarnessClient = new PetrioHarnessClient({ serviceToken, identityAuth: petrioIdentityAuth }),
   imageGenerator = new ImageGenerator(),
+  cloudAgentStore = new CloudAgentStore(),
+  cloudAdapters = new CloudAgentAdapters(),
   assetsDirectory = process.env.ALFIE_ASSETS_DIR || path.resolve(process.cwd(), "assets")
 } = {}) {
   const providers = normaliseConfig(providerConfig);
@@ -171,7 +181,7 @@ export function createAlfieCoreServer({
   registerMemoryTools(toolRegistry, memoryStore);
   registerImageTools(toolRegistry, imageGenerator);
   const toolDispatcher = new ToolDispatcher({ registry: toolRegistry, permissionStore, pendingActionStore, auditStore, assetsDirectory });
-  const agentLoop = new AgentLoop({ providerRegistry, providerConfig: providers, toolRegistry, dispatcher: toolDispatcher, contextAssembler, memoryStore, imageGenerator, assetsDirectory });
+  const agentLoop = new AgentLoop({ providerRegistry, providerConfig: providers, toolRegistry, dispatcher: toolDispatcher, contextAssembler, memoryStore, imageGenerator, cloudAgentStore, cloudAdapters, assetsDirectory });
 
   return createHttpServer(async (req, res) => {
     const url = new URL(req.url || "/", "http://alfie-core.internal");
@@ -265,7 +275,7 @@ export function createAlfieCoreServer({
         service: "alfie-core",
         version: SERVICE_VERSION,
         identityProviders: identityAuth.providerIds || [identityAuth.providerId].filter(Boolean),
-        implemented: ["multi-client-signed-identity", "cross-client-account-linking", "service-authentication", "health", "readiness", "provider-registry", "provider-health", "model-selection", "bounded-agent-loop", "intent-based-context-assembly", "strict-json-schema-tool-validation", "read-draft-write-risk-tiers", "persistent-pending-actions", "explicit-approve-reject", "untrusted-data-envelopes", "tool-call-deduplication", "four-step-turn-budget", "30-second-wall-clock-budget", "tool-output-truncation", "signed-identity-provider-contract", "conversation-persistence", "conversation-snapshot-migration", "memory-crud", "memory-provenance", "ranked-memory-retrieval", "untrusted-memory-context", "memory-search-tool", "memory-read-tool", "approval-gated-memory-create", "approval-gated-memory-update", "approval-gated-memory-forget", "per-user-action-audit-log", "scoped-tool-registry", "permission-grants", "dashboard-approval-ui", "dashboard-permission-management"],
+        implemented: ["multi-client-signed-identity", "cross-client-account-linking", "service-authentication", "health", "readiness", "provider-registry", "provider-health", "model-selection", "cloud-coding-agents", "cloud-privacy-controls", "bounded-agent-loop", "intent-based-context-assembly", "strict-json-schema-tool-validation", "read-draft-write-risk-tiers", "persistent-pending-actions", "explicit-approve-reject", "untrusted-data-envelopes", "tool-call-deduplication", "four-step-turn-budget", "30-second-wall-clock-budget", "tool-output-truncation", "signed-identity-provider-contract", "conversation-persistence", "conversation-snapshot-migration", "projects", "context-handoff", "vram-monitoring", "memory-crud", "memory-provenance", "ranked-memory-retrieval", "untrusted-memory-context", "memory-search-tool", "memory-read-tool", "approval-gated-memory-create", "approval-gated-memory-update", "approval-gated-memory-forget", "per-user-action-audit-log", "scoped-tool-registry", "permission-grants", "dashboard-approval-ui", "dashboard-permission-management"],
         planned: ["mail-tool-adapter", "calendar-journal-write-adapters", "standalone-account-recovery", "multi-user-administration"]
       });
     }
@@ -412,13 +422,107 @@ export function createAlfieCoreServer({
       }
     }
 
+    const projectMatch = /^\/v1\/projects\/([a-f0-9-]{36})$/i.exec(url.pathname);
+    const isProjectCollection = url.pathname === "/v1/projects";
+    if (isProjectCollection || projectMatch) {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      try {
+        if (isProjectCollection && req.method === "GET") {
+          const [projects, conversations] = await Promise.all([
+            projectStore.list(identity.userId),
+            conversationStore.list(identity.userId)
+          ]);
+          const counts = new Map();
+          for (const conversation of conversations) {
+            if (conversation.projectId) {
+              counts.set(conversation.projectId, (counts.get(conversation.projectId) || 0) + 1);
+            }
+          }
+          return json(res, 200, {
+            projects: projects.map((project) => ({
+              ...project,
+              conversationCount: counts.get(project.id) || 0
+            }))
+          });
+        }
+        if (isProjectCollection && req.method === "POST") {
+          const body = await readJsonBody(req);
+          const project = await projectStore.create(identity.userId, body);
+          return json(res, 201, { project: { ...project, conversationCount: 0 } });
+        }
+        if (projectMatch && req.method === "GET") {
+          const project = await projectStore.get(identity.userId, projectMatch[1]);
+          const conversations = await conversationStore.list(identity.userId, { projectId: project.id });
+          return json(res, 200, { project: { ...project, conversationCount: conversations.length }, conversations });
+        }
+        if (projectMatch && req.method === "PATCH") {
+          const body = await readJsonBody(req);
+          const project = await projectStore.update(identity.userId, projectMatch[1], body);
+          return json(res, 200, { project });
+        }
+        if (projectMatch && req.method === "DELETE") {
+          const removed = await projectStore.remove(identity.userId, projectMatch[1]);
+          const cleared = await conversationStore.clearProject(identity.userId, projectMatch[1]);
+          return json(res, 200, { deleted: removed.deleted, unassignedConversations: cleared.cleared });
+        }
+      } catch (error) {
+        return json(res, error.status || 500, {
+          error: error.message || "Project operation failed.",
+          ...(error.code ? { code: error.code } : {})
+        });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    if (url.pathname === "/v1/system/vram/host-report") {
+      if (req.method !== "POST") return json(res, 405, { error: "Method not allowed." });
+      try {
+        const body = await readJsonBody(req);
+        const result = vramMonitor.reportExternalHost(body);
+        if (body.clear === true) {
+          const vram = await vramMonitor.inspect({ endpoints: providers.endpoints });
+          return json(res, 200, { ok: true, cleared: true, vram });
+        }
+        return json(res, 200, { ok: true, vram: result });
+      } catch (error) {
+        return json(res, error.status || 500, { error: error.message || "External VRAM report failed." });
+      }
+    }
+
+    if (url.pathname === "/v1/system/vram" || url.pathname === "/v1/system/vram/report") {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      try {
+        if (url.pathname === "/v1/system/vram" && req.method === "GET") {
+          const vram = await vramMonitor.inspect({ userId: identity.userId, endpoints: providers.endpoints });
+          return json(res, 200, { vram });
+        }
+        if (url.pathname === "/v1/system/vram/report" && req.method === "POST") {
+          const body = await readJsonBody(req);
+          const result = vramMonitor.report(identity.userId, body);
+          if (body.clear === true) {
+            const vram = await vramMonitor.inspect({ userId: identity.userId, endpoints: providers.endpoints });
+            return json(res, 200, { cleared: true, vram });
+          }
+          return json(res, 200, { vram: result });
+        }
+      } catch (error) {
+        return json(res, error.status || 500, { error: error.message || "VRAM status unavailable." });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
     const conversationMatch = /^\/v1\/conversations\/([a-f0-9-]{36})$/i.exec(url.pathname);
+    const handoffMatch = /^\/v1\/conversations\/([a-f0-9-]{36})\/handoff$/i.exec(url.pathname);
     const messageMatch = /^\/v1\/conversations\/([a-f0-9-]{36})\/messages$/i.exec(url.pathname);
     const reactionMatch = /^\/v1\/conversations\/([a-f0-9-]{36})\/messages\/([a-f0-9-]{36})\/reaction$/i.exec(url.pathname);
     const isConversationCollection = url.pathname === "/v1/conversations";
     const isConversationDatabase = url.pathname === "/v1/conversations/database";
     const isConversationImport = url.pathname === "/v1/conversations/import";
-    if (isConversationCollection || isConversationDatabase || isConversationImport || conversationMatch || messageMatch || reactionMatch) {
+    if (isConversationCollection || isConversationDatabase || isConversationImport || conversationMatch || handoffMatch || messageMatch || reactionMatch) {
       let identity;
       try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
       catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
@@ -435,12 +539,45 @@ export function createAlfieCoreServer({
           return json(res, 200, await conversationStore.importLegacy(identity.userId, body.database || body, body.sourceKey || "petrio-server"));
         }
         if (isConversationCollection && req.method === "GET") {
-          return json(res, 200, { conversations: await conversationStore.list(identity.userId) });
+          const projectId = url.searchParams.get("projectId") || undefined;
+          return json(res, 200, { conversations: await conversationStore.list(identity.userId, { projectId }) });
         }
         if (isConversationCollection && req.method === "POST") {
           const body = await readJsonBody(req);
-          const conversation = await conversationStore.create(identity.userId, body.title);
+          if (body.projectId) {
+            await projectStore.get(identity.userId, body.projectId);
+          }
+          const conversation = await conversationStore.create(identity.userId, {
+            title: body.title,
+            projectId: body.projectId ?? null,
+            parentConversationId: body.parentConversationId ?? null,
+            continuedFromTitle: body.continuedFromTitle ?? null,
+            handoffContext: body.handoffContext ?? null
+          });
           return json(res, 201, { conversation });
+        }
+        if (handoffMatch && req.method === "POST") {
+          const body = await readJsonBody(req);
+          const source = await conversationStore.get(identity.userId, handoffMatch[1]);
+          const targetProjectId = body.projectId !== undefined ? (body.projectId || null) : (source.projectId || null);
+          let project = null;
+          if (targetProjectId) {
+            project = await projectStore.get(identity.userId, targetProjectId);
+          }
+          const brief = buildHandoffBrief(source, {
+            project,
+            extraNotes: body.extraNotes || "",
+            reason: body.reason === "vram_threshold" ? "vram_threshold" : "context_handoff"
+          });
+          const title = typeof body.title === "string" && body.title.trim() ? body.title.trim().slice(0, 120) : brief.title;
+          const conversation = await conversationStore.create(identity.userId, {
+            title,
+            projectId: targetProjectId,
+            parentConversationId: source.id,
+            continuedFromTitle: source.title,
+            handoffContext: brief.summary
+          });
+          return json(res, 201, { conversation, handoff: brief });
         }
         if (conversationMatch && req.method === "GET") {
           const conversation = await conversationStore.get(identity.userId, conversationMatch[1]);
@@ -458,7 +595,16 @@ export function createAlfieCoreServer({
         }
         if (conversationMatch && req.method === "PATCH") {
           const body = await readJsonBody(req);
-          return json(res, 200, { conversation: await conversationStore.rename(identity.userId, conversationMatch[1], body.title) });
+          if (body.projectId !== undefined && body.projectId !== null && body.projectId !== "") {
+            await projectStore.get(identity.userId, body.projectId);
+          }
+          const updated = body.projectId !== undefined
+            ? await conversationStore.update(identity.userId, conversationMatch[1], {
+                ...(body.title !== undefined ? { title: body.title } : {}),
+                projectId: body.projectId
+              })
+            : await conversationStore.rename(identity.userId, conversationMatch[1], body.title);
+          return json(res, 200, { conversation: updated });
         }
         if (conversationMatch && req.method === "DELETE") {
           return json(res, 200, await conversationStore.remove(identity.userId, conversationMatch[1]));
@@ -481,6 +627,68 @@ export function createAlfieCoreServer({
       const health = await Promise.all(providers.endpoints.map((endpoint) =>
         providerRegistry.inspectCached(endpoint, providers.healthIntervalSeconds)));
       return json(res, 200, { mode: providers.mode, endpoints: health });
+    }
+
+    const cloudAgentMatch = /^\/v1\/cloud-agents\/(gemini|openai)$/.exec(url.pathname);
+    const cloudAgentPreviewMatch = /^\/v1\/cloud-agents\/(gemini|openai)\/privacy-preview$/.exec(url.pathname);
+    if (url.pathname === "/v1/cloud-agents" || cloudAgentMatch || cloudAgentPreviewMatch) {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      try {
+        if (url.pathname === "/v1/cloud-agents" && req.method === "GET") {
+          return json(res, 200, await cloudAgentStore.getPublicState(identity.userId));
+        }
+        if (cloudAgentMatch && req.method === "GET") {
+          return json(res, 200, { agent: await cloudAgentStore.getAgent(identity.userId, cloudAgentMatch[1]) });
+        }
+        if (cloudAgentMatch && req.method === "PATCH") {
+          const body = await readJsonBody(req);
+          const agent = await cloudAgentStore.updateAgent(identity.userId, cloudAgentMatch[1], body);
+          const exposed = agent.privacySummary?.allowedPersonalCategories || [];
+          await auditStore.record(identity.userId, {
+            event: "cloud_agent.privacy_updated",
+            actor: "user",
+            toolId: agent.provider,
+            risk: exposed.length ? "medium" : "low",
+            status: agent.enabled ? "enabled" : "disabled",
+            detail: exposed.length
+              ? `Optional private access enabled for ${agent.name}: ${exposed.join(", ")}.`
+              : `${agent.name} set to strict coding-only isolation (all private sections blocked).`
+          });
+          return json(res, 200, { agent });
+        }
+        if (cloudAgentPreviewMatch && req.method === "POST") {
+          const body = await readJsonBody(req);
+          const agent = await cloudAgentStore.getAgent(identity.userId, cloudAgentPreviewMatch[1]);
+          const optIn = typeof body?.privateAccessOptIn === "boolean" ? body.privateAccessOptIn : agent.privateAccessOptIn;
+          const rawVis = body?.visibility ? { ...agent.visibility, ...body.visibility } : agent.visibility;
+          const visibility = optIn ? rawVis : {
+            ...rawVis,
+            allowMail: false,
+            allowCalendar: false,
+            allowJournal: false,
+            allowPersonalMemories: false,
+            allowDashboardState: false
+          };
+          const grantedScopes = await permissionStore.list(identity.userId);
+          const scopeSplit = filterGrantedScopes(grantedScopes, toolRegistry, visibility);
+          return json(res, 200, {
+            provider: agent.provider,
+            name: agent.name,
+            privateAccessOptIn: optIn,
+            summary: summarizePrivacy(visibility),
+            allowedScopes: scopeSplit.allowedScopes,
+            blockedScopes: scopeSplit.blockedScopes
+          });
+        }
+      } catch (error) {
+        return json(res, error.status || 500, {
+          error: error.message || "Cloud agent settings operation failed.",
+          ...(error.code ? { code: error.code } : {})
+        });
+      }
+      return json(res, 405, { error: "Method not allowed." });
     }
 
     const imageFileMatch = /^\/v1\/images\/([a-zA-Z0-9._-]{1,128})$/.exec(url.pathname);
@@ -543,16 +751,18 @@ export function createAlfieCoreServer({
           writeStreamEvent(res, event);
         };
 
+        const agentProvider = ["local", "gemini", "openai"].includes(body.agentProvider) ? body.agentProvider : "local";
         const result = await agentLoop.run({
           userId: identity.userId, messages: cleanMessages(body.messages),
           dashboardState: body.dashboardState || {},
           mode: ["auto", "light", "standard", "work"].includes(body.mode) ? body.mode : providers.mode,
+          agentProvider,
           turnId: body.turnId || randomUUID(), signal: controller.signal,
           onProgress
         });
         if (controller.signal.aborted) return;
         ensureStreamHeaders(result.status === "awaiting_user_approval" ? 202 : 200);
-        writeStreamEvent(res, { type: "meta", status: result.status, steps: result.steps });
+        writeStreamEvent(res, { type: "meta", status: result.status, steps: result.steps, ...(result.privacyReport ? { privacyReport: result.privacyReport } : {}) });
         if (result.message) writeStreamEvent(res, { type: "delta", content: result.message });
         if (result.status === "awaiting_user_approval") {
           writeStreamEvent(res, { type: "approval_required", actionId: result.actionId, toolId: result.toolId, summary: result.summary });
@@ -561,7 +771,7 @@ export function createAlfieCoreServer({
         res.end();
       } catch (error) {
         if (controller.signal.aborted) return;
-        return json(res, Number.isInteger(error.status) ? error.status : 502, { error: error.message || "Alfie could not complete the response." });
+        return json(res, Number.isInteger(error.status) ? error.status : 502, { error: error.message || "Alfie could not complete the response.", ...(error.code ? { code: error.code } : {}) });
       }
       return;
     }
@@ -575,11 +785,12 @@ export function createAlfieCoreServer({
         const body = await readJsonBody(req);
         const messages = cleanMessages(body.messages);
         const requestedMode = ["auto", "light", "standard", "work"].includes(body.mode) ? body.mode : providers.mode;
+        const agentProvider = ["local", "gemini", "openai"].includes(body.agentProvider) ? body.agentProvider : "local";
         const turnId = randomUUID();
         try {
           const result = await agentLoop.run({
             userId: identity.userId, messages, dashboardState: body.dashboardState || {},
-            mode: requestedMode, turnId, signal: controller.signal
+            mode: requestedMode, agentProvider, turnId, signal: controller.signal
           });
           return json(res, result.status === "awaiting_user_approval" ? 202 : 200, result);
         } finally {
@@ -587,7 +798,8 @@ export function createAlfieCoreServer({
         }
       } catch (error) {
         return json(res, Number.isInteger(error.status) ? error.status : 502, {
-          error: error.message || "Alfie could not complete the response."
+          error: error.message || "Alfie could not complete the response.",
+          ...(error.code ? { code: error.code } : {})
         });
       }
     }

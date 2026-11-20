@@ -52,9 +52,9 @@ Current interface features:
 - mobile navigation with access to recent conversations, new chat and sign out;
 - safe DOM-based Markdown rendering for headings, lists, emphasis, code and HTTP(S) links.
 
-On first startup, provide a unique bootstrap username and a password of at least 16 characters through the interface container environment. Remove both bootstrap values after the first account has been created. The interface intentionally has no public self-registration route. Password changes require the current password and revoke all active sessions. Account recovery and multi-user account administration are not yet implemented.
+On first startup, either provide a unique bootstrap username and a password of at least 16 characters through `ALFIE_UI_BOOTSTRAP_USERNAME` and `ALFIE_UI_BOOTSTRAP_PASSWORD` (removing both values after the first account has been created), or complete the first-run administrator setup form on the login screen (available only while zero accounts exist). The interface intentionally has no open public registration route. Password changes require the current password, enforce a 16-character minimum for new passwords, and revoke all active sessions.
 
-Set `ALFIE_UI_PUBLIC_ORIGIN` to the exact public HTTPS origin used by the reverse proxy. Keep `ALFIE_UI_COOKIE_SECURE=true`. `ALFIE_UI_TRUST_PROXY_HEADERS` defaults to false; enable it only if the interface is reachable exclusively through a trusted proxy that overwrites `CF-Connecting-IP`.
+Set `ALFIE_UI_PUBLIC_ORIGIN` to the exact public HTTPS origin used by the reverse proxy. Keep `ALFIE_UI_COOKIE_SECURE=true` (the default, issuing `HttpOnly; SameSite=Strict; Secure` cookies). `ALFIE_UI_TRUST_PROXY_HEADERS` defaults to false; enable it only if the interface is reachable exclusively through a trusted proxy that overwrites `CF-Connecting-IP` and `X-Forwarded-Host`. Generated images served from `/api/core/images/:filename` require an active session and use `Cache-Control: private`, and the service worker (`sw.js`) caches static shell assets only. See `SECURITY_REVIEW.md` for the full hardening summary.
 
 The interface is available on port 8781 inside the private `alfie-core-internal` network. The Compose project does not publish a host port. Put a trusted reverse proxy in front of it when you are ready to expose the web UI.
 

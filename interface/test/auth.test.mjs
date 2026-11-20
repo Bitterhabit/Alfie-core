@@ -104,3 +104,26 @@ test("password changes require the current password and revoke every active sess
     assert.ok(fresh.token);
   });
 });
+
+test("bootstrap and password changes enforce the 16-character minimum while legacy accounts remain sign-in compatible", async () => {
+  await withStore(async (store, directory) => {
+    await assert.rejects(store.bootstrap("alfie-admin", "15-char-passwor"), { status: 400 });
+    const created = await store.bootstrap("alfie-admin", "16-char-password");
+    assert.equal(created.created, true);
+    await assert.rejects(store.changePassword(created.user.id, "16-char-password", "short-new-pass"), { status: 400 });
+
+    // Simulate a legacy account hash with an 8-character password written before the 16-char policy
+    const legacy = await store.load();
+    const { scryptSync, randomBytes } = await import("node:crypto");
+    const salt = randomBytes(16).toString("hex");
+    legacy.users[0].passwordSalt = salt;
+    legacy.users[0].passwordHash = scryptSync("legacy88", salt, 64).toString("hex");
+    await fs.writeFile(path.join(directory, "accounts.json"), JSON.stringify(legacy, null, 2), { mode: 0o600 });
+
+    const signedIn = await store.login("alfie-admin", "legacy88");
+    assert.ok(signedIn.token);
+    await store.changePassword(created.user.id, "legacy88", "rotated-strong-password-2026");
+    assert.ok((await store.login("alfie-admin", "rotated-strong-password-2026")).token);
+  });
+});
+
