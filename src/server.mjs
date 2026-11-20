@@ -25,7 +25,7 @@ import { CloudAgentStore } from "./providers/cloudAgentStore.mjs";
 import { CloudAgentAdapters } from "./providers/cloudAdapters.mjs";
 import { filterGrantedScopes, summarizePrivacy } from "./privacy/policy.mjs";
 
-const SERVICE_VERSION = "0.3.0";
+const SERVICE_VERSION = "0.9.0";
 const MAX_BODY_BYTES = 1024 * 1024;
 
 
