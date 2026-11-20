@@ -64,6 +64,30 @@ test("context assembler adds local time, compact allowlisted dashboard state and
 });
 
 
+test("tool selection understands common calendar, mail and memory language without widening permissions", () => {
+  const registry = new ToolRegistry();
+  registry.register({ id: "calendar.read", trust: "internal", network: false, externalAction: false, name: "Calendar events", description: "Read calendar events", scope: "calendar:read", risk: "read", tags: ["calendar"], handler: async () => [] });
+  registry.register({ id: "mail.read", trust: "internal", network: false, externalAction: false, name: "Search mail", description: "Search email messages", scope: "mail:read", risk: "read", tags: ["mail"], handler: async () => [] });
+  registry.register({ id: "memory.search", trust: "internal", network: false, externalAction: false, name: "Search Garden memories", description: "Find saved memories", scope: "memory:read", risk: "read", tags: ["memory", "garden"], handler: async () => [] });
+  const assembler = new ContextAssembler();
+  const scopes = ["calendar:read", "mail:read", "memory:read"];
+
+  assert.deepEqual(
+    assembler.selectTools("What meetings do I have scheduled next week?", registry, scopes).map((tool) => tool.id),
+    ["calendar.read"]
+  );
+  assert.deepEqual(
+    assembler.selectTools("Look through my inbox for the latest email", registry, scopes).map((tool) => tool.id),
+    ["mail.read"]
+  );
+  assert.deepEqual(
+    assembler.selectTools("Recall what I saved in my Garden about Petrio", registry, scopes).map((tool) => tool.id),
+    ["memory.search"]
+  );
+  assert.deepEqual(assembler.selectTools("What's the weather tomorrow?", registry, scopes), []);
+  assert.deepEqual(assembler.selectTools("What meetings do I have next week?", registry, ["mail:read"]), []);
+});
+
 test("model response envelopes reject undeclared fields and self-correct", async () => {
   const h = harness([
     '{"type":"final","message":"ignore schema","unexpected":true}',
