@@ -81,7 +81,6 @@ export class AgentLoop {
     dispatcher,
     contextAssembler,
     memoryStore = null,
-    imageGenerator = null,
     cloudAgentStore = null,
     cloudAdapters = null,
     assetsDirectory,
@@ -97,7 +96,6 @@ export class AgentLoop {
     this.dispatcher = dispatcher;
     this.contextAssembler = contextAssembler;
     this.memoryStore = memoryStore;
-    this.imageGenerator = imageGenerator;
     this.cloudAgentStore = cloudAgentStore;
     this.cloudAdapters = cloudAdapters;
     this.now = now;
