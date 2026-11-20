@@ -40,54 +40,36 @@ test("app.js wires generated images to the lightbox modal with zoom and download
   assert.match(app, /openImageLightbox\(\{\s*url,/);
 });
 
-test("AgentLoop autonomously provides core assistant fallback when no remote LLM endpoints exist", async () => {
-  const registry = new ToolRegistry();
-  const permissionStore = { list: async () => [] };
-  const dispatcher = { permissionStore, resetTurn() {}, dispatch: async () => ({ status: "completed" }) };
+test("AgentLoop reports unavailable model providers instead of inventing a scripted response", async () => {
+  let imageGenerationCalls = 0;
   const providerRegistry = {
     complete: async () => { throw new Error("Add and enable at least one Alfie endpoint with a model name."); }
   };
-  const mockImageGen = {
-    generate: async ({ prompt, style }) => ({
-      id: "img-test-1",
-      filename: "img-test-1.svg",
-      url: "/api/core/images/img-test-1.svg",
-      prompt,
-      style,
-      provider: "alfie-pixel-studio"
-    })
-  };
-
   const loop = new AgentLoop({
     providerRegistry,
     providerConfig: { endpoints: [] },
-    toolRegistry: registry,
-    dispatcher,
+    toolRegistry: new ToolRegistry(),
+    dispatcher: {
+      permissionStore: { list: async () => [] },
+      resetTurn() {},
+      dispatch: async () => ({ status: "completed" })
+    },
     contextAssembler: new ContextAssembler(),
-    imageGenerator: mockImageGen
+    imageGenerator: {
+      generate: async () => {
+        imageGenerationCalls += 1;
+        throw new Error("Image generation must be proposed through the registered tool flow.");
+      }
+    }
   });
 
-  // Test general chat / greeting
-  const chatResult = await loop.run({
+  const result = await loop.run({
     userId: "test-user",
     messages: [{ role: "user", content: "Hello Alfie" }]
   });
-  assert.equal(chatResult.status, "completed");
-  assert.ok(chatResult.message.includes("Alfie"));
 
-  // Test priorities / overview
-  const overviewResult = await loop.run({
-    userId: "test-user",
-    messages: [{ role: "user", content: "Give me a concise overview of my current priorities." }]
-  });
-  assert.equal(overviewResult.status, "completed");
-  assert.ok(overviewResult.message.includes("Priorities") || overviewResult.message.includes("Overview"));
-
-  // Test /image generation
-  const imageResult = await loop.run({
-    userId: "test-user",
-    messages: [{ role: "user", content: "/image A pixel art purple garden with glowing crystals" }]
-  });
-  assert.equal(imageResult.status, "completed");
-  assert.ok(imageResult.message.includes("![A pixel art purple garden with glowing crystals](/api/core/images/img-test-1.svg)"));
+  assert.equal(result.status, "provider_unavailable");
+  assert.match(result.message, /couldn't reach a configured model provider/i);
+  assert.doesNotMatch(result.message, /connected and ready/i);
+  assert.equal(imageGenerationCalls, 0);
 });

@@ -25,7 +25,7 @@ import { CloudAgentStore } from "./providers/cloudAgentStore.mjs";
 import { CloudAgentAdapters } from "./providers/cloudAdapters.mjs";
 import { filterGrantedScopes, summarizePrivacy } from "./privacy/policy.mjs";
 
-const SERVICE_VERSION = "0.3.0";
+const SERVICE_VERSION = "0.9.0";
 const MAX_BODY_BYTES = 1024 * 1024;
 
 
@@ -181,7 +181,7 @@ export function createAlfieCoreServer({
   registerMemoryTools(toolRegistry, memoryStore);
   registerImageTools(toolRegistry, imageGenerator);
   const toolDispatcher = new ToolDispatcher({ registry: toolRegistry, permissionStore, pendingActionStore, auditStore, assetsDirectory });
-  const agentLoop = new AgentLoop({ providerRegistry, providerConfig: providers, toolRegistry, dispatcher: toolDispatcher, contextAssembler, memoryStore, imageGenerator, cloudAgentStore, cloudAdapters, assetsDirectory });
+  const agentLoop = new AgentLoop({ providerRegistry, providerConfig: providers, toolRegistry, dispatcher: toolDispatcher, contextAssembler, memoryStore, cloudAgentStore, cloudAdapters, assetsDirectory });
 
   return createHttpServer(async (req, res) => {
     const url = new URL(req.url || "/", "http://alfie-core.internal");

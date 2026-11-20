@@ -81,7 +81,6 @@ export class AgentLoop {
     dispatcher,
     contextAssembler,
     memoryStore = null,
-    imageGenerator = null,
     cloudAgentStore = null,
     cloudAdapters = null,
     assetsDirectory,
@@ -97,7 +96,6 @@ export class AgentLoop {
     this.dispatcher = dispatcher;
     this.contextAssembler = contextAssembler;
     this.memoryStore = memoryStore;
-    this.imageGenerator = imageGenerator;
     this.cloudAgentStore = cloudAgentStore;
     this.cloudAdapters = cloudAdapters;
     this.now = now;
@@ -213,20 +211,19 @@ export class AgentLoop {
           );
         } else {
           try {
-            selected = await awaitWithAbort(this.providerRegistry.complete(this.providerConfig, context.messages, mode, { signal: controller.signal }), controller.signal);
+            selected = await awaitWithAbort(
+              this.providerRegistry.complete(this.providerConfig, context.messages, mode, { signal: controller.signal }),
+              controller.signal
+            );
           } catch (providerError) {
             if (controller.signal.aborted) throw providerError;
-            selected = await this.coreAssistantComplete({
-              userId,
-              userText,
-              history,
-              context,
-              memories,
+            this.dispatcher.resetTurn(turnId);
+            return {
+              status: "provider_unavailable",
+              message: "I couldn't reach a configured model provider, so I haven't generated a response or taken any action. Check the model connection in Settings and try again.",
               steps,
-              turnId,
-              onProgress,
-              signal: controller.signal
-            });
+              provider: "local"
+            };
           }
         }
         steps += 1;
@@ -342,100 +339,4 @@ export class AgentLoop {
     }
   }
 
-  async coreAssistantComplete({ userId, userText, history, context, memories = [], steps, turnId, onProgress, signal }) {
-    const cleanUser = String(userText || "").trim();
-    const lower = cleanUser.toLowerCase();
-
-    // 1. Image generation intent
-    const isImageCmd = lower.startsWith("/image");
-    const isImageIntent = isImageCmd || (
-      (lower.includes("generate") || lower.includes("create") || lower.includes("draw") || lower.includes("paint") || lower.includes("render")) &&
-      (lower.includes("image") || lower.includes("art") || lower.includes("picture") || lower.includes("illustration") || lower.includes("pixel"))
-    );
-
-    if (isImageIntent && this.imageGenerator) {
-      let prompt = cleanUser.replace(/^\/image\s*/i, "").trim();
-      if (!prompt || prompt.toLowerCase() === "generate visual asset" || prompt.toLowerCase() === "/image") {
-        prompt = "A tranquil pixel art garden with glowing purple amethyst crystals and quiet stars";
-      }
-      if (typeof onProgress === "function") {
-        onProgress({
-          type: "tool_start",
-          toolId: "generate_image",
-          toolName: "Generate visual asset",
-          action: "Generating visual asset: " + prompt.slice(0, 36) + "…",
-          isExternal: false,
-          steps: steps + 1
-        });
-      }
-      const image = await this.imageGenerator.generate({ prompt, style: "pixel-art" });
-      const msg = `Here is the visual asset you requested for **"${prompt}"**:\n\n![${image.prompt}](${image.url})\n\n*Created with Alfie Pixel Studio (${image.provider}) · 512×512 pixel-art.*`;
-      return {
-        endpoint: { id: "alfie-core-local", model: "alfie-core-engine", provider: "alfie-core" },
-        result: {
-          content: JSON.stringify({ type: "final", message: msg }),
-          raw: { usage: { prompt_tokens: Math.max(1, Math.round(cleanUser.length / 4)), completion_tokens: 80, total_tokens: 100 } }
-        }
-      };
-    }
-
-    // 2. Overview & priorities
-    if (lower.includes("overview") || lower.includes("priorities") || lower.includes("priority") || lower.includes("focus")) {
-      let memorySummary = "";
-      if (memories.length) {
-        const top = [...memories].sort((a, b) => (b.importance || 5) - (a.importance || 5)).slice(0, 3);
-        memorySummary = "\n\n**Key Context from Your Garden:**\n" +
-          top.map((m) => `• **${m.title || "Note"}** (Importance ${m.importance || 5}/10): ${m.text}`).join("\n");
-      }
-      const msg = `### Concise Overview of Current Priorities\n\nHere is a synthesized snapshot of your active context and workspace focus:${memorySummary}\n\n**Active Workflows:**\n• **Core Stability & Access**: Alfie Core is online and governing memories, tools, and visual assets.\n• **Memory Continuity**: Your Garden is ready to plant, update, or recall your thoughts and projects.\n• **Creative Generation**: Visual asset studio is active—use \`/image <prompt>\` anytime to generate art.\n\n*What would you like to advance next?*`;
-      return {
-        endpoint: { id: "alfie-core-local", model: "alfie-core-engine", provider: "alfie-core" },
-        result: {
-          content: JSON.stringify({ type: "final", message: msg }),
-          raw: { usage: { prompt_tokens: 20, completion_tokens: 90, total_tokens: 110 } }
-        }
-      };
-    }
-
-    // 3. Thinking through an idea
-    if (lower.includes("think through") || lower.includes("idea") || lower.includes("brainstorm") || lower.includes("developing")) {
-      const msg = `### Strategic Exploration Framework\n\nI’m ready to think this through with you. Let’s break it down methodically:\n\n1. **Core Problem & Value**:\n   • What specific tension or need does this solve?\n   • What does the simplest delightful outcome look like?\n\n2. **Key Assumptions & Variables**:\n   • What is the riskiest assumption that must be validated first?\n   • Are there technical, user, or architectural constraints?\n\n3. **Recommended First Step**:\n   • Frame the core premise in one or two sentences, and we can outline the key milestones together.`;
-      return {
-        endpoint: { id: "alfie-core-local", model: "alfie-core-engine", provider: "alfie-core" },
-        result: {
-          content: JSON.stringify({ type: "final", message: msg }),
-          raw: { usage: { prompt_tokens: 20, completion_tokens: 80, total_tokens: 100 } }
-        }
-      };
-    }
-
-    // 4. Review recent activity
-    if (lower.includes("summarise") || lower.includes("summarize") || lower.includes("recent activity") || lower.includes("pending") || lower.includes("actions")) {
-      let pendingCount = 0;
-      if (this.dispatcher?.pendingActionStore) {
-        try {
-          const pending = await this.dispatcher.pendingActionStore.list(userId);
-          pendingCount = pending.length;
-        } catch {}
-      }
-      const msg = `### System & Activity Review\n\n• **Pending Approvals**: ${pendingCount ? `${pendingCount} action(s) awaiting your decision in Tools & access` : "No actions pending approval. System is clear."}\n• **Memory Garden**: Context retrieval is active with ${memories.length} relevant memory record(s) indexed.\n• **Foundation**: Alfie Core service is healthy and connected to your private workspace.\n\nLet me know if you’d like to review permissions, plant a new memory, or generate an asset.`;
-      return {
-        endpoint: { id: "alfie-core-local", model: "alfie-core-engine", provider: "alfie-core" },
-        result: {
-          content: JSON.stringify({ type: "final", message: msg }),
-          raw: { usage: { prompt_tokens: 25, completion_tokens: 75, total_tokens: 100 } }
-        }
-      };
-    }
-
-    // 5. General conversational response
-    const msg = `Hello! I’m **Alfie**, your personal AI core. I'm connected and ready to assist you:\n\n• **Chat & Ideation**: Ask questions, think through concepts, and explore plans.\n• **Memory Garden**: Plant, recall, and manage important memories with full control.\n• **Visual Creation**: Type \`/image <prompt>\` or use the 🎨 button to create artwork.\n• **Tools & Governance**: Execute approved workflows with security guarantees.\n\nHow can I help you right now?`;
-    return {
-      endpoint: { id: "alfie-core-local", model: "alfie-core-engine", provider: "alfie-core" },
-      result: {
-        content: JSON.stringify({ type: "final", message: msg }),
-        raw: { usage: { prompt_tokens: 15, completion_tokens: 65, total_tokens: 80 } }
-      }
-    };
-  }
 }
