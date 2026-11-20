@@ -7,6 +7,7 @@ import { VramMonitor, validateRemoteVramUrl, parseRemoteVramPayload } from "../s
 import { createAlfieCoreServer } from "../src/server.mjs";
 import { createAlfieCoreClient } from "../src/client.mjs";
 import { createSignedIdentityAuth } from "../src/auth/signedIdentity.mjs";
+import { IdentityLinkStore } from "../src/auth/identityLinkStore.mjs";
 import { createAlfieInterfaceServer } from "../interface/src/server.mjs";
 import { InterfaceAuthStore } from "../interface/src/auth/store.mjs";
 
@@ -119,6 +120,7 @@ test("POST /api/telemetry/vram enforces bearer token auth and streams external P
   const coreServer = createAlfieCoreServer({
     serviceToken,
     identityAuth: createSignedIdentityAuth({ secret: standaloneSecret, providerId: "standalone-ui" }),
+    identityLinkStore: new IdentityLinkStore({ dataDirectory: path.join(tempDir, "core") }),
     dataDirectory: path.join(tempDir, "core"),
     petrioHarnessClient: { enabled: false },
     vramMonitor
