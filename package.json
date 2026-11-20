@@ -1,6 +1,6 @@
 {
   "name": "@alfie/core",
-  "version": "0.3.0",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "description": "Independent service foundation for Alfie.",
