@@ -20,4 +20,13 @@ This document summarizes the security controls enforced across the standalone Al
    - `interface/public/index.html` no longer prefills a default username or displays default credentials.
    - Stale `cookies.txt` artifacts are removed.
 6. **Static-shell-only service worker**
-   - `interface/public/sw.js` (`alfie-core-v2`) caches static UI assets only and never caches or fabricates `/api/*` responses.
+   - `interface/public/sw.js` caches static UI assets only and never caches or fabricates `/api/*` responses.
+
+## Forward-Looking Threat Model (Phases 2–4)
+
+Before enabling proactive watchers, external connectors, or background sub-agents, enforce these tracked controls:
+
+1. **Persistent trust & taint provenance (`docs/adr/ADR-003-persistent-taint-provenance.md`)** — External payloads stored in memories, ideas, watcher events, or sub-agent artifacts must carry durable `trust: "external_untrusted"` metadata so indirect prompt injection cannot be laundered across turns.
+2. **Connector SSRF & secret isolation (`docs/adr/ADR-002-deterministic-watchers-attention-budget.md`)** — Pull watchers and external connectors must reuse strict URL validation, private/metadata IP blocking, and server-side credential isolation completely inaccessible to LLM prompts.
+3. **Capability leases & turn provenance** — Time- and task-bounded permission scopes plus per-turn context provenance inspection ensure standing privileges stay minimal and privacy redactions remain auditable.
+

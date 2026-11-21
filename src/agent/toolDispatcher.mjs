@@ -22,6 +22,30 @@ function capOutput(value, maxChars = 2000) {
   return value;
 }
 
+function normaliseSimulation(raw, tool, preview) {
+  const base = raw && typeof raw === "object" ? raw : {};
+  const defaultRisk = tool.externalAction ? "high" : tool.risk === "write" ? "medium" : "low";
+  const riskLevel = ["low", "medium", "high"].includes(String(base.riskLevel || "").toLowerCase())
+    ? String(base.riskLevel).toLowerCase()
+    : defaultRisk;
+  const cleanList = (arr, fallback) => {
+    const items = Array.isArray(arr) ? arr.map((x) => String(x || "").trim().slice(0, 160)).filter(Boolean).slice(0, 6) : [];
+    return items.length ? items : fallback;
+  };
+  return {
+    summary: String(base.summary || preview || tool.name).slice(0, 280),
+    riskLevel,
+    affectedResource: String(base.affectedResource || `${tool.scope} (${tool.id})`).slice(0, 160),
+    dependencies: cleanList(base.dependencies, tool.network ? ["External network endpoint"] : ["Local per-user Core store"]),
+    expectedDowntime: String(base.expectedDowntime || "None").slice(0, 80),
+    backupRequired: Boolean(base.backupRequired),
+    rollbackPlan: String(base.rollbackPlan || (tool.externalAction
+      ? "External side effects may require manual reversal in the target service."
+      : "Review the resulting state in Alfie and revert or archive if needed.")).slice(0, 260),
+    validationSteps: cleanList(base.validationSteps, ["Verify returned tool result and audit log entry after commit."])
+  };
+}
+
 export class ToolDispatcher {
   constructor({
     registry,
@@ -112,7 +136,7 @@ export class ToolDispatcher {
     return dispatchStep(0);
   }
 
-  async dispatch({ userId, toolId, args = {}, turnId, contextMessages = [], signal }) {
+  async dispatch({ userId, toolId, args = {}, turnId, contextMessages = [], projectId = null, signal }) {
     const tool = this.registry.tools.get(toolId);
     if (!tool) throw Object.assign(new Error("Tool is not registered."), { status: 404 });
     const callHash = hashCall(toolId, args);
@@ -122,7 +146,7 @@ export class ToolDispatcher {
     }
     this.lastCallByTurn.set(turnId, callHash);
 
-    const scopes = await this.permissionStore.list(userId);
+    const scopes = await this.permissionStore.list(userId, { projectId });
     if (!scopes.includes(tool.scope)) throw Object.assign(new Error("This user has not granted the required permission."), { status: 403 });
     this.validate(tool, args);
 
@@ -134,8 +158,14 @@ export class ToolDispatcher {
       const preview = tool.approvalPreview
         ? String(await tool.approvalPreview(args, { userId, toolId })).slice(0, 500)
         : "";
+      let rawSim = null;
+      if (tool.dryRun) {
+        try { rawSim = await tool.dryRun(args, { userId, toolId, preview }); } catch { rawSim = null; }
+      }
+      const simulation = normaliseSimulation(rawSim, tool, preview);
       const pending = await this.pendingActionStore.create(userId, {
-        toolId, arguments: args, argumentsHash: callHash, risk: tool.risk, preview,
+        toolId, arguments: args, argumentsHash: callHash, risk: tool.risk, preview, simulation,
+        projectId: projectId || null,
         approvalGuard: tool.approvalGuard ? await tool.approvalGuard(args, { userId, toolId }) : null,
         reason: untrustedContext ? "External/untrusted content is present in this turn" : `Tool risk level: ${tool.risk}`
       });
@@ -144,10 +174,10 @@ export class ToolDispatcher {
         risk: tool.risk, status: "pending", argumentsHash: callHash,
         detail: "Approval requested; raw arguments intentionally excluded"
       });
-      return { status: "awaiting_user_approval", actionId: pending.id, toolId, risk: tool.risk, summary: tool.name, preview: pending.preview, arguments: pending.arguments, reason: pending.reason, expiresAt: new Date(pending.expiresAt).toISOString() };
+      return { status: "awaiting_user_approval", actionId: pending.id, toolId, risk: tool.risk, summary: tool.name, preview: pending.preview, simulation: pending.simulation, arguments: pending.arguments, reason: pending.reason, expiresAt: new Date(pending.expiresAt).toISOString() };
     }
 
-    const result = await this.executeWithMiddleware(tool, args, { userId, toolId, turnId }, signal);
+    const result = await this.executeWithMiddleware(tool, args, { userId, toolId, turnId, projectId }, signal);
     const bounded = capOutput(result, this.maxOutputChars);
     return { status: "completed", toolId, result: tool.trust === "external" || tool.untrustedOutput ? wrapUntrustedData(bounded, { maxChars: this.maxOutputChars }) : bounded };
   }
@@ -159,8 +189,8 @@ export class ToolDispatcher {
     if (hashCall(action.toolId, action.arguments) !== action.argumentsHash) {
       throw Object.assign(new Error("The pending action failed its integrity check."), { status: 409 });
     }
-    const scopes = await this.permissionStore.list(userId);
-    if (!scopes.includes(tool.scope)) throw Object.assign(new Error("Permission was revoked before this action was approved."), { status: 403 });
+    const scopes = await this.permissionStore.list(userId, { projectId: action.projectId || null });
+    if (!scopes.includes(tool.scope)) throw Object.assign(new Error("Permission was revoked or its lease expired before this action was approved."), { status: 403 });
     this.validate(tool, action.arguments);
     if (tool.approvalGuard || (action.approvalGuard !== null && action.approvalGuard !== undefined)) {
       let currentGuard;
@@ -201,6 +231,22 @@ export class ToolDispatcher {
     try {
       result = await this.executeWithMiddleware(tool, action.arguments, { userId, toolId: tool.id, approved: true, approvalGuard: action.approvalGuard }, AbortSignal.timeout(30_000));
     } catch (error) {
+      if (this.pendingActionStore.recordReceipt) {
+        try {
+          await this.pendingActionStore.recordReceipt(userId, {
+            actionId,
+            toolId: tool.id,
+            toolName: tool.name,
+            riskLevel: action.simulation?.riskLevel || "medium",
+            status: "failed",
+            summary: action.simulation?.summary || action.preview || tool.name,
+            affectedResource: action.simulation?.affectedResource || tool.scope,
+            rollbackPlan: action.simulation?.rollbackPlan || "",
+            verified: false,
+            verificationDetail: String(error.message || "Execution failed").slice(0, 220)
+          });
+        } catch {}
+      }
       if (this.auditStore) {
         try { await this.auditStore.record(userId, {
           event: "tool.approval_failed", actor: "alfie", toolId: tool.id, actionId,
@@ -209,6 +255,37 @@ export class ToolDispatcher {
         }); } catch {}
       }
       throw error;
+    }
+    let verification = { verified: true, detail: "Action committed cleanly." };
+    if (tool.verifyResult) {
+      try {
+        const checked = await tool.verifyResult(action.arguments, result, { userId, toolId: tool.id });
+        if (checked && typeof checked === "object") {
+          verification = {
+            verified: Boolean(checked.verified),
+            detail: String(checked.detail || (checked.verified ? "Post-execution check passed." : "Post-execution check flagged a mismatch.")).slice(0, 240)
+          };
+        }
+      } catch (err) {
+        verification = { verified: false, detail: `Verification check failed: ${String(err.message || "unknown error").slice(0, 180)}` };
+      }
+    }
+    let receipt = null;
+    if (this.pendingActionStore.recordReceipt) {
+      try {
+        receipt = await this.pendingActionStore.recordReceipt(userId, {
+          actionId,
+          toolId: tool.id,
+          toolName: tool.name,
+          riskLevel: action.simulation?.riskLevel || "medium",
+          status: "completed",
+          summary: action.simulation?.summary || action.preview || tool.name,
+          affectedResource: action.simulation?.affectedResource || tool.scope,
+          rollbackPlan: action.simulation?.rollbackPlan || "",
+          verified: verification.verified,
+          verificationDetail: verification.detail
+        });
+      } catch {}
     }
     if (this.auditStore) {
       try {
@@ -223,7 +300,7 @@ export class ToolDispatcher {
       }
     }
     const bounded = capOutput(result, this.maxOutputChars);
-    return { status: "completed", actionId, toolId: tool.id, result: tool.trust === "external" || tool.untrustedOutput ? wrapUntrustedData(bounded, { maxChars: this.maxOutputChars }) : bounded };
+    return { status: "completed", actionId, toolId: tool.id, receipt, result: tool.trust === "external" || tool.untrustedOutput ? wrapUntrustedData(bounded, { maxChars: this.maxOutputChars }) : bounded };
   }
 
   async reject(userId, actionId) {

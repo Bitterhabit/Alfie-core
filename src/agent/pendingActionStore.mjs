@@ -1,54 +1,37 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createHash, randomUUID } from "node:crypto";
-
-function userKey(userId) {
-  if (typeof userId !== "string" || !/^[a-zA-Z0-9._:@-]{1,128}$/.test(userId)) {
-    throw Object.assign(new Error("A verified user identity is required."), { status: 401 });
-  }
-  return createHash("sha256").update(userId).digest("hex");
-}
+import { randomUUID } from "node:crypto";
+import { safeUserKey, userDataFile, UserMutex, atomicWriteJson } from "../storage/userJsonStore.mjs";
 
 export class PendingActionStore {
   constructor({ dataDirectory = process.env.ALFIE_CORE_DATA_DIR || "/data", now = () => Date.now() } = {}) {
     this.dataDirectory = path.resolve(dataDirectory);
     this.now = now;
-    this.queues = new Map();
+    this.mutex = new UserMutex();
   }
 
-  fileFor(userId) { return path.join(this.dataDirectory, "users", userKey(userId), "pending-actions.json"); }
+  fileFor(userId) {
+    return userDataFile(this.dataDirectory, userId, "pending-actions.json");
+  }
 
   async exclusive(userId, operation) {
-    const key = this.fileFor(userId);
-    const previous = this.queues.get(key) || Promise.resolve();
-    const current = previous.then(operation, operation);
-    const queued = current.catch(() => {});
-    this.queues.set(key, queued);
-    try { return await current; }
-    finally { if (this.queues.get(key) === queued) this.queues.delete(key); }
+    return this.mutex.run(safeUserKey(userId), operation);
   }
 
   async load(userId) {
     try {
       const store = JSON.parse(await fs.readFile(this.fileFor(userId), "utf8"));
       if (store.schemaVersion !== 1 || store.ownerId !== userId || !Array.isArray(store.actions)) throw new Error("Pending action store failed integrity validation.");
+      if (!Array.isArray(store.receipts)) store.receipts = [];
       return store;
     } catch (error) {
-      if (error.code === "ENOENT") return { schemaVersion: 1, ownerId: userId, actions: [] };
+      if (error.code === "ENOENT") return { schemaVersion: 1, ownerId: userId, actions: [], receipts: [] };
       throw error;
     }
   }
 
   async save(userId, store) {
-    const file = this.fileFor(userId), dir = path.dirname(file);
-    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-    await fs.chmod(dir, 0o700);
-    const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
-    const handle = await fs.open(temp, "wx", 0o600);
-    try { await handle.writeFile(JSON.stringify(store), "utf8"); await handle.sync(); }
-    finally { await handle.close(); }
-    await fs.rename(temp, file);
-    await fs.chmod(file, 0o600);
+    await atomicWriteJson(this.fileFor(userId), store, { pretty: false });
   }
 
   async create(userId, action, ttlMs = 5 * 60 * 1000) {
@@ -60,6 +43,8 @@ export class PendingActionStore {
         id: randomUUID(), ownerId: userId, toolId: action.toolId, risk: action.risk || "write",
         arguments: action.arguments, argumentsHash: action.argumentsHash,
         preview: String(action.preview || "").slice(0, 500),
+        simulation: action.simulation && typeof action.simulation === "object" ? action.simulation : null,
+        projectId: typeof action.projectId === "string" && action.projectId ? action.projectId : null,
         approvalGuard: action.approvalGuard ?? null,
         reason: action.reason || "User approval required",
         createdAt: new Date(now).toISOString(), expiresAt: now + ttlMs,
@@ -98,5 +83,36 @@ export class PendingActionStore {
   async reject(userId, actionId) {
     const action = await this.take(userId, actionId);
     return { actionId: action.id, status: "rejected" };
+  }
+
+  async recordReceipt(userId, receipt = {}) {
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      const entry = {
+        id: randomUUID(),
+        actionId: String(receipt.actionId || "").slice(0, 64),
+        toolId: String(receipt.toolId || "").slice(0, 80),
+        toolName: String(receipt.toolName || receipt.toolId || "").slice(0, 100),
+        riskLevel: ["low", "medium", "high"].includes(receipt.riskLevel) ? receipt.riskLevel : "medium",
+        status: receipt.status === "failed" ? "failed" : "completed",
+        summary: String(receipt.summary || "").slice(0, 300),
+        affectedResource: String(receipt.affectedResource || "").slice(0, 160),
+        rollbackPlan: String(receipt.rollbackPlan || "").slice(0, 260),
+        verified: Boolean(receipt.verified),
+        verificationDetail: String(receipt.verificationDetail || "").slice(0, 260),
+        executedAt: new Date(this.now()).toISOString()
+      };
+      store.receipts = [entry, ...(Array.isArray(store.receipts) ? store.receipts : [])].slice(0, 100);
+      await this.save(userId, store);
+      return entry;
+    });
+  }
+
+  async listReceipts(userId, { limit = 25 } = {}) {
+    const cap = Math.max(1, Math.min(100, Number(limit) || 25));
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      return (Array.isArray(store.receipts) ? store.receipts : []).slice(0, cap);
+    });
   }
 }

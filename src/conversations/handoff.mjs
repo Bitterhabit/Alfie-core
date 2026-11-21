@@ -40,8 +40,19 @@ export function buildHandoffBrief(conversation, {
   sections.push(`# Context carried over from "${title}"`);
 
   const metaLines = [];
-  if (project?.name) metaLines.push(`- **Project**: ${project.name}`);
+  if (project?.name) metaLines.push(`- **Project**: ${project.name}${project.status ? ` (${project.status})` : ""}`);
+  if (project?.vision) metaLines.push(`- **Vision**: ${truncateText(project.vision, 280)}`);
   if (project?.description) metaLines.push(`- **Project notes**: ${truncateText(project.description, 320)}`);
+  if (Array.isArray(project?.nextActions) && project.nextActions.length) {
+    metaLines.push(`- **Next actions**: ${project.nextActions.slice(0, 4).map((item) => truncateText(item, 100)).join("; ")}`);
+  }
+  if (Array.isArray(project?.blockers) && project.blockers.length) {
+    metaLines.push(`- **Active blockers**: ${project.blockers.slice(0, 4).map((item) => truncateText(item, 100)).join("; ")}`);
+  }
+  if (Array.isArray(project?.decisions) && project.decisions.length) {
+    const recentDecisions = project.decisions.slice(-3).map((d) => truncateText(d.summary, 90)).join("; ");
+    metaLines.push(`- **Key decisions**: ${recentDecisions}`);
+  }
   metaLines.push(`- **Source conversation**: ${title} (${messages.length} message${messages.length === 1 ? "" : "s"})`);
   if (reason === "vram_threshold") {
     metaLines.push(`- **Handoff reason**: Started a fresh chat at high VRAM usage to keep the project responsive without losing context.`);

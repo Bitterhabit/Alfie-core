@@ -9,6 +9,22 @@ const state = {
   conversations: [],
   projects: [],
   selectedProjectId: "all",
+  workingMode: (() => { try { return localStorage.getItem("alfie:workingMode") || "companion"; } catch { return "companion"; } })(),
+  ideas: [],
+  ideaTags: [],
+  ideaStatusFilter: "all",
+  ideaProjectFilter: "all",
+  ideaTagFilter: "",
+  editingIdeaId: null,
+  memoryKindFilter: "all",
+  memoryIncludeArchived: false,
+  watchers: [],
+  watcherEvents: [],
+  watcherEventTierFilter: "all",
+  workflowProfile: null,
+  capsules: [],
+  activeCapsuleId: null,
+  receipts: [],
   vram: null,
   vramDismissedKey: null,
   vramLastAlerted: false,
@@ -780,6 +796,18 @@ document.addEventListener("click", (event) => {
     sendMessage(promptBtn.dataset.prompt);
     return;
   }
+  const ideaCmdBtn = event.target.closest("#idea-cmd-btn");
+  if (ideaCmdBtn) {
+    const input = $("#chat-form")?.elements?.message;
+    if (input) {
+      input.value = "/idea ";
+      input.focus();
+      if (typeof input.setSelectionRange === "function") input.setSelectionRange(input.value.length, input.value.length);
+      const suggestions = $("#composer-suggestions");
+      if (suggestions) suggestions.hidden = true;
+    }
+    return;
+  }
   const imgCmdBtn = event.target.closest("#image-cmd-btn");
   if (imgCmdBtn) {
     const input = $("#chat-form")?.elements?.message;
@@ -788,7 +816,7 @@ document.addEventListener("click", (event) => {
       input.focus();
       if (typeof input.setSelectionRange === "function") input.setSelectionRange(input.value.length, input.value.length);
       const suggestions = $("#composer-suggestions");
-      if (suggestions) suggestions.hidden = false;
+      if (suggestions) suggestions.hidden = true;
     }
     return;
   }
@@ -1008,15 +1036,19 @@ function setView(view) {
       section.hidden = section.id !== "view-" + view;
     }
   });
-  const titles = { chat: isChatUnlinked ? "Connect account" : "Chat", garden: "The Garden", tools: "Tools & access", settings: "Settings" };
+  const titles = { chat: isChatUnlinked ? "Connect account" : "Chat", ideas: "Ideas Vault", garden: "The Garden", tools: "Tools & access", settings: "Settings" };
   $("#view-title").textContent = titles[view] || "Alfie";
   const mobileHistory = $("#mobile-history-sheet");
   if (mobileHistory) mobileHistory.hidden = true;
+  if (view === "ideas") loadIdeas();
   if (view === "garden") loadMemories();
   if (view === "tools") loadToolsAndApprovals();
   if (view === "settings") {
     loadSettings();
     window.alfieTheme?._updateUI(window.alfieTheme.getTheme());
+    renderShortcutSettings?.();
+  } else {
+    cancelShortcutRecording?.();
   }
 }
 
@@ -1248,14 +1280,15 @@ $("#standalone-button").addEventListener("click", async () => {
 
 $("#link-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const button = event.currentTarget.querySelector("button");
+  const formEl = event.currentTarget;
+  const form = new FormData(formEl);
+  const button = formEl.querySelector("button");
   button.disabled = true;
   $("#link-error").textContent = "";
   try {
     await api("/api/auth/link", { method: "POST", body: JSON.stringify({ code: String(form.get("code") || "").trim().toUpperCase() }) });
     state.linked = true;
-    event.currentTarget.reset();
+    formEl.reset();
     toast("Your standalone interface is now linked to Petrio.");
     await refreshIdentity();
     await loadWorkspaceData();
@@ -1298,7 +1331,10 @@ function getProjectChatCount(projectId) {
 
 function syncChatContextBar() {
   const select = $("#chat-project-select");
+  const dossierBtn = $("#chat-project-dossier-btn");
+  const exportBtn = $("#export-chat-btn");
   const continueBtn = $("#continue-chat-btn");
+  let resolvedProject = null;
   if (select) {
     const activeProjectId = getConversationProjectId(state.activeConversation)
       || (state.selectedProjectId !== "all" && state.selectedProjectId !== "unassigned" ? state.selectedProjectId : "");
@@ -1313,10 +1349,22 @@ function syncChatContextBar() {
       opt.textContent = project.name;
       select.appendChild(opt);
     }
-    select.value = state.projects.some((p) => p.id === activeProjectId) ? activeProjectId : "";
+    resolvedProject = state.projects.find((p) => p.id === activeProjectId) || null;
+    select.value = resolvedProject ? resolvedProject.id : "";
+  }
+  if (dossierBtn) {
+    dossierBtn.hidden = !resolvedProject;
+    if (resolvedProject) {
+      dossierBtn.title = `Open Living Project Dossier for ${resolvedProject.name}`;
+      dossierBtn.setAttribute("aria-label", `Open dossier for ${resolvedProject.name}`);
+    }
+  }
+  const hasExportableContent = Boolean(state.messages.length > 0 || state.activeConversation?.handoffContext);
+  if (exportBtn) {
+    exportBtn.disabled = !hasExportableContent || state.conversationLoading;
   }
   if (continueBtn) {
-    const canContinue = Boolean(state.activeConversationId && (state.messages.length > 0 || state.activeConversation?.handoffContext));
+    const canContinue = Boolean(state.activeConversationId && hasExportableContent);
     continueBtn.disabled = !canContinue || state.sending || state.conversationLoading;
   }
 }
@@ -1455,11 +1503,91 @@ function renderProjectList(host) {
   }
 }
 
+function syncIdeaProjectOptions() {
+  const select = $("#idea-project-select");
+  if (select) {
+    const current = select.value;
+    select.replaceChildren();
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "Unlinked";
+    select.appendChild(none);
+    for (const project of state.projects) {
+      const opt = document.createElement("option");
+      opt.value = project.id;
+      opt.textContent = project.name;
+      select.appendChild(opt);
+    }
+    select.value = state.projects.some((p) => p.id === current) ? current : "";
+  }
+
+  const filterSelect = $("#idea-project-filter");
+  if (filterSelect) {
+    const currentFilter = state.ideaProjectFilter || "all";
+    filterSelect.replaceChildren();
+    const allOpt = document.createElement("option");
+    allOpt.value = "all";
+    allOpt.textContent = "All projects";
+    const unlinkedOpt = document.createElement("option");
+    unlinkedOpt.value = "unassigned";
+    unlinkedOpt.textContent = "Unlinked";
+    filterSelect.append(allOpt, unlinkedOpt);
+    for (const project of state.projects) {
+      const opt = document.createElement("option");
+      opt.value = project.id;
+      opt.textContent = project.name;
+      filterSelect.appendChild(opt);
+    }
+    const valid = currentFilter === "all" || currentFilter === "unassigned" || state.projects.some((p) => p.id === currentFilter);
+    state.ideaProjectFilter = valid ? currentFilter : "all";
+    filterSelect.value = state.ideaProjectFilter;
+  }
+
+  const leaseProject = $("#permission-lease-project");
+  if (leaseProject) {
+    const currentLeaseProj = leaseProject.value || "";
+    leaseProject.replaceChildren();
+    const allOpt = document.createElement("option");
+    allOpt.value = "";
+    allOpt.textContent = "All projects";
+    leaseProject.appendChild(allOpt);
+    for (const project of state.projects) {
+      const opt = document.createElement("option");
+      opt.value = project.id;
+      opt.textContent = project.name;
+      leaseProject.appendChild(opt);
+    }
+    leaseProject.value = state.projects.some((p) => p.id === currentLeaseProj) ? currentLeaseProj : "";
+  }
+
+  const capsuleProject = $("#capsule-project-select");
+  if (capsuleProject) {
+    const currentCapsuleProj = capsuleProject.value || "";
+    capsuleProject.replaceChildren();
+    const noneOpt = document.createElement("option");
+    noneOpt.value = "";
+    noneOpt.textContent = "No project";
+    capsuleProject.appendChild(noneOpt);
+    for (const project of state.projects) {
+      const opt = document.createElement("option");
+      opt.value = project.id;
+      opt.textContent = project.name;
+      capsuleProject.appendChild(opt);
+    }
+    capsuleProject.value = state.projects.some((p) => p.id === currentCapsuleProj) ? currentCapsuleProj : "";
+  }
+
+  if ($("#watcher-kind-select")?.value === "project_stall" && typeof renderWatcherConfigFields === "function") {
+    renderWatcherConfigFields();
+  }
+}
+
 function renderProjects() {
   renderProjectList($("#project-list"));
   renderProjectList($("#mobile-project-list"));
   syncNewChatButtonLabel();
   syncChatContextBar();
+  syncIdeaProjectOptions();
 }
 
 async function loadProjects() {
@@ -1482,6 +1610,13 @@ function setProjectModalColor(color) {
   });
 }
 
+function formatDecisionsForInput(decisions) {
+  if (!Array.isArray(decisions) || !decisions.length) return "";
+  return decisions.map((d) => (d.rationale ? `${d.summary} — ${d.rationale}` : d.summary)).join("\n");
+}
+
+let lastFocusBeforeProjectModal = null;
+
 function openProjectModal(project = null) {
   const modal = $("#project-modal");
   const form = $("#project-form");
@@ -1489,14 +1624,22 @@ function openProjectModal(project = null) {
   const submit = $("#project-submit-btn");
   const err = $("#project-form-error");
   if (!modal || !form) return;
+  lastFocusBeforeProjectModal = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   form.reset();
   if (err) err.textContent = "";
   form.elements.projectId.value = project?.id || "";
   form.elements.name.value = project?.name || "";
+  if (form.elements.status) form.elements.status.value = project?.status || "active";
+  if (form.elements.vision) form.elements.vision.value = project?.vision || "";
   form.elements.description.value = project?.description || "";
+  if (form.elements.architecture) form.elements.architecture.value = project?.architecture || "";
+  if (form.elements.nextActions) form.elements.nextActions.value = Array.isArray(project?.nextActions) ? project.nextActions.join("\n") : "";
+  if (form.elements.blockers) form.elements.blockers.value = Array.isArray(project?.blockers) ? project.blockers.join("\n") : "";
+  if (form.elements.decisions) form.elements.decisions.value = formatDecisionsForInput(project?.decisions);
+  if (form.elements.postponed) form.elements.postponed.value = Array.isArray(project?.postponed) ? project.postponed.join("\n") : "";
   setProjectModalColor(project?.color || "purple");
-  if (title) title.textContent = project ? "Edit project" : "New project";
-  if (submit) submit.textContent = project ? "Save changes" : "Create project";
+  if (title) title.textContent = project ? "Edit project dossier" : "New project";
+  if (submit) submit.textContent = project ? "Save dossier" : "Create project";
   modal.hidden = false;
   $("#mobile-history-sheet").hidden = true;
   $("#project-name-input")?.focus();
@@ -1504,7 +1647,12 @@ function openProjectModal(project = null) {
 
 function closeProjectModal() {
   const modal = $("#project-modal");
-  if (modal) modal.hidden = true;
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  if (lastFocusBeforeProjectModal && document.contains(lastFocusBeforeProjectModal)) {
+    try { lastFocusBeforeProjectModal.focus(); } catch {}
+  }
+  lastFocusBeforeProjectModal = null;
 }
 
 async function deleteProject(projectId, projectName) {
@@ -1512,10 +1660,11 @@ async function deleteProject(projectId, projectName) {
   try {
     await api("/api/core/projects/" + encodeURIComponent(projectId), { method: "DELETE", body: "{}" });
     if (state.selectedProjectId === projectId) state.selectedProjectId = "all";
+    if (state.ideaProjectFilter === projectId) state.ideaProjectFilter = "all";
     if (state.activeConversation?.projectId === projectId) {
       state.activeConversation = { ...state.activeConversation, projectId: null };
     }
-    await Promise.all([loadProjects(), loadConversations()]);
+    await Promise.all([loadProjects(), loadConversations(), loadIdeas()]);
     toast(`Deleted project "${projectName}".`);
   } catch (error) {
     toast(error.message);
@@ -1524,17 +1673,18 @@ async function deleteProject(projectId, projectName) {
 
 $("#new-project-btn")?.addEventListener("click", () => openProjectModal(null));
 $("#mobile-new-project-btn")?.addEventListener("click", () => openProjectModal(null));
+$("#chat-project-dossier-btn")?.addEventListener("click", () => {
+  const activeProjectId = $("#chat-project-select")?.value
+    || getConversationProjectId(state.activeConversation)
+    || (state.selectedProjectId !== "all" && state.selectedProjectId !== "unassigned" ? state.selectedProjectId : "");
+  const project = findProjectById(activeProjectId);
+  if (project) openProjectModal(project);
+});
 $("#project-modal-close")?.addEventListener("click", closeProjectModal);
 $("#project-cancel-btn")?.addEventListener("click", closeProjectModal);
 $("#project-modal")?.querySelector("[data-project-modal-close='backdrop']")?.addEventListener("click", closeProjectModal);
 document.querySelectorAll("#project-color-choices .project-color-btn").forEach((btn) => {
   btn.addEventListener("click", () => setProjectModalColor(btn.dataset.projectColor));
-});
-document.addEventListener("keydown", (event) => {
-  const modal = $("#project-modal");
-  if (event.key === "Escape" && modal && !modal.hidden) {
-    closeProjectModal();
-  }
 });
 
 $("#project-form")?.addEventListener("submit", async (event) => {
@@ -1542,7 +1692,14 @@ $("#project-form")?.addEventListener("submit", async (event) => {
   const form = event.currentTarget;
   const projectId = String(form.elements.projectId.value || "").trim();
   const name = String(form.elements.name.value || "").trim();
+  const status = String(form.elements.status?.value || "active").trim();
+  const vision = String(form.elements.vision?.value || "").trim();
   const description = String(form.elements.description.value || "").trim();
+  const architecture = String(form.elements.architecture?.value || "").trim();
+  const nextActions = String(form.elements.nextActions?.value || "");
+  const blockers = String(form.elements.blockers?.value || "");
+  const decisions = String(form.elements.decisions?.value || "");
+  const postponed = String(form.elements.postponed?.value || "");
   const err = $("#project-form-error");
   const submit = $("#project-submit-btn");
   if (err) err.textContent = "";
@@ -1550,18 +1707,30 @@ $("#project-form")?.addEventListener("submit", async (event) => {
     if (err) err.textContent = "Please enter a project name.";
     return;
   }
+  const payloadBody = {
+    name,
+    status,
+    vision,
+    description,
+    architecture,
+    nextActions,
+    blockers,
+    decisions,
+    postponed,
+    color: projectModalColor
+  };
   if (submit) submit.disabled = true;
   try {
     if (projectId) {
       await api("/api/core/projects/" + encodeURIComponent(projectId), {
         method: "PATCH",
-        body: JSON.stringify({ name, description, color: projectModalColor })
+        body: JSON.stringify(payloadBody)
       });
-      toast(`Updated project "${name}".`);
+      toast(`Updated project dossier "${name}".`);
     } else {
       const created = await api("/api/core/projects", {
         method: "POST",
-        body: JSON.stringify({ name, description, color: projectModalColor })
+        body: JSON.stringify(payloadBody)
       });
       if (created?.project?.id) state.selectedProjectId = created.project.id;
       toast(`Created project "${name}".`);
@@ -1978,6 +2147,52 @@ async function continueInNewChat({ reason = "context_handoff" } = {}) {
     syncChatContextBar();
   }
 }
+
+function exportCurrentConversationMarkdown() {
+  const hasContent = state.messages.length > 0 || Boolean(state.activeConversation?.handoffContext);
+  if (!hasContent) {
+    toast("No messages to export yet.");
+    return false;
+  }
+
+  const exporter = window.AlfieMarkdownExport;
+  const projectId = getConversationProjectId(state.activeConversation);
+  const project = projectId ? findProjectById(projectId) : null;
+  const exportedAt = new Date();
+
+  const markdown = exporter?.formatConversationMarkdown
+    ? exporter.formatConversationMarkdown({
+        conversation: state.activeConversation,
+        messages: state.messages,
+        project,
+        exportedAt
+      })
+    : `# ${state.activeConversation?.title || "Alfie Conversation"}\n\n` +
+      state.messages.map((m) => `## ${m.role === "user" ? "You" : "Alfie"}\n\n${m.content || ""}`).join("\n\n---\n\n") +
+      "\n";
+
+  const filename = exporter?.sanitizeExportFilename
+    ? exporter.sanitizeExportFilename(state.activeConversation?.title, exportedAt)
+    : "alfie-conversation.md";
+
+  const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+
+  toast(`Exported "${filename}".`, { durationMs: 2600 });
+  return true;
+}
+
+$("#export-chat-btn")?.addEventListener("click", () => {
+  exportCurrentConversationMarkdown();
+});
 
 $("#continue-chat-btn")?.addEventListener("click", () => {
   continueInNewChat({ reason: state.vram?.warning ? "vram_threshold" : "context_handoff" });
@@ -2687,7 +2902,13 @@ window.alfieCloudAgents = {
 };
 
 async function loadWorkspaceData() {
-  await Promise.all([loadProjects(), loadConversations(), loadCloudAgents()]);
+  await Promise.all([
+    loadProjects(),
+    loadConversations(),
+    loadCloudAgents(),
+    loadWorkflowProfile().catch(() => {}),
+    loadCapsules().catch(() => {})
+  ]);
   await refreshVramStatus();
   startVramPolling();
 }
@@ -3084,10 +3305,7 @@ function initImageLightbox() {
 
   document.addEventListener("keydown", (event) => {
     if (!lightboxState.open) return;
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closeImageLightbox();
-    } else if (event.key === "+" || event.key === "=") {
+    if (event.key === "+" || event.key === "=") {
       event.preventDefault();
       setLightboxZoom(lightboxState.zoom + LIGHTBOX_ZOOM_STEP);
     } else if (event.key === "-" || event.key === "_") {
@@ -3677,6 +3895,58 @@ function createReactionControls(message) {
   return container;
 }
 
+function createProvenanceDisclosure(provenance) {
+  if (!provenance || typeof provenance !== "object") return null;
+  const details = document.createElement("details");
+  details.className = "turn-provenance";
+
+  const summary = document.createElement("summary");
+  summary.className = "turn-provenance-summary";
+  const parts = ["Context & provenance"];
+  if (provenance.workingMode?.label) parts.push(provenance.workingMode.label);
+  if (provenance.project?.name) parts.push(`Project: ${provenance.project.name}`);
+  const memCount = Array.isArray(provenance.memoriesInjected) ? provenance.memoriesInjected.length : 0;
+  parts.push(`${memCount} ${memCount === 1 ? "memory" : "memories"}`);
+  if (provenance.tainted) parts.push("Untrusted input isolated");
+  summary.textContent = parts.join(" · ");
+
+  const body = document.createElement("div");
+  body.className = "turn-provenance-body";
+
+  const rows = [
+    ["Working mode", provenance.workingMode?.label || "Companion"],
+    ...(provenance.learningMode?.label ? [["Learning posture", provenance.learningMode.label]] : []),
+    ["Project dossier", provenance.project?.name ? `${provenance.project.name} (${provenance.project.status || "active"})` : "None attached"],
+    ["Memories injected", memCount ? provenance.memoriesInjected.map((m) => {
+      const kind = m.kind && m.kind !== "note" ? `${m.kind} · ` : "";
+      const trust = m.trust === "external_untrusted" ? " · untrusted" : "";
+      return `${m.title} (${kind}${m.importance}/10${trust})`;
+    }).join(" · ") : "None matched"],
+    ["Tools shortlisted", Array.isArray(provenance.toolsShortlisted) && provenance.toolsShortlisted.length ? provenance.toolsShortlisted.join(", ") : "None"],
+    ["Tools invoked", Array.isArray(provenance.toolsUsed) && provenance.toolsUsed.length ? provenance.toolsUsed.join(", ") : "None"],
+    ["Trust boundary", provenance.tainted ? "External/untrusted data present (write actions require approval)" : "Clean local turn"],
+    ["Privacy filter", provenance.privacyFiltered
+      ? (provenance.blockedCategories?.length ? `Cloud filter active · Blocked: ${provenance.blockedCategories.join(", ")}` : "Cloud filter active")
+      : "Local Core only"]
+  ];
+
+  for (const [k, v] of rows) {
+    const row = document.createElement("div");
+    row.className = "turn-provenance-row";
+    const keyEl = document.createElement("span");
+    keyEl.className = "turn-provenance-key";
+    keyEl.textContent = k;
+    const valEl = document.createElement("span");
+    valEl.className = "turn-provenance-val";
+    valEl.textContent = v;
+    row.append(keyEl, valEl);
+    body.appendChild(row);
+  }
+
+  details.append(summary, body);
+  return details;
+}
+
 function appendMessageElement(message) {
   const article = document.createElement("article");
   article.className = "message " + (message.role === "user" ? "user" : "assistant");
@@ -3698,13 +3968,17 @@ function appendMessageElement(message) {
   body.className = "message-body";
   renderMarkdown(body, message.content || "");
   if (message.role === "assistant" && message.content) {
-    attachCopyButtonToBody(body, message.content);
+    body.dataset.rawContent = String(message.content).trim();
   }
   article.append(header, body);
 
   if (message.role === "assistant") {
     const actions = createReactionControls(message);
     article.appendChild(actions);
+    if (message.provenance) {
+      const provEl = createProvenanceDisclosure(message.provenance);
+      if (provEl) article.appendChild(provEl);
+    }
   }
 
   $("#messages").appendChild(article);
@@ -3864,13 +4138,13 @@ function renderMessages() {
   scrollChatToBottom({ force: true });
 }
 
-async function persistMessage(role, content, conversationId = state.activeConversationId, metrics = null) {
+async function persistMessage(role, content, conversationId = state.activeConversationId, metrics = null, provenance = null) {
   const payload = await api("/api/core/conversations/" + encodeURIComponent(conversationId) + "/messages", {
     method: "POST",
-    body: JSON.stringify({ role, content, ...(metrics ? { metrics } : {}) })
+    body: JSON.stringify({ role, content, ...(metrics ? { metrics } : {}), ...(provenance ? { provenance } : {}) })
   });
   if (conversationId === state.activeConversationId) {
-    state.messages.push(payload.message || { role, content, ...(metrics ? { metrics } : {}) });
+    state.messages.push(payload.message || { role, content, ...(metrics ? { metrics } : {}), ...(provenance ? { provenance } : {}) });
     syncChatContextBar();
   }
   return payload.message;
@@ -3880,6 +4154,47 @@ async function sendMessage(rawText) {
   const content = String(rawText || "").trim();
   if (!content || state.sending || !state.linked) return;
   if (state.conversationLoading) { toast("Wait for the selected conversation to finish loading."); return; }
+
+  // Frictionless Ideas Vault capture directly from chat without derailing the active conversation
+  if (/^\/idea(?:\s|$)/i.test(content)) {
+    const ideaText = content.replace(/^\/idea\s*/i, "").trim();
+    const form = $("#chat-form");
+    const input = form?.elements?.message;
+    if (!ideaText) {
+      toast("Type /idea followed by your thought to park it in the Ideas Vault.");
+      if (input) {
+        input.value = "/idea ";
+        input.focus();
+      }
+      return;
+    }
+    const activeProjectId = getConversationProjectId(state.activeConversation) || (state.selectedProjectId !== "all" && state.selectedProjectId !== "unassigned" ? state.selectedProjectId : null);
+    const liveConv = (state.conversations || []).find((c) => c.id === state.activeConversation?.id) || state.activeConversation;
+    const sourceContext = liveConv?.title && liveConv.title !== "New conversation"
+      ? `Chat "${liveConv.title}"`
+      : "Quick chat command";
+    try {
+      const splitMatch = /\s(?:—|--)\s/.exec(ideaText);
+      const title = (splitMatch && splitMatch.index > 0 ? ideaText.slice(0, splitMatch.index) : ideaText).trim().slice(0, 160);
+      const body = splitMatch && splitMatch.index > 0 ? ideaText.slice(splitMatch.index + splitMatch[0].length).trim() : "";
+      const created = await api("/api/core/ideas", {
+        method: "POST",
+        body: JSON.stringify({ title, body, projectId: activeProjectId, sourceContext, status: "inbox", priority: "medium" })
+      });
+      if (input) {
+        input.value = "";
+        input.style.height = "";
+      }
+      const tags = Array.isArray(created?.idea?.tags) ? created.idea.tags : [];
+      const tagSuffix = tags.length ? ` (${tags.slice(0, 3).map((t) => "#" + t).join(" ")})` : "";
+      toast(`Squirrelled "${title.slice(0, 48)}${title.length > 48 ? "…" : ""}"${tagSuffix} into Ideas Vault.`);
+      window.alfieSoul?.pulse("completed", 1500, "idle", "purple");
+    } catch (error) {
+      toast(error.message || "Could not save idea.");
+    }
+    return;
+  }
+
   state.sending = true;
   const form = $("#chat-form");
   const input = form.elements.message;
@@ -3922,7 +4237,7 @@ async function sendMessage(rawText) {
 
       const assistantText = `Here is the visual asset you requested for **"${promptText}"**:\n\n![${imgPayload.image.prompt}](${imgPayload.image.url})\n\n*Created with Alfie Pixel Studio (${imgPayload.image.provider}) · 512×512 pixel-art.*`;
       renderMarkdown(assistantBody, assistantText);
-      attachCopyButtonToBody(assistantBody, assistantText);
+      assistantBody.dataset.rawContent = assistantText.trim();
 
       const elapsedMs = Date.now() - sendStart;
       const metrics = { latencyMs: elapsedMs, completionTokens: 60, totalTokens: 80, model: "alfie-pixel-studio" };
@@ -3967,11 +4282,13 @@ async function sendMessage(rawText) {
       ...(reaction ? { reaction } : {})
     }));
     outgoingMessages.push(...recentSlice);
-    const activeProject = findProjectById(getConversationProjectId(state.activeConversation));
+    const activeProjectId = getConversationProjectId(state.activeConversation);
+    const activeProject = findProjectById(activeProjectId);
     const dashboardState = activeProject?.description
       ? { attachedContext: `Project: ${activeProject.name}\n${activeProject.description}` }
       : {};
     const selectedAgentProvider = $("#agent-provider")?.value || state.selectedAgentProvider || "local";
+    const workingMode = $("#working-mode-select")?.value || state.workingMode || "companion";
     const response = await fetch("/api/core/chat/stream", {
       method: "POST",
       credentials: "same-origin",
@@ -3979,6 +4296,8 @@ async function sendMessage(rawText) {
       body: JSON.stringify({
         messages: outgoingMessages,
         mode: $("#model-mode").value,
+        workingMode,
+        projectId: activeProject?.id || null,
         agentProvider: selectedAgentProvider,
         dashboardState
       })
@@ -4104,8 +4423,9 @@ async function sendMessage(rawText) {
     if (finalEvent?.status === "awaiting_user_approval") {
       assistantText = assistantText || "This action is ready for your approval. Open Tools & access to review it.";
     }
-    renderMarkdown(assistantBody, assistantText || "I couldn't produce a response.");
-    attachCopyButtonToBody(assistantBody, assistantText || "I couldn't produce a response.");
+    const finalText = assistantText || "I couldn't produce a response.";
+    renderMarkdown(assistantBody, finalText);
+    assistantBody.dataset.rawContent = finalText.trim();
     if (finalEvent?.status === "awaiting_user_approval" && finalEvent.actionId) {
       const approval = document.createElement("section");
       approval.className = "chat-approval-card";
@@ -4151,10 +4471,16 @@ async function sendMessage(rawText) {
       if (badge) header.appendChild(badge);
     }
 
-    const savedMessage = await persistMessage("assistant", assistantText || assistantBody.textContent, conversationId, metrics);
+    const provenance = finalEvent?.provenance || null;
+    const savedMessage = await persistMessage("assistant", assistantText || assistantBody.textContent, conversationId, metrics, provenance);
     if (messageArticle) {
       messageArticle.querySelector(".message-actions")?.remove();
-      messageArticle.appendChild(createReactionControls(savedMessage || { role: "assistant", content: assistantText, metrics }));
+      messageArticle.appendChild(createReactionControls(savedMessage || { role: "assistant", content: assistantText, metrics, provenance }));
+      messageArticle.querySelector(".turn-provenance")?.remove();
+      if (provenance) {
+        const provEl = createProvenanceDisclosure(provenance);
+        if (provEl) messageArticle.appendChild(provEl);
+      }
     }
     await loadConversations();
     await refreshVramStatus();
@@ -4177,7 +4503,7 @@ async function sendMessage(rawText) {
       assistantBody.querySelector(".streaming-cursor")?.remove();
       const errText = "I couldn't complete that response. " + error.message;
       renderMarkdown(assistantBody, errText);
-      attachCopyButtonToBody(assistantBody, errText);
+      assistantBody.dataset.rawContent = errText.trim();
       const messageArticle = assistantBody.closest(".message");
       if (messageArticle) {
         messageArticle.querySelector(".message-actions")?.remove();
@@ -4625,6 +4951,46 @@ composerInput.addEventListener("blur", () => {
     window.alfieSoul?.setAnimationState("idle");
   }
 });
+function getVisibleSlashSuggestions() {
+  const suggestions = $("#composer-suggestions");
+  if (!suggestions || suggestions.hidden) return [];
+  return [...suggestions.querySelectorAll(".composer-suggestion-item")].filter((btn) => !btn.hidden);
+}
+
+function updateSlashSuggestions(rawValue) {
+  const suggestions = $("#composer-suggestions");
+  if (!suggestions) return;
+  const val = String(rawValue || "").trim();
+  const items = [...suggestions.querySelectorAll(".composer-suggestion-item")];
+  if (!val.startsWith("/") || val.includes(" ")) {
+    suggestions.hidden = true;
+    items.forEach((btn) => {
+      btn.hidden = false;
+      btn.classList.remove("is-active");
+    });
+    return;
+  }
+  const needle = val.toLowerCase();
+  let visibleCount = 0;
+  let firstVisible = null;
+  for (const btn of items) {
+    const cmd = String(btn.dataset.cmd || "").trim().toLowerCase();
+    const matches = cmd.startsWith(needle);
+    btn.hidden = !matches;
+    btn.classList.remove("is-active");
+    if (matches) {
+      if (!firstVisible) firstVisible = btn;
+      visibleCount += 1;
+    }
+  }
+  if (visibleCount > 0 && firstVisible) {
+    firstVisible.classList.add("is-active");
+    suggestions.hidden = false;
+  } else {
+    suggestions.hidden = true;
+  }
+}
+
 composerInput.addEventListener("input", () => {
   composerInput.style.height = "auto";
   composerInput.style.height = Math.min(composerInput.scrollHeight, 180) + "px";
@@ -4633,28 +4999,25 @@ composerInput.addEventListener("input", () => {
   } else if (!composerInput.value.trim().length && window.alfieSoul?.getAnimationState() === "listening") {
     window.alfieSoul?.setAnimationState("idle");
   }
-  const suggestions = $("#composer-suggestions");
-  if (suggestions) {
-    const val = composerInput.value.trim();
-    if (val.startsWith("/") && !val.includes(" ")) {
-      suggestions.hidden = false;
-    } else {
-      suggestions.hidden = true;
-    }
-  }
+  updateSlashSuggestions(composerInput.value);
 });
 composerInput.addEventListener("keydown", (event) => {
   const suggestions = $("#composer-suggestions");
-  if (event.key === "Tab" && suggestions && !suggestions.hidden) {
+  const visibleItems = getVisibleSlashSuggestions();
+  if (visibleItems.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
     event.preventDefault();
-    composerInput.value = "/image ";
-    suggestions.hidden = true;
-    composerInput.focus();
+    const currentIdx = visibleItems.findIndex((btn) => btn.classList.contains("is-active"));
+    const delta = event.key === "ArrowDown" ? 1 : -1;
+    const nextIdx = (currentIdx + delta + visibleItems.length) % visibleItems.length;
+    visibleItems.forEach((btn, idx) => btn.classList.toggle("is-active", idx === nextIdx));
     return;
   }
-  if (event.key === "Escape" && suggestions && !suggestions.hidden) {
+  if (event.key === "Tab" && visibleItems.length) {
     event.preventDefault();
-    suggestions.hidden = true;
+    const active = visibleItems.find((btn) => btn.classList.contains("is-active")) || visibleItems[0];
+    composerInput.value = active?.dataset?.cmd || "/idea ";
+    if (suggestions) suggestions.hidden = true;
+    composerInput.focus();
     return;
   }
   if (event.key === "Enter" && !event.shiftKey) {
@@ -4663,6 +5026,602 @@ composerInput.addEventListener("keydown", (event) => {
     $("#chat-form").requestSubmit();
   }
 });
+
+let activeShortcutBindings = null;
+let recordingShortcutAction = null;
+
+function getShortcutsLib() {
+  return typeof window !== "undefined" ? window.AlfieShortcuts : null;
+}
+
+function getDefaultShortcutBindingsMap() {
+  const lib = getShortcutsLib();
+  if (lib?.DEFAULT_SHORTCUT_BINDINGS) {
+    return lib.normalizeShortcutBindings(lib.DEFAULT_SHORTCUT_BINDINGS);
+  }
+  return {
+    focus_composer: { key: "k", ctrl: true, shift: false, alt: false },
+    close_modals: { key: "Escape", ctrl: false, shift: false, alt: false },
+    cycle_soul_mood: { key: "l", ctrl: true, shift: true, alt: false }
+  };
+}
+
+function loadShortcutBindings() {
+  const lib = getShortcutsLib();
+  const storageKey = lib?.SHORTCUT_STORAGE_KEY || "alfie_keyboard_shortcuts_v1";
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return lib?.normalizeShortcutBindings
+        ? lib.normalizeShortcutBindings(parsed)
+        : getDefaultShortcutBindingsMap();
+    }
+  } catch {}
+  return getDefaultShortcutBindingsMap();
+}
+
+function saveShortcutBindings(bindings) {
+  const lib = getShortcutsLib();
+  const storageKey = lib?.SHORTCUT_STORAGE_KEY || "alfie_keyboard_shortcuts_v1";
+  activeShortcutBindings = lib?.normalizeShortcutBindings
+    ? lib.normalizeShortcutBindings(bindings)
+    : bindings;
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(activeShortcutBindings));
+  } catch {}
+  syncShortcutHints();
+  renderShortcutSettings();
+  renderShortcutsHelpModal();
+}
+
+function getActiveShortcutBindings() {
+  if (!activeShortcutBindings) {
+    activeShortcutBindings = loadShortcutBindings();
+  }
+  return activeShortcutBindings;
+}
+
+function formatBindingCombo(binding) {
+  const lib = getShortcutsLib();
+  if (lib?.formatShortcutBinding) return lib.formatShortcutBinding(binding);
+  return binding?.key || "";
+}
+
+function formatBindingKeysList(binding) {
+  const lib = getShortcutsLib();
+  if (lib?.formatShortcutKeys) return lib.formatShortcutKeys(binding);
+  return [binding?.key || ""];
+}
+
+function createShortcutKbdGroup(keys, { separator = "+" } = {}) {
+  const group = document.createElement("span");
+  group.className = "shortcut-keys-group";
+  keys.forEach((token, idx) => {
+    if (idx > 0 && separator) {
+      const sep = document.createElement("span");
+      sep.className = "shortcut-kbd-plus";
+      sep.textContent = separator;
+      sep.setAttribute("aria-hidden", "true");
+      group.appendChild(sep);
+    }
+    const kbd = document.createElement("kbd");
+    kbd.className = "shortcut-kbd";
+    kbd.textContent = token;
+    group.appendChild(kbd);
+  });
+  return group;
+}
+
+function syncShortcutHints() {
+  const lib = getShortcutsLib();
+  const bindings = getActiveShortcutBindings();
+  const focusCombo = formatBindingCombo(bindings.focus_composer);
+  const closeCombo = formatBindingCombo(bindings.close_modals);
+  const moodCombo = formatBindingCombo(bindings.cycle_soul_mood);
+
+  if (composerInput) {
+    composerInput.placeholder = `Message Alfie, /idea <thought>, or /image <prompt>… (${focusCombo})`;
+    const ariaFocus = lib?.formatAriaKeyshortcuts ? lib.formatAriaKeyshortcuts(bindings.focus_composer) : "Control+K Meta+K";
+    if (ariaFocus) composerInput.setAttribute("aria-keyshortcuts", ariaFocus);
+  }
+
+  const ariaMood = lib?.formatAriaKeyshortcuts ? lib.formatAriaKeyshortcuts(bindings.cycle_soul_mood) : "Control+Shift+L Meta+Shift+L";
+  document.querySelectorAll("[data-soul]").forEach((el) => {
+    el.setAttribute("title", `Alfie's Soul — click or press ${moodCombo} to cycle mood`);
+    if (ariaMood) el.setAttribute("aria-keyshortcuts", ariaMood);
+  });
+
+  const lightboxCloseBtn = $("#lightbox-close");
+  if (lightboxCloseBtn) {
+    lightboxCloseBtn.setAttribute("title", `Close (${closeCombo})`);
+  }
+  const lightboxFooterSpan = document.querySelector("#image-lightbox .lightbox-footer span");
+  if (lightboxFooterSpan) {
+    lightboxFooterSpan.textContent = `Click or scroll to zoom · Drag to pan when zoomed · ${closeCombo} to close`;
+  }
+}
+
+function setShortcutSettingsStatus(message = "", tone = "neutral") {
+  const statusEl = $("#settings-shortcuts-status");
+  if (!statusEl) return;
+  statusEl.textContent = message;
+  statusEl.classList.toggle("is-error", tone === "error");
+  statusEl.classList.toggle("is-success", tone === "success");
+}
+
+function cancelShortcutRecording(statusMessage = "") {
+  if (!recordingShortcutAction) return;
+  recordingShortcutAction = null;
+  renderShortcutSettings();
+  if (statusMessage) {
+    setShortcutSettingsStatus(statusMessage, "neutral");
+  }
+}
+
+function startShortcutRecording(action) {
+  if (recordingShortcutAction === action) {
+    cancelShortcutRecording("Rebinding canceled.");
+    return;
+  }
+  recordingShortcutAction = action;
+  renderShortcutSettings();
+  const lib = getShortcutsLib();
+  const meta = (lib?.GLOBAL_SHORTCUTS || []).find((item) => item.action === action);
+  const name = meta?.label || action;
+  const cancelHint = action === "close_modals"
+    ? "Press your desired key or combination (click Cancel to abort)."
+    : "Press your desired key combination (press Esc or click Cancel to abort).";
+  setShortcutSettingsStatus(`Listening for "${name}"… ${cancelHint}`, "neutral");
+}
+
+function resetSingleShortcut(action) {
+  const lib = getShortcutsLib();
+  const defaults = getDefaultShortcutBindingsMap();
+  const current = { ...getActiveShortcutBindings() };
+  const targetDefault = defaults[action];
+  if (!targetDefault) return;
+
+  const conflictAction = lib?.findShortcutConflict
+    ? lib.findShortcutConflict(current, action, targetDefault)
+    : null;
+  if (conflictAction) {
+    const conflictMeta = (lib?.GLOBAL_SHORTCUTS || []).find((item) => item.action === conflictAction);
+    setShortcutSettingsStatus(
+      `Cannot reset to ${formatBindingCombo(targetDefault)} because "${conflictMeta?.label || conflictAction}" is currently using it. Rebind or reset that action first.`,
+      "error"
+    );
+    return;
+  }
+
+  recordingShortcutAction = null;
+  current[action] = { ...targetDefault };
+  saveShortcutBindings(current);
+  const meta = (lib?.GLOBAL_SHORTCUTS || []).find((item) => item.action === action);
+  setShortcutSettingsStatus(`Reset "${meta?.label || action}" to ${formatBindingCombo(targetDefault)}.`, "success");
+  toast(`Reset ${meta?.label || action} to ${formatBindingCombo(targetDefault)}.`, { durationMs: 2200 });
+}
+
+function resetAllShortcuts() {
+  recordingShortcutAction = null;
+  saveShortcutBindings(getDefaultShortcutBindingsMap());
+  setShortcutSettingsStatus("All keyboard shortcuts restored to defaults (Ctrl+K, Esc, Ctrl+Shift+L).", "success");
+  toast("Keyboard shortcuts reset to defaults.", { durationMs: 2200 });
+}
+
+function renderShortcutSettings() {
+  const host = $("#settings-shortcuts-list");
+  if (!host) return;
+  const lib = getShortcutsLib();
+  const bindings = getActiveShortcutBindings();
+  const defaults = getDefaultShortcutBindingsMap();
+  const items = lib?.GLOBAL_SHORTCUTS || [
+    { action: "focus_composer", label: "Focus chat composer", description: "Jump straight to the message input from anywhere in the workspace." },
+    { action: "close_modals", label: "Close open modals", description: "Dismiss open dialogs, image lightbox, drawers, or slash suggestions." },
+    { action: "cycle_soul_mood", label: "Cycle Alfie Soul moods", description: "Rotate Alfie's Soul between Work, Good, Alert, and Thinking." }
+  ];
+
+  host.replaceChildren();
+  let anyCustomized = false;
+
+  for (const item of items) {
+    const currentBinding = bindings[item.action] || defaults[item.action];
+    const defaultBinding = defaults[item.action];
+    const isCustom = lib?.bindingsEqual
+      ? !lib.bindingsEqual(currentBinding, defaultBinding)
+      : false;
+    if (isCustom) anyCustomized = true;
+    const isRecording = recordingShortcutAction === item.action;
+
+    const row = document.createElement("div");
+    row.className = "shortcut-setting-row" + (isRecording ? " is-recording" : "");
+    row.setAttribute("role", "listitem");
+    row.dataset.shortcutAction = item.action;
+
+    const info = document.createElement("div");
+    info.className = "shortcut-row-info";
+    const titleLine = document.createElement("div");
+    titleLine.className = "shortcut-row-title-line";
+    const title = document.createElement("span");
+    title.className = "shortcut-row-title";
+    title.textContent = item.label;
+    titleLine.appendChild(title);
+    if (isCustom) {
+      const badge = document.createElement("span");
+      badge.className = "shortcut-custom-tag";
+      badge.textContent = "Custom";
+      titleLine.appendChild(badge);
+    }
+    const desc = document.createElement("p");
+    desc.className = "shortcut-row-desc";
+    desc.textContent = item.description;
+    info.append(titleLine, desc);
+
+    const controls = document.createElement("div");
+    controls.className = "shortcut-row-controls";
+
+    if (isRecording) {
+      const prompt = document.createElement("span");
+      prompt.className = "shortcut-recording-prompt";
+      prompt.setAttribute("aria-live", "polite");
+      const dot = document.createElement("span");
+      dot.className = "shortcut-recording-dot";
+      dot.setAttribute("aria-hidden", "true");
+      const text = document.createElement("span");
+      text.textContent = "Listening… press keys";
+      prompt.append(dot, text);
+      controls.appendChild(prompt);
+    } else {
+      controls.appendChild(createShortcutKbdGroup(formatBindingKeysList(currentBinding)));
+    }
+
+    const btnGroup = document.createElement("div");
+    btnGroup.className = "shortcut-row-actions";
+
+    const rebindBtn = document.createElement("button");
+    rebindBtn.type = "button";
+    rebindBtn.className = "secondary-button shortcut-rebind-btn" + (isRecording ? " is-recording" : "");
+    rebindBtn.dataset.rebindAction = item.action;
+    rebindBtn.textContent = isRecording ? "Cancel" : "Rebind";
+    rebindBtn.setAttribute("aria-label", isRecording ? `Cancel rebinding ${item.label}` : `Rebind ${item.label}`);
+    rebindBtn.addEventListener("click", () => startShortcutRecording(item.action));
+
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.className = "secondary-button shortcut-reset-btn";
+    resetBtn.dataset.resetAction = item.action;
+    resetBtn.textContent = "Reset";
+    resetBtn.disabled = !isCustom;
+    resetBtn.setAttribute("aria-label", `Reset ${item.label} to default`);
+    resetBtn.addEventListener("click", () => resetSingleShortcut(item.action));
+
+    btnGroup.append(rebindBtn, resetBtn);
+    controls.appendChild(btnGroup);
+    row.append(info, controls);
+    host.appendChild(row);
+  }
+
+  const resetAllBtn = $("#shortcuts-reset-all-btn");
+  if (resetAllBtn) {
+    resetAllBtn.disabled = !anyCustomized;
+  }
+}
+
+function renderShortcutsHelpModal() {
+  const customHost = $("#shortcuts-help-custom-list");
+  const builtinHost = $("#shortcuts-help-builtin-list");
+  if (!customHost || !builtinHost) return;
+
+  const lib = getShortcutsLib();
+  const bindings = getActiveShortcutBindings();
+  const defaults = getDefaultShortcutBindingsMap();
+  const customItems = lib?.GLOBAL_SHORTCUTS || [];
+  const builtinItems = lib?.BUILTIN_REFERENCE_SHORTCUTS || [];
+
+  customHost.replaceChildren();
+  for (const item of customItems) {
+    const binding = bindings[item.action] || defaults[item.action];
+    const isCustom = lib?.bindingsEqual ? !lib.bindingsEqual(binding, defaults[item.action]) : false;
+
+    const row = document.createElement("div");
+    row.className = "shortcuts-help-row";
+    row.setAttribute("role", "listitem");
+    row.dataset.helpShortcutAction = item.action;
+
+    const copy = document.createElement("div");
+    copy.className = "shortcuts-help-row-copy";
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "shortcut-row-title-line";
+    const strong = document.createElement("strong");
+    strong.textContent = item.label;
+    titleWrap.appendChild(strong);
+    if (isCustom) {
+      const tag = document.createElement("span");
+      tag.className = "shortcut-custom-tag";
+      tag.textContent = "Custom";
+      titleWrap.appendChild(tag);
+    }
+    const span = document.createElement("span");
+    span.textContent = item.description;
+    copy.append(titleWrap, span);
+
+    row.append(copy, createShortcutKbdGroup(formatBindingKeysList(binding)));
+    customHost.appendChild(row);
+  }
+
+  builtinHost.replaceChildren();
+  for (const item of builtinItems) {
+    const row = document.createElement("div");
+    row.className = "shortcuts-help-row";
+    row.setAttribute("role", "listitem");
+
+    const copy = document.createElement("div");
+    copy.className = "shortcuts-help-row-copy";
+    const strong = document.createElement("strong");
+    strong.textContent = item.label;
+    const span = document.createElement("span");
+    span.textContent = item.description;
+    copy.append(strong, span);
+
+    const separator = item.id === "lightbox_zoom" ? "/" : "+";
+    row.append(copy, createShortcutKbdGroup(item.keys, { separator }));
+    builtinHost.appendChild(row);
+  }
+}
+
+let lastFocusBeforeShortcutsModal = null;
+
+function openShortcutsHelpModal() {
+  const modal = $("#shortcuts-help-modal");
+  if (!modal) return;
+  cancelShortcutRecording();
+  renderShortcutsHelpModal();
+  lastFocusBeforeShortcutsModal = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  modal.hidden = false;
+  $("#shortcuts-help-close")?.focus();
+}
+
+function closeShortcutsHelpModal() {
+  const modal = $("#shortcuts-help-modal");
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  if (lastFocusBeforeShortcutsModal && document.contains(lastFocusBeforeShortcutsModal)) {
+    try { lastFocusBeforeShortcutsModal.focus(); } catch {}
+  }
+  lastFocusBeforeShortcutsModal = null;
+}
+
+function isEditableKeyboardTarget(target) {
+  if (!target || !(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
+function closeAnyOpenModal() {
+  const shortcutsModal = $("#shortcuts-help-modal");
+  if (shortcutsModal && !shortcutsModal.hidden) {
+    closeShortcutsHelpModal();
+    return true;
+  }
+  if (lightboxState.open) {
+    closeImageLightbox();
+    return true;
+  }
+  const projectModal = $("#project-modal");
+  if (projectModal && !projectModal.hidden) {
+    closeProjectModal();
+    return true;
+  }
+  const mobileHistorySheet = $("#mobile-history-sheet");
+  if (mobileHistorySheet && !mobileHistorySheet.hidden) {
+    mobileHistorySheet.hidden = true;
+    return true;
+  }
+  const cloudPrivacyDrawer = $("#cloud-privacy-drawer");
+  if (cloudPrivacyDrawer && !cloudPrivacyDrawer.hidden) {
+    cloudPrivacyDrawer.hidden = true;
+    $("#cloud-privacy-toggle-btn")?.setAttribute("aria-expanded", "false");
+    return true;
+  }
+  const suggestions = $("#composer-suggestions");
+  if (suggestions && !suggestions.hidden) {
+    suggestions.hidden = true;
+    return true;
+  }
+  const openDialog = document.querySelector('[role="dialog"]:not([hidden])');
+  if (openDialog) {
+    openDialog.hidden = true;
+    return true;
+  }
+  return false;
+}
+
+function focusComposerFromShortcut() {
+  const appShell = $("#app-shell");
+  if (!appShell || appShell.hidden || !state.linked) return false;
+  closeShortcutsHelpModal();
+  if (lightboxState.open) closeImageLightbox();
+  const projectModal = $("#project-modal");
+  if (projectModal && !projectModal.hidden) closeProjectModal();
+  const mobileHistorySheet = $("#mobile-history-sheet");
+  if (mobileHistorySheet && !mobileHistorySheet.hidden) mobileHistorySheet.hidden = true;
+  if (state.view !== "chat") {
+    setView("chat");
+  }
+  if (!composerInput || composerInput.disabled) return false;
+  composerInput.focus();
+  const endPos = composerInput.value.length;
+  try {
+    composerInput.setSelectionRange(endPos, endPos);
+  } catch {}
+  return true;
+}
+
+function cycleSoulMoodFromShortcut() {
+  if (!window.alfieSoul?.cycleMood) return null;
+  const nextMood = window.alfieSoul.cycleMood();
+  const label = window.AlfieShortcuts?.formatMoodLabel
+    ? window.AlfieShortcuts.formatMoodLabel(nextMood)
+    : nextMood;
+  const appShell = $("#app-shell");
+  if (appShell && !appShell.hidden) {
+    toast(`Alfie Soul mood: ${label}`, { durationMs: 2000 });
+  }
+  return nextMood;
+}
+
+function resolveShortcutActionFallback(event) {
+  if (event.isComposing || event.defaultPrevented) return null;
+  const key = typeof event.key === "string" ? event.key : "";
+  const code = typeof event.code === "string" ? event.code : "";
+  const lower = key.toLowerCase();
+  const primary = Boolean(event.ctrlKey || event.metaKey);
+  if ((key === "Escape" || key === "Esc" || code === "Escape") && !primary && !event.altKey) {
+    return "close_modals";
+  }
+  if (!primary || event.altKey) return null;
+  if (!event.shiftKey && (lower === "k" || code === "KeyK")) return "focus_composer";
+  if (event.shiftKey && (lower === "l" || code === "KeyL")) return "cycle_soul_mood";
+  return null;
+}
+
+function handleShortcutRecordingKeydown(event) {
+  if (!recordingShortcutAction) return false;
+  event.preventDefault();
+  event.stopPropagation();
+
+  const lib = getShortcutsLib();
+  const targetAction = recordingShortcutAction;
+  const candidate = lib?.bindingFromKeyboardEvent ? lib.bindingFromKeyboardEvent(event) : null;
+  // Wait for non-modifier key press
+  if (!candidate) return true;
+
+  // Bare Escape cancels recording for non-close_modals actions
+  if (targetAction !== "close_modals" && candidate.key === "Escape" && !candidate.ctrl && !candidate.alt && !candidate.shift) {
+    cancelShortcutRecording("Rebinding canceled.");
+    return true;
+  }
+
+  const validation = lib?.validateBindingForAction
+    ? lib.validateBindingForAction(targetAction, candidate)
+    : { valid: true, binding: candidate };
+
+  if (!validation.valid) {
+    setShortcutSettingsStatus(validation.error || "Invalid key combination.", "error");
+    return true;
+  }
+
+  const current = getActiveShortcutBindings();
+  const conflictAction = lib?.findShortcutConflict
+    ? lib.findShortcutConflict(current, targetAction, validation.binding)
+    : null;
+
+  if (conflictAction) {
+    const conflictMeta = (lib?.GLOBAL_SHORTCUTS || []).find((item) => item.action === conflictAction);
+    setShortcutSettingsStatus(
+      `${formatBindingCombo(validation.binding)} is already assigned to "${conflictMeta?.label || conflictAction}". Pick a different combination.`,
+      "error"
+    );
+    return true;
+  }
+
+  const nextBindings = {
+    ...current,
+    [targetAction]: validation.binding
+  };
+  recordingShortcutAction = null;
+  saveShortcutBindings(nextBindings);
+  const meta = (lib?.GLOBAL_SHORTCUTS || []).find((item) => item.action === targetAction);
+  const comboLabel = formatBindingCombo(validation.binding);
+  setShortcutSettingsStatus(`Updated "${meta?.label || targetAction}" to ${comboLabel}.`, "success");
+  toast(`Shortcut updated: ${meta?.label || targetAction} → ${comboLabel}`, { durationMs: 2400 });
+  return true;
+}
+
+function initGlobalKeyboardShortcuts() {
+  if (document.documentElement.dataset.alfieShortcutsBound === "1") return;
+  document.documentElement.dataset.alfieShortcutsBound = "1";
+
+  activeShortcutBindings = loadShortcutBindings();
+  syncShortcutHints();
+  renderShortcutSettings();
+  renderShortcutsHelpModal();
+
+  $("#shortcuts-help-btn")?.addEventListener("click", openShortcutsHelpModal);
+  $("#shortcuts-open-help-btn")?.addEventListener("click", openShortcutsHelpModal);
+  $("#shortcuts-reset-all-btn")?.addEventListener("click", resetAllShortcuts);
+  $("#shortcuts-help-close")?.addEventListener("click", closeShortcutsHelpModal);
+  $("#shortcuts-help-done-btn")?.addEventListener("click", closeShortcutsHelpModal);
+  $("#shortcuts-help-modal")?.querySelector("[data-shortcuts-modal-close='backdrop']")?.addEventListener("click", closeShortcutsHelpModal);
+  $("#shortcuts-help-customize-btn")?.addEventListener("click", () => {
+    closeShortcutsHelpModal();
+    const appShell = $("#app-shell");
+    if (appShell && !appShell.hidden) {
+      setView("settings");
+      $("#settings-shortcuts-surface")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (handleShortcutRecordingKeydown(event)) {
+      return;
+    }
+
+    const lib = getShortcutsLib();
+    const bindings = getActiveShortcutBindings();
+    const action = lib?.resolveGlobalShortcut
+      ? lib.resolveGlobalShortcut(event, bindings)
+      : resolveShortcutActionFallback(event);
+
+    if (action === "focus_composer") {
+      event.preventDefault();
+      focusComposerFromShortcut();
+      return;
+    }
+
+    if (action === "close_modals") {
+      if (closeAnyOpenModal()) {
+        event.preventDefault();
+      }
+      return;
+    }
+
+    if (action === "cycle_soul_mood") {
+      event.preventDefault();
+      cycleSoulMoodFromShortcut();
+      return;
+    }
+
+    // Open keyboard shortcuts help on '?' outside text inputs when signed in
+    const appShell = $("#app-shell");
+    if (
+      appShell &&
+      !appShell.hidden &&
+      lib?.isShortcutHelpTrigger &&
+      lib.isShortcutHelpTrigger(event, isEditableKeyboardTarget(event.target))
+    ) {
+      const modal = $("#shortcuts-help-modal");
+      event.preventDefault();
+      if (modal && !modal.hidden) closeShortcutsHelpModal();
+      else openShortcutsHelpModal();
+    }
+  }, true);
+
+  if (typeof window !== "undefined") {
+    window.alfieShortcuts = {
+      focusComposer: focusComposerFromShortcut,
+      closeModals: closeAnyOpenModal,
+      cycleSoulMood: cycleSoulMoodFromShortcut,
+      openHelp: openShortcutsHelpModal,
+      closeHelp: closeShortcutsHelpModal,
+      getBindings: () => ({ ...getActiveShortcutBindings() }),
+      resetDefaults: resetAllShortcuts
+    };
+  }
+}
+
+initGlobalKeyboardShortcuts();
 
 function createItem(title, detail, actions = []) {
   const row = document.createElement("article");
@@ -4876,16 +5835,52 @@ window.gardenChart = {
   }
 };
 
+const MEMORY_KIND_LABELS = {
+  fact: "Fact",
+  decision: "Decision",
+  preference: "Preference",
+  temporary: "Temporary",
+  lesson: "Lesson",
+  note: "Note"
+};
+
+const MEMORY_TRUST_LABELS = {
+  user_authored: "User authored",
+  system_verified: "System verified",
+  external_untrusted: "External untrusted"
+};
+
+function formatShortExpiry(iso) {
+  if (!iso) return "";
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return "";
+  const diff = ms - Date.now();
+  if (diff <= 0) return "Expired";
+  const hours = Math.round(diff / 3600000);
+  if (hours < 1) {
+    const mins = Math.max(1, Math.round(diff / 60000));
+    return `Expires in ${mins}m`;
+  }
+  if (hours < 48) return `Expires in ${hours}h`;
+  return "Expires " + new Date(ms).toLocaleDateString();
+}
+
 async function loadMemories() {
   const host = $("#memory-list");
   host.replaceChildren();
   const banner = $("#garden-offline-banner");
   const query = ($("#memory-search")?.value || "").trim().toLowerCase();
+  const kindFilter = state.memoryKindFilter || "all";
+  const includeArchived = Boolean(state.memoryIncludeArchived);
 
   function renderMemoryItems(memories, isCached = false) {
     host.replaceChildren();
     if (banner) banner.hidden = !isCached && navigator.onLine;
     let list = memories || [];
+
+    if (kindFilter && kindFilter !== "all") {
+      list = list.filter((m) => (m.kind || m.type || "note") === kindFilter);
+    }
 
     // Filter by selected importance score from the Recharts bar chart
     if (gardenImportanceFilter !== null) {
@@ -4896,6 +5891,7 @@ async function loadMemories() {
       list = list.filter((m) =>
         (m.text || "").toLowerCase().includes(query) ||
         (m.title || "").toLowerCase().includes(query) ||
+        (m.kind || "").toLowerCase().includes(query) ||
         (m.tags || []).some((t) => String(t).toLowerCase().includes(query))
       );
     }
@@ -4915,11 +5911,17 @@ async function loadMemories() {
     for (const memory of list) {
       const imp = Number(memory.importance || 5);
       const isHighPriority = imp >= 8;
+      const kindLabel = MEMORY_KIND_LABELS[memory.kind] || MEMORY_KIND_LABELS[memory.type] || "Note";
+      const trustLabel = MEMORY_TRUST_LABELS[memory.trust] || MEMORY_TRUST_LABELS[memory.provenance?.trust] || (memory.origin || "garden");
+      const expiryLabel = memory.expired ? "Expired" : formatShortExpiry(memory.expiresAt);
       const meta = [
-        memory.origin || "garden",
+        kindLabel,
+        trustLabel,
         "importance " + imp + (isHighPriority ? " ★" : ""),
+        memory.archived ? "Archived" : "",
+        expiryLabel,
         ...(memory.tags || [])
-      ].join(" · ");
+      ].filter(Boolean).join(" · ");
       const edit = {
         label: "Edit",
         onClick: async () => {
@@ -4936,6 +5938,20 @@ async function loadMemories() {
           } catch (error) { toast(error.message); }
         }
       };
+      const archiveToggle = {
+        label: memory.archived ? "Restore" : "Archive",
+        onClick: async () => {
+          if (!navigator.onLine) { toast("Cannot update memories while offline."); return; }
+          try {
+            await api("/api/core/memories/" + encodeURIComponent(memory.id), {
+              method: "PATCH",
+              body: JSON.stringify({ archived: !memory.archived })
+            });
+            toast(memory.archived ? "Memory restored to active Garden." : "Memory archived.");
+            await loadMemories();
+          } catch (error) { toast(error.message); }
+        }
+      };
       const forget = {
         label: "Forget",
         onClick: async () => {
@@ -4947,15 +5963,16 @@ async function loadMemories() {
           } catch (error) { toast(error.message); }
         }
       };
-      const itemEl = createItem(memory.title || memory.text, meta, [edit, forget]);
-      if (isHighPriority) {
-        itemEl.classList.add("high-priority-memory");
-      }
+      const itemEl = createItem(memory.title || memory.text, meta, [edit, archiveToggle, forget]);
+      if (isHighPriority) itemEl.classList.add("high-priority-memory");
+      if (memory.archived || memory.expired) itemEl.classList.add("archived-memory");
       host.appendChild(itemEl);
     }
     if (!list.length) {
       if (gardenImportanceFilter !== null) {
         host.textContent = `No memories with importance score ${gardenImportanceFilter} found.`;
+      } else if (kindFilter !== "all") {
+        host.textContent = `No ${MEMORY_KIND_LABELS[kindFilter] || kindFilter} memories found.`;
       } else {
         host.textContent = query ? "No matching memories found." : "No memories planted yet.";
       }
@@ -4976,7 +5993,15 @@ async function loadMemories() {
   }
 
   try {
-    const payload = await api("/api/core/memories" + (query ? "?q=" + encodeURIComponent(query) : ""));
+    const params = new URLSearchParams();
+    if (query) params.set("q", query);
+    if (kindFilter && kindFilter !== "all") params.set("kind", kindFilter);
+    if (includeArchived) {
+      params.set("includeArchived", "true");
+      params.set("includeExpired", "true");
+    }
+    const qs = params.toString();
+    const payload = await api("/api/core/memories" + (qs ? "?" + qs : ""));
     const memories = payload.memories || [];
     lastGardenMemories = memories;
     try {
@@ -5011,6 +6036,31 @@ $("#clear-score-filter")?.addEventListener("click", () => {
   loadMemories();
 });
 
+$("#memory-kind-tabs")?.addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-memory-kind]");
+  if (!btn) return;
+  state.memoryKindFilter = btn.dataset.memoryKind || "all";
+  $("#memory-kind-tabs").querySelectorAll("button[data-memory-kind]").forEach((tab) => {
+    const active = tab === btn;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+  });
+  loadMemories();
+});
+
+$("#memory-show-archived")?.addEventListener("change", (event) => {
+  state.memoryIncludeArchived = Boolean(event.currentTarget.checked);
+  loadMemories();
+});
+
+$("#memory-kind-select")?.addEventListener("change", (event) => {
+  const ttlSelect = $("#memory-ttl-select");
+  if (!ttlSelect) return;
+  if (event.currentTarget.value === "temporary" && !ttlSelect.value) {
+    ttlSelect.value = "24";
+  }
+});
+
 $("#refresh-memories").addEventListener("click", loadMemories);
 $("#memory-search").addEventListener("input", () => {
   clearTimeout(loadMemories.timer);
@@ -5018,28 +6068,380 @@ $("#memory-search").addEventListener("input", () => {
 });
 $("#memory-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const text = event.currentTarget.elements.text.value.trim();
+  const formEl = event.currentTarget;
+  const text = formEl.elements.text.value.trim();
+  const importance = Number(formEl.elements.importance.value || 5);
+  const kind = formEl.elements.kind?.value || "note";
+  const ttlRaw = formEl.elements.ttlHours?.value || "";
   if (!text) return;
   try {
-    await api("/api/core/memories", { method: "POST", body: JSON.stringify({ text, importance: Number(event.currentTarget.elements.importance.value || 5), origin: "user-seeded", source: "user", type: "note" }) });
-    event.currentTarget.reset();
+    const body = { text, importance, origin: "user-seeded", source: "user", type: kind, kind };
+    if (ttlRaw) body.ttlHours = Number(ttlRaw);
+    await api("/api/core/memories", { method: "POST", body: JSON.stringify(body) });
+    formEl.reset();
     await loadMemories();
     toast("Memory planted in the Garden.");
   } catch (error) { toast(error.message); }
 });
 
+const WATCHER_KIND_LABELS = {
+  project_stall: "Project stall",
+  vram_threshold: "GPU VRAM",
+  push_metric: "Push metric",
+  http_probe: "HTTP probe"
+};
+
+const ATTENTION_TIER_LABELS = {
+  urgent: "Urgent",
+  notify: "Notify",
+  digest: "Digest",
+  quiet_log: "Quiet log"
+};
+
+function renderWatcherConfigFields() {
+  const host = $("#watcher-config-fields");
+  const kind = $("#watcher-kind-select")?.value || "project_stall";
+  if (!host) return;
+  host.replaceChildren();
+
+  function addField(labelText, inputEl) {
+    const label = document.createElement("label");
+    label.textContent = labelText;
+    label.appendChild(inputEl);
+    host.appendChild(label);
+  }
+
+  if (kind === "project_stall") {
+    const days = document.createElement("input");
+    days.type = "number";
+    days.name = "staleDays";
+    days.min = "1";
+    days.max = "90";
+    days.value = "7";
+    addField("Stale threshold (days)", days);
+
+    const projSelect = document.createElement("select");
+    projSelect.name = "projectId";
+    const allOpt = document.createElement("option");
+    allOpt.value = "";
+    allOpt.textContent = "All active projects";
+    projSelect.appendChild(allOpt);
+    for (const p of state.projects) {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.name;
+      projSelect.appendChild(opt);
+    }
+    addField("Target project", projSelect);
+  } else if (kind === "vram_threshold") {
+    const threshold = document.createElement("input");
+    threshold.type = "number";
+    threshold.name = "thresholdPercent";
+    threshold.min = "50";
+    threshold.max = "99";
+    threshold.value = "80";
+    addField("VRAM alert threshold (%)", threshold);
+  } else if (kind === "push_metric") {
+    const metric = document.createElement("input");
+    metric.name = "metricName";
+    metric.placeholder = "e.g. backup_age_hours";
+    metric.required = true;
+    addField("Metric name", metric);
+
+    const op = document.createElement("select");
+    op.name = "operator";
+    for (const [val, text] of [["gte", "≥ (at or above)"], ["gt", "> (above)"], ["lte", "≤ (at or below)"], ["lt", "< (below)"], ["eq", "= (equals)"]]) {
+      const opt = document.createElement("option");
+      opt.value = val;
+      opt.textContent = text;
+      op.appendChild(opt);
+    }
+    addField("Condition", op);
+
+    const threshold = document.createElement("input");
+    threshold.type = "number";
+    threshold.name = "threshold";
+    threshold.step = "any";
+    threshold.value = "24";
+    threshold.required = true;
+    addField("Threshold value", threshold);
+
+    const unit = document.createElement("input");
+    unit.name = "unit";
+    unit.placeholder = "e.g. hrs, %, GB";
+    unit.maxLength = 16;
+    addField("Unit (optional)", unit);
+  } else if (kind === "http_probe") {
+    const urlInput = document.createElement("input");
+    urlInput.type = "url";
+    urlInput.name = "url";
+    urlInput.placeholder = "https://status.example.com/health";
+    urlInput.required = true;
+    addField("Public HTTPS/HTTP URL", urlInput);
+
+    const status = document.createElement("input");
+    status.type = "number";
+    status.name = "expectedStatus";
+    status.min = "100";
+    status.max = "599";
+    status.value = "200";
+    addField("Expected HTTP status", status);
+  }
+}
+
+function renderWatchers() {
+  const watcherHost = $("#watcher-list");
+  const eventHost = $("#watcher-event-list");
+  if (!watcherHost || !eventHost) return;
+  watcherHost.replaceChildren();
+  eventHost.replaceChildren();
+
+  for (const watcher of (state.watchers || [])) {
+    const kindLabel = WATCHER_KIND_LABELS[watcher.kind] || watcher.kind;
+    const tierLabel = ATTENTION_TIER_LABELS[watcher.tier] || watcher.tier;
+    const statusLabel = watcher.enabled
+      ? (watcher.lastStatus === "alert" ? "Alert" : watcher.lastStatus === "ok" ? "Nominal" : "Ready")
+      : "Paused";
+    const trustLabel = watcher.lastTrust === "external_untrusted" ? "External untrusted" : "System verified";
+    const checkedLabel = watcher.lastCheckedAt ? "Checked " + new Date(watcher.lastCheckedAt).toLocaleTimeString() : "Never checked";
+    const summaryText = watcher.lastSummary ? ` — ${watcher.lastSummary}` : "";
+    const meta = [kindLabel, tierLabel, statusLabel, trustLabel, checkedLabel].join(" · ") + summaryText;
+
+    const actions = [];
+    let pushRow = null;
+    if (watcher.kind === "push_metric") {
+      actions.push({
+        label: "Push reading",
+        kind: "primary-button",
+        onClick: () => {
+          if (!pushRow) return;
+          pushRow.hidden = !pushRow.hidden;
+          if (!pushRow.hidden) {
+            pushRow.querySelector("input")?.focus();
+          }
+        }
+      });
+    } else {
+      actions.push({
+        label: "Run check",
+        kind: "primary-button",
+        onClick: async () => {
+          try {
+            const res = await api(`/api/core/watchers/${encodeURIComponent(watcher.id)}/check`, { method: "POST", body: "{}" });
+            toast(`${watcher.name}: ${res.event?.severity === "alert" ? (ATTENTION_TIER_LABELS[res.event?.tier] || "Alert") : "Nominal"}`);
+            await loadWatchers();
+          } catch (error) { toast(error.message); }
+        }
+      });
+    }
+    actions.push({
+      label: watcher.enabled ? "Pause" : "Resume",
+      onClick: async () => {
+        try {
+          await api(`/api/core/watchers/${encodeURIComponent(watcher.id)}`, {
+            method: "PATCH",
+            body: JSON.stringify({ enabled: !watcher.enabled })
+          });
+          await loadWatchers();
+        } catch (error) { toast(error.message); }
+      }
+    });
+    actions.push({
+      label: "Delete",
+      onClick: async (event) => {
+        const btn = event?.currentTarget;
+        if (btn && btn.dataset.confirmDelete !== "true") {
+          btn.dataset.confirmDelete = "true";
+          btn.textContent = "Confirm delete";
+          btn.classList.add("danger-button");
+          setTimeout(() => {
+            if (btn.isConnected && btn.dataset.confirmDelete === "true") {
+              delete btn.dataset.confirmDelete;
+              btn.textContent = "Delete";
+              btn.classList.remove("danger-button");
+            }
+          }, 4000);
+          return;
+        }
+        try {
+          await api(`/api/core/watchers/${encodeURIComponent(watcher.id)}`, { method: "DELETE", body: "{}" });
+          toast("Watcher deleted.");
+          await loadWatchers();
+        } catch (error) { toast(error.message); }
+      }
+    });
+    const itemEl = createItem(watcher.name, meta, actions);
+    if (watcher.kind === "push_metric") {
+      pushRow = document.createElement("form");
+      pushRow.className = "watcher-push-inline";
+      pushRow.hidden = true;
+      const numInput = document.createElement("input");
+      numInput.type = "number";
+      numInput.step = "any";
+      numInput.required = true;
+      numInput.value = String(watcher.config?.threshold ?? 80);
+      numInput.setAttribute("aria-label", `Metric value for ${watcher.name}`);
+      const sendBtn = document.createElement("button");
+      sendBtn.type = "submit";
+      sendBtn.className = "primary-button";
+      sendBtn.textContent = "Send reading";
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "secondary-button";
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.addEventListener("click", () => { pushRow.hidden = true; });
+      pushRow.append(numInput, sendBtn, cancelBtn);
+      pushRow.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const value = Number(numInput.value);
+        if (!Number.isFinite(value)) { toast("Enter a valid number."); return; }
+        try {
+          const res = await api(`/api/core/watchers/${encodeURIComponent(watcher.id)}/ingest`, {
+            method: "POST",
+            body: JSON.stringify({ value })
+          });
+          toast(`${watcher.name}: ${ATTENTION_TIER_LABELS[res.event?.tier] || "Logged"}`);
+          await loadWatchers();
+        } catch (error) { toast(error.message); }
+      });
+      itemEl.classList.add("has-inline-push");
+      itemEl.appendChild(pushRow);
+    }
+    watcherHost.appendChild(itemEl);
+  }
+  if (!state.watchers?.length) {
+    watcherHost.textContent = "No watchers configured yet. Add one above to monitor projects, VRAM, metrics, or public endpoints.";
+  }
+
+  const tierFilter = state.watcherEventTierFilter || "all";
+  const filteredEvents = (state.watcherEvents || []).filter((ev) => tierFilter === "all" || ev.tier === tierFilter);
+  for (const event of filteredEvents) {
+    const tierLabel = ATTENTION_TIER_LABELS[event.tier] || event.tier;
+    const trustLabel = event.trust === "external_untrusted" ? "External untrusted" : "System verified";
+    const meta = [
+      tierLabel,
+      event.suppressed ? "Cooldown deduplicated" : (event.severity === "alert" ? "Alert" : "Nominal"),
+      trustLabel,
+      event.createdAt ? new Date(event.createdAt).toLocaleString() : ""
+    ].filter(Boolean).join(" · ");
+    const actions = [];
+    if (!event.acknowledged) {
+      actions.push({
+        label: "Acknowledge",
+        onClick: async () => {
+          try {
+            await api(`/api/core/watchers/events/${encodeURIComponent(event.id)}/ack`, { method: "POST", body: "{}" });
+            await loadWatchers();
+          } catch (error) { toast(error.message); }
+        }
+      });
+    }
+    const itemEl = createItem(`${event.watcherName}: ${event.summary}`, meta, actions);
+    if (event.tier === "urgent") itemEl.classList.add("watcher-event-urgent");
+    else if (event.tier === "notify") itemEl.classList.add("watcher-event-notify");
+    else if (event.tier === "digest") itemEl.classList.add("watcher-event-digest");
+    if (event.acknowledged) itemEl.classList.add("watcher-event-ack");
+    eventHost.appendChild(itemEl);
+  }
+  if (!filteredEvents.length) {
+    eventHost.textContent = tierFilter === "all"
+      ? "No watcher events recorded yet. Run a check to populate the Attention Feed."
+      : `No ${ATTENTION_TIER_LABELS[tierFilter] || tierFilter} events recorded.`;
+  }
+}
+
+async function loadWatchers() {
+  try {
+    const [wRes, eRes] = await Promise.all([
+      api("/api/core/watchers"),
+      api("/api/core/watchers/events?limit=40")
+    ]);
+    state.watchers = wRes.watchers || [];
+    state.watcherEvents = eRes.events || [];
+    renderWatchers();
+  } catch (error) {
+    const host = $("#watcher-list");
+    if (host) host.textContent = error.message || "Watchers unavailable.";
+  }
+}
+
+function initWatchers() {
+  renderWatcherConfigFields();
+  $("#watcher-kind-select")?.addEventListener("change", renderWatcherConfigFields);
+  $("#refresh-watchers")?.addEventListener("click", loadWatchers);
+
+  $("#watcher-event-tabs")?.addEventListener("click", (event) => {
+    const btn = event.target.closest("button[data-watcher-tier]");
+    if (!btn) return;
+    state.watcherEventTierFilter = btn.dataset.watcherTier || "all";
+    $("#watcher-event-tabs").querySelectorAll("button[data-watcher-tier]").forEach((tab) => {
+      const active = tab === btn;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", String(active));
+    });
+    renderWatchers();
+  });
+
+  $("#watcher-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formEl = event.currentTarget;
+    const name = (formEl.elements.name?.value || "").trim();
+    const kind = formEl.elements.kind?.value || "project_stall";
+    const tier = formEl.elements.tier?.value || "notify";
+    const cooldownMinutes = Number(formEl.elements.cooldownMinutes?.value ?? 30);
+    if (!name) return;
+
+    const config = {};
+    if (kind === "project_stall") {
+      config.staleDays = Number(formEl.elements.staleDays?.value || 7);
+      if (formEl.elements.projectId?.value) config.projectId = formEl.elements.projectId.value;
+    } else if (kind === "vram_threshold") {
+      config.thresholdPercent = Number(formEl.elements.thresholdPercent?.value || 80);
+    } else if (kind === "push_metric") {
+      config.metricName = (formEl.elements.metricName?.value || "").trim();
+      config.operator = formEl.elements.operator?.value || "gte";
+      config.threshold = Number(formEl.elements.threshold?.value ?? 80);
+      config.unit = (formEl.elements.unit?.value || "").trim();
+    } else if (kind === "http_probe") {
+      config.url = (formEl.elements.url?.value || "").trim();
+      config.expectedStatus = Number(formEl.elements.expectedStatus?.value || 200);
+    }
+
+    try {
+      await api("/api/core/watchers", {
+        method: "POST",
+        body: JSON.stringify({ name, kind, tier, cooldownMinutes, config })
+      });
+      formEl.reset();
+      renderWatcherConfigFields();
+      toast(`Watcher "${name}" created.`);
+      await loadWatchers();
+    } catch (error) {
+      toast(error.message || "Could not create watcher.");
+    }
+  });
+}
+
 async function loadToolsAndApprovals() {
   const toolsHost = $("#tool-list");
   const pendingHost = $("#pending-list");
+  const receiptHost = $("#receipt-list");
   const auditHost = $("#audit-list");
   toolsHost.replaceChildren();
   pendingHost.replaceChildren();
+  if (receiptHost) receiptHost.replaceChildren();
   auditHost.replaceChildren();
   try {
-    const [tools, permissions, pending, audit] = await Promise.all([
-      api("/api/core/tools"), api("/api/core/permissions"), api("/api/core/tools/pending"), api("/api/core/audit?limit=30")
+    const [tools, permissions, pending, receiptsRes, audit] = await Promise.all([
+      api("/api/core/tools"),
+      api("/api/core/permissions"),
+      api("/api/core/tools/pending"),
+      api("/api/core/tools/receipts?limit=12").catch(() => ({ receipts: [] })),
+      api("/api/core/audit?limit=30")
     ]);
     const scopes = new Set(permissions.scopes || []);
+    const leaseByScope = new Map((permissions.leases || []).map((l) => [l.scope, l]));
+    const projectNameById = new Map((state.projects || []).map((p) => [p.id, p.name]));
     const groups = new Map();
     for (const tool of (tools.tools || [])) {
       if (!groups.has(tool.scope)) groups.set(tool.scope, []);
@@ -5047,18 +6449,38 @@ async function loadToolsAndApprovals() {
     }
     for (const [scope, scopedTools] of groups) {
       const allowed = scopes.has(scope);
+      const lease = leaseByScope.get(scope);
       const names = scopedTools.map((tool) => tool.name || tool.id).join(", ");
+      const leaseParts = [];
+      if (allowed) {
+        leaseParts.push(lease?.expiresAt ? `Lease · ${formatShortExpiry(lease.expiresAt)}` : "Granted · Permanent");
+        if (lease?.projectId) {
+          leaseParts.push(`Project: ${projectNameById.get(lease.projectId) || lease.projectId.slice(0, 8)}`);
+        }
+      } else {
+        leaseParts.push("Not granted");
+      }
+      leaseParts.push(scopedTools.length + " tool(s): " + names);
       const button = {
         label: allowed ? "Revoke" : "Allow",
         kind: allowed ? "secondary-button" : "primary-button",
         onClick: async () => {
           try {
-            await api("/api/core/permissions", { method: allowed ? "DELETE" : "POST", body: JSON.stringify({ scope }) });
+            if (allowed) {
+              await api("/api/core/permissions", { method: "DELETE", body: JSON.stringify({ scope }) });
+            } else {
+              const ttlRaw = $("#permission-lease-ttl")?.value || "";
+              const projRaw = $("#permission-lease-project")?.value || "";
+              const payload = { scope };
+              if (ttlRaw) payload.ttlMinutes = Number(ttlRaw);
+              if (projRaw) payload.projectId = projRaw;
+              await api("/api/core/permissions", { method: "POST", body: JSON.stringify(payload) });
+            }
             await loadToolsAndApprovals();
           } catch (error) { toast(error.message); }
         }
       };
-      toolsHost.appendChild(createItem(scope, (allowed ? "Granted" : "Not granted") + " · " + scopedTools.length + " tool(s): " + names, [button]));
+      toolsHost.appendChild(createItem(scope, leaseParts.join(" · "), [button]));
     }
     if (!tools.tools?.length) toolsHost.textContent = "No registered tools.";
     for (const action of (pending.actions || [])) {
@@ -5068,8 +6490,8 @@ async function loadToolsAndApprovals() {
         onClick: async () => {
           try {
             window.alfieSoul?.setState("working", "cyan");
-            await api("/api/core/tools/approve", { method: "POST", body: JSON.stringify({ actionId: action.id }) });
-            toast("Action approved.");
+            const res = await api("/api/core/tools/approve", { method: "POST", body: JSON.stringify({ actionId: action.id }) });
+            toast(res.receipt?.verified ? "Action approved & verified." : "Action approved.");
             window.alfieSoul?.pulse("completed", 2000, "idle", "purple");
             await loadToolsAndApprovals();
           } catch (error) {
@@ -5085,13 +6507,63 @@ async function loadToolsAndApprovals() {
           catch (error) { toast(error.message); }
         }
       };
-      pendingHost.appendChild(createItem(action.toolId, action.preview || action.reason || "Waiting for your decision.", [reject, approve]));
+      const itemEl = createItem(action.toolId, action.preview || action.reason || "Waiting for your decision.", [reject, approve]);
+      if (action.simulation) {
+        const sim = action.simulation;
+        const simBox = document.createElement("div");
+        simBox.className = `simulation-preview risk-${sim.riskLevel || "medium"}`;
+        const simLines = [
+          ["Dry-run risk", `${String(sim.riskLevel || "medium").toUpperCase()}${sim.backupRequired ? " · Backup recommended" : ""}`],
+          ["Affected", sim.affectedResource || action.toolId],
+          ...(sim.dependencies?.length ? [["Dependencies", sim.dependencies.join("; ")]] : []),
+          ["Rollback plan", sim.rollbackPlan || "Manual review"],
+          ...(sim.validationSteps?.length ? [["Verification", sim.validationSteps.join(" → ")]] : [])
+        ];
+        for (const [label, val] of simLines) {
+          const row = document.createElement("div");
+          row.className = "simulation-row";
+          const k = document.createElement("span");
+          k.className = "simulation-key";
+          k.textContent = label;
+          const v = document.createElement("span");
+          v.className = "simulation-val";
+          v.textContent = val;
+          row.append(k, v);
+          simBox.appendChild(row);
+        }
+        itemEl.classList.add("has-simulation");
+        itemEl.appendChild(simBox);
+      }
+      pendingHost.appendChild(itemEl);
     }
     if (!pending.actions?.length) pendingHost.textContent = "Nothing is waiting for approval.";
+
+    state.receipts = receiptsRes.receipts || [];
+    if (receiptHost) {
+      for (const receipt of state.receipts.slice(0, 8)) {
+        const statusLabel = receipt.status === "failed"
+          ? "Failed"
+          : (receipt.verified ? "Verified" : "Unverified");
+        const meta = [
+          statusLabel,
+          `${String(receipt.riskLevel || "medium").toUpperCase()} risk`,
+          receipt.affectedResource || receipt.toolId,
+          receipt.executedAt ? new Date(receipt.executedAt).toLocaleTimeString() : ""
+        ].filter(Boolean).join(" · ") + (receipt.verificationDetail ? ` — ${receipt.verificationDetail}` : "");
+        const receiptEl = createItem(receipt.toolName || receipt.toolId, meta);
+        receiptEl.classList.add(receipt.status === "failed" || !receipt.verified ? "receipt-failed" : "receipt-verified");
+        receiptHost.appendChild(receiptEl);
+      }
+      if (!state.receipts.length) {
+        receiptHost.textContent = "No executed action receipts yet. Approved changes record a verification receipt here.";
+      }
+    }
+
     for (const event of (audit.events || [])) {
       auditHost.appendChild(createItem(event.event, [event.toolId, event.status, event.at ? new Date(event.at).toLocaleString() : ""].filter(Boolean).join(" · ")));
     }
     if (!audit.events?.length) auditHost.textContent = "No recent actions.";
+    await Promise.all([loadWatchers(), loadCapsules()]);
   } catch (error) {
     toolsHost.textContent = error.message;
     pendingHost.textContent = "Approval history unavailable.";
@@ -5137,7 +6609,7 @@ async function loadSettings() {
     }
     if (!health.endpoints?.length) providers.textContent = "No model endpoints configured.";
     core.textContent = (status.implemented || []).length + " capabilities active · " + (status.planned || []).length + " planned";
-    await Promise.all([refreshVramStatus(), loadCloudAgents()]);
+    await Promise.all([refreshVramStatus(), loadCloudAgents(), loadWorkflowProfile()]);
   } catch (error) {
     account.textContent = error.message;
     providers.textContent = "Provider information unavailable.";
@@ -5145,4 +6617,873 @@ async function loadSettings() {
   }
 }
 
+// ── Adaptive Working Mode Selector ──
+const WORKING_MODE_DESCRIPTIONS = {
+  companion: "Balanced personal collaborator—clear, grounded, concise, and attentive to your active project and preferences.",
+  engineer: "Concrete technical execution—architecture trade-offs, edge cases, invariants, verification steps, and minimal diffs.",
+  investigator: "Root-cause debugging and systems forensics—hypotheses ranked by likelihood, evidence needed, and isolation steps.",
+  researcher: "Structured synthesis—compare options, cite assumptions, highlight unknowns, and summarize trade-offs cleanly.",
+  planner: "Phased roadmaps, milestones, dependencies, blockers, and realistic scope sequencing.",
+  "thinking-partner": "Socratic sparring—challenge assumptions gently, expose blind spots, and explore second-order consequences.",
+  creator: "Divergent ideation, visual/writing craft, naming, and expressive exploration without premature filtering.",
+  tutor: "Learning-first scaffolding—explain concepts clearly, build intuition step by step, and invite active attempts."
+};
+
+function syncWorkingModeTooltip(select) {
+  if (!select) return;
+  const id = select.value || "companion";
+  const label = select.options[select.selectedIndex]?.textContent || id;
+  const desc = WORKING_MODE_DESCRIPTIONS[id] || "";
+  select.title = desc ? `${label}: ${desc}` : `Working posture: ${label}`;
+}
+
+function initWorkingModeSelector() {
+  const select = $("#working-mode-select");
+  if (!select) return;
+  const saved = state.workingMode || "companion";
+  if ([...select.options].some((opt) => opt.value === saved)) {
+    select.value = saved;
+  } else {
+    state.workingMode = "companion";
+    select.value = "companion";
+  }
+  syncWorkingModeTooltip(select);
+  select.addEventListener("change", () => {
+    const next = select.value || "companion";
+    state.workingMode = next;
+    try { localStorage.setItem("alfie:workingMode", next); } catch {}
+    syncWorkingModeTooltip(select);
+    const label = select.options[select.selectedIndex]?.textContent || next;
+    toast("Working posture: " + label);
+  });
+}
+
+// ── Ideas Vault Controller ──
+const IDEA_STATUS_LABELS = {
+  inbox: "Inbox",
+  active: "Active",
+  parked: "Parked",
+  promoted: "Promoted",
+  archived: "Archived"
+};
+
+const IDEA_PRIORITY_LABELS = {
+  high: "High priority",
+  medium: "Medium priority",
+  low: "Low priority"
+};
+
+function toggleIdeaTagFilter(tag) {
+  const clean = String(tag || "").trim().toLowerCase().replace(/^#+/, "");
+  if (!clean) return;
+  state.ideaTagFilter = state.ideaTagFilter === clean ? "" : clean;
+  loadIdeas();
+}
+
+function resetIdeaFilters() {
+  state.ideaStatusFilter = "all";
+  state.ideaProjectFilter = "all";
+  state.ideaTagFilter = "";
+  const searchEl = $("#idea-search");
+  if (searchEl) searchEl.value = "";
+  const projFilter = $("#idea-project-filter");
+  if (projFilter) projFilter.value = "all";
+  const tabsHost = $("#idea-status-tabs");
+  if (tabsHost) {
+    tabsHost.querySelectorAll("button[data-idea-status]").forEach((tab) => {
+      const isAll = tab.dataset.ideaStatus === "all";
+      tab.classList.toggle("active", isAll);
+      tab.setAttribute("aria-selected", String(isAll));
+    });
+  }
+  loadIdeas();
+}
+
+function exploreIdeaInChat(idea) {
+  if (!idea) return;
+  if (idea.projectId && state.projects.some((p) => p.id === idea.projectId)) {
+    state.selectedProjectId = idea.projectId;
+    renderProjects();
+    renderConversations(state.conversations);
+  }
+  setView("chat");
+  const input = $("#chat-form")?.elements?.message;
+  if (input) {
+    const promptLines = [`Let's think through this idea from my Ideas Vault: "${idea.title}"`];
+    if (idea.body) promptLines.push("", idea.body);
+    input.value = promptLines.join("\n");
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 180) + "px";
+    input.focus();
+    if (typeof input.setSelectionRange === "function") {
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }
+  toast("Loaded idea into chat composer.");
+}
+
+function renderIdeaTagFilters() {
+  const host = $("#idea-tag-filters");
+  if (!host) return;
+  host.replaceChildren();
+
+  const tags = Array.isArray(state.ideaTags) ? state.ideaTags : [];
+  const activeTag = state.ideaTagFilter || "";
+  if (!tags.length && !activeTag) {
+    host.hidden = true;
+    return;
+  }
+
+  host.hidden = false;
+  const label = document.createElement("span");
+  label.className = "idea-tag-filters-label";
+  label.textContent = "Hashtags";
+  host.appendChild(label);
+
+  const items = [...tags];
+  if (activeTag && !items.some((item) => item.tag === activeTag)) {
+    items.unshift({ tag: activeTag, count: 0 });
+  }
+
+  for (const item of items) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    const isActive = activeTag === item.tag;
+    btn.className = "idea-tag-filter-btn" + (isActive ? " active" : "");
+    btn.dataset.ideaTag = item.tag;
+    btn.setAttribute("aria-pressed", String(isActive));
+
+    const tagText = document.createElement("span");
+    tagText.textContent = "#" + item.tag;
+    const count = document.createElement("span");
+    count.className = "idea-tag-count";
+    count.textContent = String(item.count);
+    btn.append(tagText, count);
+
+    btn.addEventListener("click", () => toggleIdeaTagFilter(item.tag));
+    host.appendChild(btn);
+  }
+
+  if (activeTag) {
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "idea-tag-clear-btn";
+    clearBtn.textContent = "Clear #" + activeTag;
+    clearBtn.addEventListener("click", () => {
+      state.ideaTagFilter = "";
+      loadIdeas();
+    });
+    host.appendChild(clearBtn);
+  }
+}
+
+function createIdeaInlineEditForm(idea) {
+  const form = document.createElement("form");
+  form.className = "idea-edit-form";
+  form.setAttribute("aria-label", "Edit idea " + (idea.title || ""));
+
+  const row = document.createElement("div");
+  row.className = "idea-edit-row";
+
+  const titleLabel = document.createElement("label");
+  titleLabel.textContent = "Idea";
+  const titleInput = document.createElement("input");
+  titleInput.name = "title";
+  titleInput.maxLength = 160;
+  titleInput.required = true;
+  titleInput.value = idea.title || "";
+  titleLabel.appendChild(titleInput);
+
+  const priorityLabel = document.createElement("label");
+  priorityLabel.textContent = "Priority";
+  const prioritySelect = document.createElement("select");
+  prioritySelect.name = "priority";
+  for (const [val, text] of [["high", "High"], ["medium", "Medium"], ["low", "Low"]]) {
+    const opt = document.createElement("option");
+    opt.value = val;
+    opt.textContent = text;
+    if ((idea.priority || "medium") === val) opt.selected = true;
+    prioritySelect.appendChild(opt);
+  }
+  priorityLabel.appendChild(prioritySelect);
+
+  const projectLabel = document.createElement("label");
+  projectLabel.textContent = "Project";
+  const projectSelect = document.createElement("select");
+  projectSelect.name = "projectId";
+  const noneOpt = document.createElement("option");
+  noneOpt.value = "";
+  noneOpt.textContent = "Unlinked";
+  projectSelect.appendChild(noneOpt);
+  for (const proj of state.projects || []) {
+    const opt = document.createElement("option");
+    opt.value = proj.id;
+    opt.textContent = proj.name;
+    if (idea.projectId === proj.id) opt.selected = true;
+    projectSelect.appendChild(opt);
+  }
+  projectLabel.appendChild(projectSelect);
+
+  row.append(titleLabel, priorityLabel, projectLabel);
+
+  const bodyLabel = document.createElement("label");
+  bodyLabel.textContent = "Notes & #hashtags";
+  const bodyInput = document.createElement("textarea");
+  bodyInput.name = "body";
+  bodyInput.rows = 3;
+  bodyInput.maxLength = 4000;
+  bodyInput.placeholder = "Add context, details, or #hashtags…";
+  bodyInput.value = idea.body || "";
+  bodyLabel.appendChild(bodyInput);
+
+  const actions = document.createElement("div");
+  actions.className = "idea-edit-actions";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "secondary-button";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", () => {
+    state.editingIdeaId = null;
+    renderIdeas();
+  });
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "submit";
+  saveBtn.className = "primary-button";
+  saveBtn.textContent = "Save changes";
+
+  actions.append(cancelBtn, saveBtn);
+  form.append(row, bodyLabel, actions);
+
+  form.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      state.editingIdeaId = null;
+      renderIdeas();
+    }
+  });
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const nextTitle = titleInput.value.trim();
+    if (!nextTitle) return;
+    saveBtn.disabled = true;
+    try {
+      await api("/api/core/ideas/" + encodeURIComponent(idea.id), {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: nextTitle,
+          body: bodyInput.value.trim(),
+          priority: prioritySelect.value,
+          projectId: projectSelect.value || null
+        })
+      });
+      state.editingIdeaId = null;
+      toast("Idea updated.");
+      await loadIdeas();
+    } catch (error) {
+      toast(error.message || "Could not update idea.");
+      saveBtn.disabled = false;
+    }
+  });
+
+  return form;
+}
+
+function renderIdeas() {
+  const host = $("#idea-list");
+  if (!host) return;
+  host.replaceChildren();
+  renderIdeaTagFilters();
+
+  const ideas = Array.isArray(state.ideas) ? state.ideas : [];
+  if (!ideas.length) {
+    const empty = document.createElement("div");
+    empty.className = "idea-empty-state";
+    const filter = state.ideaStatusFilter || "all";
+    const projFilter = state.ideaProjectFilter || "all";
+    const activeTag = state.ideaTagFilter || "";
+    const q = ($("#idea-search")?.value || "").trim();
+    const hasFilters = Boolean(activeTag || q || filter !== "all" || projFilter !== "all");
+
+    const msg = document.createElement("p");
+    msg.style.margin = "0";
+    msg.textContent = activeTag
+      ? "No ideas tagged #" + activeTag + (filter !== "all" ? " in " + filter : "") + "."
+      : q
+        ? "No ideas match \"" + q + "\"."
+        : projFilter !== "all"
+          ? "No ideas found for this project filter."
+          : filter !== "all"
+            ? "No " + filter + " ideas yet. Capture one above or type /idea in chat."
+            : "Your Ideas Vault is clear. Park a rough thought above or type /idea in chat.";
+    empty.appendChild(msg);
+
+    if (hasFilters) {
+      const clearBtn = document.createElement("button");
+      clearBtn.type = "button";
+      clearBtn.className = "secondary-button";
+      clearBtn.textContent = "Clear filters";
+      clearBtn.addEventListener("click", resetIdeaFilters);
+      empty.appendChild(clearBtn);
+    }
+
+    host.appendChild(empty);
+    return;
+  }
+
+  for (const idea of ideas) {
+    const card = document.createElement("article");
+    card.className = "idea-card";
+    card.dataset.ideaId = idea.id;
+
+    if (state.editingIdeaId === idea.id) {
+      card.appendChild(createIdeaInlineEditForm(idea));
+      host.appendChild(card);
+      continue;
+    }
+
+    const head = document.createElement("div");
+    head.className = "idea-card-head";
+
+    const title = document.createElement("h3");
+    title.className = "idea-card-title";
+    title.textContent = idea.title || "Untitled idea";
+
+    const actions = document.createElement("div");
+    actions.className = "idea-card-actions";
+
+    const statusSelect = document.createElement("select");
+    statusSelect.className = "idea-status-select";
+    statusSelect.setAttribute("aria-label", "Status for " + (idea.title || "idea"));
+    for (const statusValue of ["inbox", "active", "parked", "promoted", "archived"]) {
+      const opt = document.createElement("option");
+      opt.value = statusValue;
+      opt.textContent = IDEA_STATUS_LABELS[statusValue] || statusValue;
+      if (idea.status === statusValue) opt.selected = true;
+      statusSelect.appendChild(opt);
+    }
+    statusSelect.addEventListener("change", async () => {
+      const nextStatus = statusSelect.value;
+      statusSelect.disabled = true;
+      try {
+        await api("/api/core/ideas/" + encodeURIComponent(idea.id), {
+          method: "PATCH",
+          body: JSON.stringify({ status: nextStatus })
+        });
+        toast("Idea moved to " + (IDEA_STATUS_LABELS[nextStatus] || nextStatus) + ".");
+        await loadIdeas();
+      } catch (error) {
+        toast(error.message || "Could not update idea.");
+        statusSelect.value = idea.status;
+      } finally {
+        statusSelect.disabled = false;
+      }
+    });
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "secondary-button";
+    editBtn.textContent = "Edit";
+    editBtn.setAttribute("aria-label", "Edit idea " + (idea.title || ""));
+    editBtn.addEventListener("click", () => {
+      state.editingIdeaId = idea.id;
+      renderIdeas();
+      host.querySelector('.idea-edit-form input[name="title"]')?.focus();
+    });
+
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "secondary-button";
+    delBtn.textContent = "Delete";
+    delBtn.setAttribute("aria-label", "Delete idea " + (idea.title || ""));
+    delBtn.addEventListener("click", async () => {
+      delBtn.disabled = true;
+      try {
+        await api("/api/core/ideas/" + encodeURIComponent(idea.id), { method: "DELETE" });
+        if (state.editingIdeaId === idea.id) state.editingIdeaId = null;
+        toast("Idea removed from vault.");
+        await loadIdeas();
+      } catch (error) {
+        toast(error.message || "Could not delete idea.");
+        delBtn.disabled = false;
+      }
+    });
+
+    actions.append(statusSelect, editBtn, delBtn);
+    head.append(title, actions);
+    card.appendChild(head);
+
+    const project = idea.projectId
+      ? (state.projects || []).find((p) => p.id === idea.projectId)
+      : null;
+    const metaParts = [
+      IDEA_STATUS_LABELS[idea.status] || idea.status || "Inbox",
+      IDEA_PRIORITY_LABELS[idea.priority] || "Medium priority",
+      project ? "Project: " + project.name : "Unlinked",
+      idea.createdAt ? new Date(idea.createdAt).toLocaleDateString() : ""
+    ].filter(Boolean);
+
+    const meta = document.createElement("div");
+    meta.className = "idea-card-meta";
+    meta.textContent = metaParts.join(" · ");
+    card.appendChild(meta);
+
+    if (idea.body) {
+      const body = document.createElement("p");
+      body.className = "idea-card-body";
+      body.textContent = idea.body;
+      card.appendChild(body);
+    }
+
+    if (Array.isArray(idea.tags) && idea.tags.length) {
+      const tagRow = document.createElement("div");
+      tagRow.className = "idea-card-tags";
+      for (const tag of idea.tags) {
+        const tagBtn = document.createElement("button");
+        tagBtn.type = "button";
+        const isActive = state.ideaTagFilter === tag;
+        tagBtn.className = "idea-card-tag-btn" + (isActive ? " active" : "");
+        tagBtn.dataset.ideaTag = tag;
+        tagBtn.setAttribute("aria-pressed", String(isActive));
+        tagBtn.textContent = "#" + tag;
+        tagBtn.title = isActive ? "Clear #" + tag + " filter" : "Filter by #" + tag;
+        tagBtn.addEventListener("click", () => toggleIdeaTagFilter(tag));
+        tagRow.appendChild(tagBtn);
+      }
+      card.appendChild(tagRow);
+    }
+
+    const footer = document.createElement("div");
+    footer.className = "idea-card-footer";
+    const src = document.createElement("span");
+    src.className = "idea-card-source";
+    src.textContent = idea.sourceContext ? "Captured from: " + idea.sourceContext : "Ideas Vault";
+    const exploreBtn = document.createElement("button");
+    exploreBtn.type = "button";
+    exploreBtn.className = "idea-explore-btn";
+    exploreBtn.textContent = "Explore in chat ↗";
+    exploreBtn.setAttribute("aria-label", "Explore " + (idea.title || "idea") + " in chat");
+    exploreBtn.addEventListener("click", () => exploreIdeaInChat(idea));
+    footer.append(src, exploreBtn);
+    card.appendChild(footer);
+
+    host.appendChild(card);
+  }
+}
+
+async function loadIdeas() {
+  const host = $("#idea-list");
+  if (!host) return;
+  syncIdeaProjectOptions();
+  try {
+    const params = new URLSearchParams();
+    const filter = state.ideaStatusFilter || "all";
+    if (filter && filter !== "all") params.set("status", filter);
+    const projFilter = state.ideaProjectFilter || "all";
+    if (projFilter && projFilter !== "all") params.set("projectId", projFilter);
+    const activeTag = state.ideaTagFilter || "";
+    if (activeTag) params.set("tag", activeTag);
+    const q = ($("#idea-search")?.value || "").trim();
+    if (q) params.set("q", q);
+    const query = params.toString();
+    const data = await api("/api/core/ideas" + (query ? "?" + query : ""));
+    state.ideas = Array.isArray(data.ideas) ? data.ideas : [];
+    state.ideaTags = Array.isArray(data.tags) ? data.tags : [];
+    renderIdeas();
+  } catch (error) {
+    host.textContent = error.message || "Could not load Ideas Vault.";
+  }
+}
+
+function initIdeasVault() {
+  const form = $("#idea-form");
+  if (form) {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const titleInput = form.elements.title;
+      const bodyInput = form.elements.body;
+      const prioritySelect = form.elements.priority;
+      const projectSelect = form.elements.projectId;
+      const title = (titleInput?.value || "").trim();
+      if (!title) return;
+      const body = (bodyInput?.value || "").trim();
+      const priority = prioritySelect?.value || "medium";
+      const projectId = projectSelect?.value || null;
+      const submitBtn = form.querySelector('button[type="submit"]');
+      if (submitBtn) submitBtn.disabled = true;
+      try {
+        await api("/api/core/ideas", {
+          method: "POST",
+          body: JSON.stringify({
+            title,
+            body,
+            priority,
+            projectId,
+            sourceContext: "Ideas Vault"
+          })
+        });
+        form.reset();
+        toast("Idea saved to Vault.");
+        await loadIdeas();
+      } catch (error) {
+        toast(error.message || "Could not save idea.");
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+  }
+
+  const tabsHost = $("#idea-status-tabs");
+  if (tabsHost) {
+    tabsHost.addEventListener("click", (event) => {
+      const btn = event.target.closest("button[data-idea-status]");
+      if (!btn) return;
+      const nextStatus = btn.dataset.ideaStatus || "all";
+      state.ideaStatusFilter = nextStatus;
+      tabsHost.querySelectorAll("button[data-idea-status]").forEach((tab) => {
+        const isActive = tab === btn;
+        tab.classList.toggle("active", isActive);
+        tab.setAttribute("aria-selected", String(isActive));
+      });
+      loadIdeas();
+    });
+  }
+
+  $("#idea-project-filter")?.addEventListener("change", (event) => {
+    state.ideaProjectFilter = event.currentTarget.value || "all";
+    loadIdeas();
+  });
+
+  $("#idea-search")?.addEventListener("input", () => {
+    clearTimeout(loadIdeas.timer);
+    loadIdeas.timer = setTimeout(loadIdeas, 220);
+  });
+
+  $("#refresh-ideas")?.addEventListener("click", loadIdeas);
+}
+
+// ── Workflow & Learning Companion Profile Controller ──
+const LEARNING_MODE_LABELS = {
+  solve: "Solve it",
+  explain: "Explain as you go",
+  tutor: "Tutor me",
+  challenge: "Challenge me",
+  attempt_first: "Attempt first"
+};
+
+const CONFIDENCE_LABELS = {
+  exploring: "Exploring",
+  practicing: "Practicing",
+  comfortable: "Comfortable",
+  confident: "Confident"
+};
+
+const CONFIDENCE_SEQUENCE = ["exploring", "practicing", "comfortable", "confident"];
+
+function renderWorkflowProfile() {
+  const profile = state.workflowProfile;
+  if (!profile) return;
+  const setVal = (sel, val) => { const el = $(sel); if (el && val !== undefined) el.value = val; };
+  setVal("#wf-explanation-style", profile.explanationStyle || "balanced");
+  setVal("#wf-change-presentation", profile.changePresentation || "diffs_and_rollback");
+  setVal("#wf-interruption-tolerance", profile.interruptionTolerance || "balanced");
+  setVal("#wf-chunk-size", profile.chunkSize || "balanced");
+  setVal("#wf-learning-mode", profile.learningMode || "explain");
+  setVal("#learning-mode-select", profile.learningMode || "explain");
+  const notesEl = $("#wf-custom-notes");
+  if (notesEl) notesEl.value = profile.customNotes || "";
+  const statusEl = $("#workflow-profile-status");
+  if (statusEl && profile.updatedAt) {
+    statusEl.textContent = "Updated " + new Date(profile.updatedAt).toLocaleTimeString();
+  }
+
+  const topicHost = $("#learning-topic-list");
+  if (!topicHost) return;
+  topicHost.replaceChildren();
+  const topics = Array.isArray(profile.learningTopics) ? profile.learningTopics : [];
+  for (const item of topics) {
+    const idx = CONFIDENCE_SEQUENCE.indexOf(item.confidence);
+    const nextConf = CONFIDENCE_SEQUENCE[(idx + 1) % CONFIDENCE_SEQUENCE.length];
+    const meta = [
+      CONFIDENCE_LABELS[item.confidence] || item.confidence,
+      item.notes || "",
+      item.updatedAt ? "Updated " + new Date(item.updatedAt).toLocaleDateString() : ""
+    ].filter(Boolean).join(" · ");
+    const actions = [
+      {
+        label: `Mark ${CONFIDENCE_LABELS[nextConf]}`,
+        onClick: async () => {
+          try {
+            const res = await api(`/api/core/profile/topics/${encodeURIComponent(item.id)}`, {
+              method: "PATCH",
+              body: JSON.stringify({ confidence: nextConf })
+            });
+            state.workflowProfile = res.profile;
+            renderWorkflowProfile();
+            toast(`"${item.topic}" → ${CONFIDENCE_LABELS[nextConf]}`);
+          } catch (error) { toast(error.message); }
+        }
+      },
+      {
+        label: "Remove",
+        onClick: async () => {
+          try {
+            const res = await api(`/api/core/profile/topics/${encodeURIComponent(item.id)}`, { method: "DELETE", body: "{}" });
+            state.workflowProfile = res.profile;
+            renderWorkflowProfile();
+            toast(`Removed "${item.topic}".`);
+          } catch (error) { toast(error.message); }
+        }
+      }
+    ];
+    topicHost.appendChild(createItem(item.topic, meta, actions));
+  }
+  if (!topics.length) {
+    topicHost.textContent = "No learning topics tracked yet. Add an area you're exploring above.";
+  }
+}
+
+async function loadWorkflowProfile() {
+  try {
+    const res = await api("/api/core/profile");
+    state.workflowProfile = res.profile || null;
+    renderWorkflowProfile();
+  } catch {}
+}
+
+function initWorkflowProfile() {
+  $("#learning-mode-select")?.addEventListener("change", async (event) => {
+    const nextMode = event.currentTarget.value || "explain";
+    try {
+      const res = await api("/api/core/profile", {
+        method: "PUT",
+        body: JSON.stringify({ learningMode: nextMode })
+      });
+      state.workflowProfile = res.profile;
+      renderWorkflowProfile();
+      toast("Learning posture: " + (LEARNING_MODE_LABELS[nextMode] || nextMode));
+    } catch (error) {
+      toast(error.message || "Could not update learning posture.");
+    }
+  });
+
+  $("#workflow-profile-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formEl = event.currentTarget;
+    const payload = {
+      explanationStyle: formEl.elements.explanationStyle?.value || "balanced",
+      changePresentation: formEl.elements.changePresentation?.value || "diffs_and_rollback",
+      interruptionTolerance: formEl.elements.interruptionTolerance?.value || "balanced",
+      chunkSize: formEl.elements.chunkSize?.value || "balanced",
+      learningMode: formEl.elements.learningMode?.value || "explain",
+      customNotes: (formEl.elements.customNotes?.value || "").trim()
+    };
+    try {
+      const res = await api("/api/core/profile", { method: "PUT", body: JSON.stringify(payload) });
+      state.workflowProfile = res.profile;
+      renderWorkflowProfile();
+      toast("Workflow & learning profile saved.");
+    } catch (error) {
+      toast(error.message || "Could not save workflow profile.");
+    }
+  });
+
+  $("#learning-topic-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formEl = event.currentTarget;
+    const topic = (formEl.elements.topic?.value || "").trim();
+    const confidence = formEl.elements.confidence?.value || "exploring";
+    if (!topic) return;
+    try {
+      const res = await api("/api/core/profile/topics", {
+        method: "POST",
+        body: JSON.stringify({ topic, confidence })
+      });
+      state.workflowProfile = res.profile;
+      formEl.reset();
+      renderWorkflowProfile();
+      toast(`Tracking "${topic}".`);
+    } catch (error) {
+      toast(error.message || "Could not add learning topic.");
+    }
+  });
+}
+
+// ── Context Capsules Controller ──
+const PRIVACY_POSTURE_LABELS = {
+  local_only: "Local only",
+  cloud_isolated: "Cloud (private locked)",
+  cloud_scoped: "Cloud (scoped)"
+};
+
+function renderCapsules() {
+  const listHost = $("#capsule-list");
+  const chatWrap = $("#chat-capsule-wrap");
+  const chatSelect = $("#chat-capsule-select");
+  const projectNameById = new Map((state.projects || []).map((p) => [p.id, p.name]));
+  const capsules = state.capsules || [];
+
+  if (chatWrap && chatSelect) {
+    chatWrap.hidden = capsules.length === 0;
+    chatSelect.replaceChildren();
+    const noneOpt = document.createElement("option");
+    noneOpt.value = "";
+    noneOpt.textContent = "Manual setup";
+    chatSelect.appendChild(noneOpt);
+    for (const cap of capsules) {
+      const opt = document.createElement("option");
+      opt.value = cap.id;
+      opt.textContent = cap.name;
+      chatSelect.appendChild(opt);
+    }
+    chatSelect.value = state.activeCapsuleId && capsules.some((c) => c.id === state.activeCapsuleId) ? state.activeCapsuleId : "";
+  }
+
+  if (!listHost) return;
+  listHost.replaceChildren();
+  for (const cap of capsules) {
+    const isActive = cap.id === state.activeCapsuleId;
+    const projName = cap.projectId ? (projectNameById.get(cap.projectId) || cap.projectId.slice(0, 8)) : "No project";
+    const leaseSummary = (cap.leaseTemplate || []).length
+      ? cap.leaseTemplate.map((l) => `${l.scope}${l.ttlMinutes ? ` (${Math.round(l.ttlMinutes / 60)}h)` : ""}`).join(", ")
+      : "No auto-leases";
+    const meta = [
+      isActive ? "Active workspace" : "Ready",
+      `Project: ${projName}`,
+      `Mode: ${cap.workingMode}`,
+      `Learn: ${LEARNING_MODE_LABELS[cap.learningMode] || cap.learningMode}`,
+      PRIVACY_POSTURE_LABELS[cap.privacyPosture] || cap.privacyPosture,
+      `Leases: ${leaseSummary}`
+    ].join(" · ") + (cap.description ? ` — ${cap.description}` : "");
+
+    const actions = [
+      {
+        label: isActive ? "Re-activate" : "Activate",
+        kind: isActive ? "secondary-button" : "primary-button",
+        onClick: () => activateCapsuleById(cap.id)
+      },
+      {
+        label: "Delete",
+        onClick: async (event) => {
+          const btn = event?.currentTarget;
+          if (btn && btn.dataset.confirmDelete !== "true") {
+            btn.dataset.confirmDelete = "true";
+            btn.textContent = "Confirm delete";
+            btn.classList.add("danger-button");
+            setTimeout(() => {
+              if (btn.isConnected && btn.dataset.confirmDelete === "true") {
+                delete btn.dataset.confirmDelete;
+                btn.textContent = "Delete";
+                btn.classList.remove("danger-button");
+              }
+            }, 4000);
+            return;
+          }
+          try {
+            await api(`/api/core/capsules/${encodeURIComponent(cap.id)}`, { method: "DELETE", body: "{}" });
+            toast(`Deleted capsule "${cap.name}".`);
+            await loadCapsules();
+          } catch (error) { toast(error.message); }
+        }
+      }
+    ];
+    const el = createItem(cap.name, meta, actions);
+    if (isActive) el.classList.add("capsule-active");
+    listHost.appendChild(el);
+  }
+  if (!capsules.length) {
+    listHost.textContent = "No context capsules saved yet. Save one above to switch project, posture, learning style, and leases in one click.";
+  }
+}
+
+async function activateCapsuleById(capsuleId) {
+  if (!capsuleId) return;
+  try {
+    const res = await api(`/api/core/capsules/${encodeURIComponent(capsuleId)}/activate`, {
+      method: "POST",
+      body: "{}"
+    });
+    const cap = res.capsule;
+    state.activeCapsuleId = res.activeCapsuleId || cap.id;
+    if (res.profile) {
+      state.workflowProfile = res.profile;
+      renderWorkflowProfile();
+    }
+    // Sync working mode selector
+    if (cap?.workingMode) {
+      state.workingMode = cap.workingMode;
+      try { localStorage.setItem("alfie:workingMode", cap.workingMode); } catch {}
+      const modeSelect = $("#working-mode-select");
+      if (modeSelect) {
+        modeSelect.value = cap.workingMode;
+        syncWorkingModeTooltip(modeSelect);
+      }
+    }
+    // Sync active project filter if the capsule references an existing project
+    if (cap?.projectId && state.projects.some((p) => p.id === cap.projectId)) {
+      state.selectedProjectId = cap.projectId;
+      renderProjects();
+      renderConversations(state.conversations);
+    }
+    renderCapsules();
+    if (state.view === "tools") {
+      await loadToolsAndApprovals();
+    }
+    const leaseNote = res.grantedLeases?.length ? ` · ${res.grantedLeases.length} lease(s) active` : "";
+    toast(`Activated capsule "${cap.name}" (${cap.workingMode}${leaseNote}).`);
+  } catch (error) {
+    toast(error.message || "Could not activate capsule.");
+  }
+}
+
+async function loadCapsules() {
+  try {
+    const res = await api("/api/core/capsules");
+    state.capsules = res.capsules || [];
+    state.activeCapsuleId = res.activeCapsuleId || null;
+    renderCapsules();
+  } catch {}
+}
+
+function initCapsules() {
+  $("#refresh-capsules")?.addEventListener("click", loadCapsules);
+  $("#chat-capsule-select")?.addEventListener("change", (event) => {
+    const id = event.currentTarget.value;
+    if (id) activateCapsuleById(id);
+  });
+  $("#capsule-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formEl = event.currentTarget;
+    const name = (formEl.elements.name?.value || "").trim();
+    if (!name) return;
+    const leaseScope = formEl.elements.leaseScope?.value || "";
+    const leaseTtl = Number(formEl.elements.leaseTtl?.value || 60);
+    const payload = {
+      name,
+      description: (formEl.elements.description?.value || "").trim(),
+      projectId: formEl.elements.projectId?.value || null,
+      workingMode: formEl.elements.workingMode?.value || "engineer",
+      learningMode: formEl.elements.learningMode?.value || "explain",
+      privacyPosture: formEl.elements.privacyPosture?.value || "local_only",
+      leaseTemplate: leaseScope ? [{ scope: leaseScope, ttlMinutes: leaseTtl }] : []
+    };
+    try {
+      await api("/api/core/capsules", { method: "POST", body: JSON.stringify(payload) });
+      formEl.reset();
+      toast(`Context Capsule "${name}" saved.`);
+      await loadCapsules();
+    } catch (error) {
+      toast(error.message || "Could not save capsule.");
+    }
+  });
+}
+
+initWorkingModeSelector();
+initIdeasVault();
+initWatchers();
+initWorkflowProfile();
+initCapsules();
 initialise();

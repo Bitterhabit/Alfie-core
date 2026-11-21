@@ -274,3 +274,12 @@ Petrio has a separate server-side adapter in the Petrio repository at `server/al
 Set `ALFIE_CORE_ENABLED=true` only after the Core container and both service/identity secrets are configured. Petrio's Alfie chat then routes through `/api/alfie/core/agent/run`; the dashboard renders pending action previews with explicit Approve and Reject controls, restores pending actions from Core after a refresh, and exposes a grouped permission panel plus recent action history.
 
 If Core is explicitly disabled, the current legacy harness remains available during the migration. If Core is enabled but its status or request fails, the UI fails closed and does not fall back to legacy action execution. This avoids silently bypassing the Core permission and approval boundary.
+
+## Long-term vision, roadmap & ADRs
+
+Alfie's long-term product and architecture direction is codified in dedicated repository documents so new capabilities stay aligned with Core's invariants (**Context Compression Ratio**, **Deterministic Core / Probabilistic Edge**, **Model Proposes / Harness Executes**, and **Earned Interruption**):
+
+- [`docs/VISION.md`](docs/VISION.md) — Core identity, five architectural pillars, ecosystem boundaries, and non-negotiable invariants.
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — Phased roadmap (Phases 1–5) and explicit non-goals.
+- [`docs/adr/`](docs/adr/) — Architecture Decision Records covering embedded SQLite WAL migration (`ADR-001`), deterministic watchers & attention budget (`ADR-002`), persistent trust/taint provenance (`ADR-003`), and the async job engine / bounded sub-agents (`ADR-004`).
+

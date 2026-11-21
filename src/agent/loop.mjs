@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { createAssetInterceptorMiddleware } from "./assetMiddleware.mjs";
 import { applyCloudPrivacyPolicy, isToolAllowedByVisibility } from "../privacy/policy.mjs";
+import { containsUntrustedData } from "./untrustedData.mjs";
+import { resolveWorkingMode } from "./workingModes.mjs";
+import { resolveLearningMode } from "../profile/store.mjs";
 
 export const MAX_STEPS = 4;
 export const WALL_CLOCK_TIMEOUT = 30_000;
@@ -81,6 +84,9 @@ export class AgentLoop {
     dispatcher,
     contextAssembler,
     memoryStore = null,
+    projectStore = null,
+    watcherStore = null,
+    profileStore = null,
     imageGenerator = null,
     cloudAgentStore = null,
     cloudAdapters = null,
@@ -97,6 +103,9 @@ export class AgentLoop {
     this.dispatcher = dispatcher;
     this.contextAssembler = contextAssembler;
     this.memoryStore = memoryStore;
+    this.projectStore = projectStore;
+    this.watcherStore = watcherStore;
+    this.profileStore = profileStore;
     this.imageGenerator = imageGenerator;
     this.cloudAgentStore = cloudAgentStore;
     this.cloudAdapters = cloudAdapters;
@@ -110,7 +119,7 @@ export class AgentLoop {
     });
   }
 
-  async run({ userId, messages, dashboardState = {}, mode = "auto", agentProvider = "local", turnId = randomUUID(), signal: parentSignal, onProgress }) {
+  async run({ userId, messages, dashboardState = {}, mode = "auto", workingMode = "companion", projectId = null, agentProvider = "local", turnId = randomUUID(), signal: parentSignal, onProgress }) {
     const started = this.now();
     const controller = new AbortController();
     const abortFromParent = () => controller.abort(parentSignal?.reason || new Error("Client disconnected."));
@@ -140,7 +149,20 @@ export class AgentLoop {
     const history = messages.slice(-16).map((message) => ({ role: message.role, content: String(message.content || "").slice(0, 12000) }));
     const userText = [...history].reverse().find((message) => message.role === "user")?.content || "";
 
-    // Enforce privacy BEFORE even querying MemoryStore when using a cloud agent.
+    const resolvedMode = resolveWorkingMode(workingMode);
+
+    // Enforce privacy BEFORE even querying ProjectStore or MemoryStore when using a cloud agent.
+    let activeProject = null;
+    const allowProject = !cloudAgent || cloudAgent.visibility?.allowProjectContext !== false;
+    if (allowProject && projectId && this.projectStore?.get) {
+      try {
+        activeProject = await awaitWithAbort(this.projectStore.get(userId, projectId), controller.signal);
+      } catch (error) {
+        if (controller.signal.aborted) throw error;
+        activeProject = null;
+      }
+    }
+
     let memories = [];
     const shouldSearchMemories = !cloudAgent || cloudAgent.visibility?.allowPersonalMemories === true;
     if (shouldSearchMemories && this.memoryStore?.search) {
@@ -153,17 +175,29 @@ export class AgentLoop {
       }
     }
 
+    let workflowProfile = null;
+    if (this.profileStore?.get) {
+      try {
+        workflowProfile = await awaitWithAbort(this.profileStore.get(userId), controller.signal);
+      } catch (error) {
+        if (controller.signal.aborted) throw error;
+        workflowProfile = null;
+      }
+    }
+
     let previousCall = null;
     let steps = 0;
     const toolsUsed = [];
     let lastPrivacyReport = null;
+    let lastShortlistedTools = [];
+    let turnTainted = false;
     try {
       while (steps < this.maxSteps) {
         if (controller.signal.aborted || this.now() - started >= this.wallClockTimeout) {
           this.dispatcher.resetTurn(turnId);
           return { status: "timeout", message: "I reached the 30-second processing limit. Please try a smaller request.", steps };
         }
-        const grantedScopes = await this.dispatcher.permissionStore.list(userId);
+        const grantedScopes = await this.dispatcher.permissionStore.list(userId, { projectId: activeProject?.id || null });
         let effectiveDashboardState = dashboardState;
         let effectiveMemories = memories;
         let effectiveScopes = grantedScopes;
@@ -196,8 +230,15 @@ export class AgentLoop {
           memories: effectiveMemories,
           registry: this.toolRegistry,
           grantedScopes: effectiveScopes,
-          privacyNotice
+          privacyNotice,
+          workingMode: resolvedMode.id,
+          project: activeProject,
+          workflowProfile
         });
+        lastShortlistedTools = Array.isArray(context.tools) ? context.tools.map((tool) => tool.id) : [];
+        if (containsUntrustedData(context.messages)) {
+          turnTainted = true;
+        }
 
         let selected;
         if (cloudAgent) {
@@ -221,7 +262,10 @@ export class AgentLoop {
               userText,
               history,
               context,
-              memories,
+              memories: effectiveMemories,
+              project: activeProject,
+              workingMode: resolvedMode,
+              workflowProfile,
               steps,
               turnId,
               onProgress,
@@ -249,6 +293,26 @@ export class AgentLoop {
             selected?.result?.raw?.prompt_eval_count ??
             Math.max(1, Math.round(userText.length / 4));
           const totalTokens = selected?.result?.raw?.usage?.total_tokens ?? (promptTokens + completionTokens);
+          const resolvedLearning = workflowProfile ? resolveLearningMode(workflowProfile.learningMode) : null;
+          const provenance = {
+            workingMode: { id: resolvedMode.id, label: resolvedMode.label },
+            learningMode: resolvedLearning ? { id: resolvedLearning.id, label: resolvedLearning.label } : null,
+            project: activeProject ? { id: activeProject.id, name: activeProject.name, status: activeProject.status || "active" } : null,
+            memoriesInjected: effectiveMemories.slice(0, 6).map((m) => ({
+              id: String(m.id || "").slice(0, 64),
+              title: String(m.title || m.text || "Memory").slice(0, 80),
+              kind: String(m.kind || m.type || "note").slice(0, 40),
+              trust: String(m.trust || m.provenance?.trust || "user_authored").slice(0, 40),
+              importance: Math.max(1, Math.min(10, Number(m.importance) || 5))
+            })),
+            toolsShortlisted: lastShortlistedTools,
+            toolsUsed: toolsUsed.map((t) => t.toolId),
+            tainted: turnTainted || effectiveMemories.some((m) => (m.trust || m.provenance?.trust) === "external_untrusted"),
+            privacyFiltered: Boolean(lastPrivacyReport),
+            blockedCategories: Array.isArray(lastPrivacyReport?.blockedPersonalCategories) ? lastPrivacyReport.blockedPersonalCategories : [],
+            steps,
+            latencyMs
+          };
           return {
             status: "completed",
             message: action.message.slice(0, 12000),
@@ -257,6 +321,7 @@ export class AgentLoop {
             provider: selected.endpoint?.provider,
             endpointId: selected.endpoint?.id,
             metrics: { latencyMs, completionTokens, promptTokens, totalTokens },
+            provenance,
             ...(lastPrivacyReport ? { privacyReport: lastPrivacyReport } : {}),
             ...(toolsUsed.length ? { toolsUsed } : {})
           };
@@ -306,7 +371,7 @@ export class AgentLoop {
         let observation;
         try {
           observation = await this.dispatcher.dispatch({
-            userId, toolId: action.tool, args: action.arguments, turnId, contextMessages: context.messages, signal: controller.signal
+            userId, toolId: action.tool, args: action.arguments, turnId, contextMessages: context.messages, projectId: activeProject?.id || null, signal: controller.signal
           });
         } catch (error) {
           observation = { status: "tool_error", error: error.message };
@@ -342,9 +407,11 @@ export class AgentLoop {
     }
   }
 
-  async coreAssistantComplete({ userId, userText, history, context, memories = [], steps, turnId, onProgress, signal }) {
+  async coreAssistantComplete({ userId, userText, history, context, memories = [], project = null, workingMode = resolveWorkingMode(), workflowProfile = null, steps, turnId, onProgress, signal }) {
     const cleanUser = String(userText || "").trim();
     const lower = cleanUser.toLowerCase();
+    const modeLabel = workingMode?.label || "Companion";
+    const learningInfo = workflowProfile ? resolveLearningMode(workflowProfile.learningMode) : null;
 
     // 1. Image generation intent
     const isImageCmd = lower.startsWith("/image");
@@ -379,7 +446,46 @@ export class AgentLoop {
       };
     }
 
-    // 2. Overview & priorities
+    // 2. Grounded Project Continuity Briefing ("Where are we with this project?")
+    const asksProjectStatus = lower.includes("where are we")
+      || lower.includes("project status")
+      || lower.includes("this project")
+      || lower.includes("project brief")
+      || lower.includes("blockers")
+      || lower.includes("next actions");
+    if (project && asksProjectStatus) {
+      const sections = [`### Project Brief: ${project.name} (${project.status || "active"})`];
+      if (project.vision) sections.push(`**Vision:** ${project.vision}`);
+      if (project.description) sections.push(`**Shared Notes:** ${project.description}`);
+      if (project.architecture) sections.push(`**Architecture:** ${project.architecture}`);
+      if (project.nextActions?.length) {
+        sections.push("**Next Recommended Actions:**\n" + project.nextActions.map((item) => `• ${item}`).join("\n"));
+      }
+      if (project.blockers?.length) {
+        sections.push("**Current Blockers:**\n" + project.blockers.map((item) => `• ${item}`).join("\n"));
+      }
+      if (project.decisions?.length) {
+        sections.push("**Recorded Decisions:**\n" + project.decisions.slice(-5).map((d) =>
+          d.rationale ? `• **${d.summary}** — ${d.rationale}` : `• **${d.summary}**`
+        ).join("\n"));
+      }
+      if (project.postponed?.length) {
+        sections.push("**Deliberately Postponed:**\n" + project.postponed.map((item) => `• ${item}`).join("\n"));
+      }
+      if (sections.length === 1) {
+        sections.push("No Vision, Architecture, Next Actions, Blockers, or Decisions have been recorded in this dossier yet. Open **Dossier** in the chat bar to capture your current state so future briefings stay grounded.");
+      }
+      sections.push(`*Mode: ${modeLabel} · Grounded directly in your Living Project Dossier.*`);
+      return {
+        endpoint: { id: "alfie-core-local", model: "alfie-core-engine", provider: "alfie-core" },
+        result: {
+          content: JSON.stringify({ type: "final", message: sections.join("\n\n") }),
+          raw: { usage: { prompt_tokens: 24, completion_tokens: 110, total_tokens: 134 } }
+        }
+      };
+    }
+
+    // 3. Overview & priorities
     if (lower.includes("overview") || lower.includes("priorities") || lower.includes("priority") || lower.includes("focus")) {
       let memorySummary = "";
       if (memories.length) {
@@ -387,7 +493,10 @@ export class AgentLoop {
         memorySummary = "\n\n**Key Context from Your Garden:**\n" +
           top.map((m) => `• **${m.title || "Note"}** (Importance ${m.importance || 5}/10): ${m.text}`).join("\n");
       }
-      const msg = `### Concise Overview of Current Priorities\n\nHere is a synthesized snapshot of your active context and workspace focus:${memorySummary}\n\n**Active Workflows:**\n• **Core Stability & Access**: Alfie Core is online and governing memories, tools, and visual assets.\n• **Memory Continuity**: Your Garden is ready to plant, update, or recall your thoughts and projects.\n• **Creative Generation**: Visual asset studio is active—use \`/image <prompt>\` anytime to generate art.\n\n*What would you like to advance next?*`;
+      const projectNote = project
+        ? `\n\n**Active Project (${project.name} · ${project.status || "active"}):**\n${project.nextActions?.length ? project.nextActions.slice(0, 3).map((a) => `• Next: ${a}`).join("\n") : (project.vision || project.description || "Assigned to this conversation.")}`
+        : "";
+      const msg = `### Concise Overview of Current Priorities\n\nHere is a synthesized snapshot in **${modeLabel}** mode:${projectNote}${memorySummary}\n\n**Active Workflows:**\n• **Core Stability & Access**: Alfie Core is online and governing memories, project dossiers, ideas, and tools.\n• **Memory Continuity**: Your Garden and Ideas Vault are ready to capture or recall thoughts cleanly.\n• **Creative Generation**: Visual asset studio is active—use \`/image <prompt>\` anytime to generate art.\n\n*What would you like to advance next?*`;
       return {
         endpoint: { id: "alfie-core-local", model: "alfie-core-engine", provider: "alfie-core" },
         result: {
@@ -397,9 +506,9 @@ export class AgentLoop {
       };
     }
 
-    // 3. Thinking through an idea
+    // 4. Thinking through an idea
     if (lower.includes("think through") || lower.includes("idea") || lower.includes("brainstorm") || lower.includes("developing")) {
-      const msg = `### Strategic Exploration Framework\n\nI’m ready to think this through with you. Let’s break it down methodically:\n\n1. **Core Problem & Value**:\n   • What specific tension or need does this solve?\n   • What does the simplest delightful outcome look like?\n\n2. **Key Assumptions & Variables**:\n   • What is the riskiest assumption that must be validated first?\n   • Are there technical, user, or architectural constraints?\n\n3. **Recommended First Step**:\n   • Frame the core premise in one or two sentences, and we can outline the key milestones together.`;
+      const msg = `### Strategic Exploration Framework (${modeLabel} mode)\n\nI’m ready to think this through with you. Let’s break it down methodically:\n\n1. **Core Problem & Value**:\n   • What specific tension or need does this solve?\n   • What does the simplest high-leverage outcome look like?\n\n2. **Key Assumptions & Variables**:\n   • What is the riskiest assumption to validate first?\n   • Are there technical, security, or resource constraints?\n\n3. **Recommended First Step**:\n   • Frame the premise in 1–2 sentences, or type \`/idea <thought>\` to squirrel it into your Ideas Vault for later.`;
       return {
         endpoint: { id: "alfie-core-local", model: "alfie-core-engine", provider: "alfie-core" },
         result: {
@@ -409,7 +518,7 @@ export class AgentLoop {
       };
     }
 
-    // 4. Review recent activity
+    // 5. Review recent activity
     if (lower.includes("summarise") || lower.includes("summarize") || lower.includes("recent activity") || lower.includes("pending") || lower.includes("actions")) {
       let pendingCount = 0;
       if (this.dispatcher?.pendingActionStore) {
@@ -418,7 +527,15 @@ export class AgentLoop {
           pendingCount = pending.length;
         } catch {}
       }
-      const msg = `### System & Activity Review\n\n• **Pending Approvals**: ${pendingCount ? `${pendingCount} action(s) awaiting your decision in Tools & access` : "No actions pending approval. System is clear."}\n• **Memory Garden**: Context retrieval is active with ${memories.length} relevant memory record(s) indexed.\n• **Foundation**: Alfie Core service is healthy and connected to your private workspace.\n\nLet me know if you’d like to review permissions, plant a new memory, or generate an asset.`;
+      let watcherLine = "";
+      if (this.watcherStore?.listEvents) {
+        try {
+          const alerts = await this.watcherStore.listEvents(userId, { unacknowledged: true, limit: 20 });
+          const actionable = alerts.filter((e) => e.tier === "urgent" || e.tier === "notify" || e.tier === "digest");
+          watcherLine = `\n• **Watchers & Attention Budget**: ${actionable.length ? `${actionable.length} unacknowledged watcher alert(s) ready in Tools & access` : "All watchers calm — no unacknowledged alerts."}`;
+        } catch {}
+      }
+      const msg = `### System & Activity Review\n\n• **Pending Approvals**: ${pendingCount ? `${pendingCount} action(s) awaiting your decision in Tools & access` : "No actions pending approval. System is clear."}${watcherLine}\n• **Memory Garden**: Context retrieval is active with ${memories.length} relevant memory record(s) indexed.\n• **Active Mode**: ${modeLabel}${project ? ` · Project: **${project.name}**` : ""}\n• **Foundation**: Alfie Core service is healthy and connected to your private workspace.\n\nLet me know if you’d like to review permissions, inspect a project dossier, or plant a new memory.`;
       return {
         endpoint: { id: "alfie-core-local", model: "alfie-core-engine", provider: "alfie-core" },
         result: {
@@ -428,8 +545,12 @@ export class AgentLoop {
       };
     }
 
-    // 5. General conversational response
-    const msg = `Hello! I’m **Alfie**, your personal AI core. I'm connected and ready to assist you:\n\n• **Chat & Ideation**: Ask questions, think through concepts, and explore plans.\n• **Memory Garden**: Plant, recall, and manage important memories with full control.\n• **Visual Creation**: Type \`/image <prompt>\` or use the 🎨 button to create artwork.\n• **Tools & Governance**: Execute approved workflows with security guarantees.\n\nHow can I help you right now?`;
+    // 6. General conversational response tailored to active Working Mode, Learning Posture & Project
+    const projectLine = project ? `\n• **Active Project**: **${project.name}** (${project.status || "active"}) — ask *"Where are we with this project?"* for a grounded brief.` : "";
+    const learningLine = learningInfo && ["tutor", "challenge", "attempt_first"].includes(learningInfo.id)
+      ? `\n• **Learning Posture (${learningInfo.label})**: ${learningInfo.promptHint}`
+      : "";
+    const msg = `Alfie here — I’m ready in **${modeLabel}** mode.${projectLine}${learningLine}\n\n• **Chat & Ideation**: Ask questions, work through technical trade-offs, or switch working modes anytime.\n• **Ideas Vault**: Type \`/idea <thought>\` to squirrel away an idea without breaking flow.\n• **Memory Garden**: Plant, recall, and audit important memories with full provenance.\n• **Visual Creation**: Type \`/image <prompt>\` to create artwork.\n\nHow can I help you right now?`;
     return {
       endpoint: { id: "alfie-core-local", model: "alfie-core-engine", provider: "alfie-core" },
       result: {

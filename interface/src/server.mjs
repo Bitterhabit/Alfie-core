@@ -397,6 +397,103 @@ export function createAlfieInterfaceServer({
           requireCsrf(req, session);
           return json(res, 200, await coreClient.deleteProject(userId, projectMatch[1]));
         }
+        if (method === "GET" && url.pathname === "/api/core/modes") {
+          return json(res, 200, await coreClient.listWorkingModes(userId));
+        }
+        if (method === "GET" && url.pathname === "/api/core/ideas") {
+          return json(res, 200, await coreClient.listIdeas(userId, url.searchParams.toString()));
+        }
+        if (method === "POST" && url.pathname === "/api/core/ideas") {
+          requireCsrf(req, session);
+          return json(res, 201, await coreClient.createIdea(userId, await readJson(req)));
+        }
+        const ideaMatch = /^\/api\/core\/ideas\/([a-f0-9-]{36})$/.exec(url.pathname);
+        if (method === "GET" && ideaMatch) {
+          return json(res, 200, await coreClient.getIdea(userId, ideaMatch[1]));
+        }
+        if (method === "PATCH" && ideaMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.updateIdea(userId, ideaMatch[1], await readJson(req)));
+        }
+        if (method === "DELETE" && ideaMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.deleteIdea(userId, ideaMatch[1]));
+        }
+        if (method === "GET" && url.pathname === "/api/core/watchers") {
+          return json(res, 200, await coreClient.listWatchers(userId));
+        }
+        if (method === "POST" && url.pathname === "/api/core/watchers") {
+          requireCsrf(req, session);
+          return json(res, 201, await coreClient.createWatcher(userId, await readJson(req)));
+        }
+        if (method === "GET" && url.pathname === "/api/core/watchers/events") {
+          return json(res, 200, await coreClient.listWatcherEvents(userId, url.searchParams.toString()));
+        }
+        const watcherEventAckMatch = /^\/api\/core\/watchers\/events\/([a-f0-9-]{36})\/ack$/.exec(url.pathname);
+        if (method === "POST" && watcherEventAckMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.acknowledgeWatcherEvent(userId, watcherEventAckMatch[1]));
+        }
+        const watcherCheckMatch = /^\/api\/core\/watchers\/([a-f0-9-]{36})\/check$/.exec(url.pathname);
+        if (method === "POST" && watcherCheckMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.checkWatcher(userId, watcherCheckMatch[1]));
+        }
+        const watcherIngestMatch = /^\/api\/core\/watchers\/([a-f0-9-]{36})\/ingest$/.exec(url.pathname);
+        if (method === "POST" && watcherIngestMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.ingestWatcherMetric(userId, watcherIngestMatch[1], await readJson(req)));
+        }
+        const watcherMatch = /^\/api\/core\/watchers\/([a-f0-9-]{36})$/.exec(url.pathname);
+        if (method === "PATCH" && watcherMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.updateWatcher(userId, watcherMatch[1], await readJson(req)));
+        }
+        if (method === "DELETE" && watcherMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.deleteWatcher(userId, watcherMatch[1]));
+        }
+        if (method === "GET" && url.pathname === "/api/core/profile") {
+          return json(res, 200, await coreClient.getWorkflowProfile(userId));
+        }
+        if ((method === "PUT" || method === "PATCH") && url.pathname === "/api/core/profile") {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.updateWorkflowProfile(userId, await readJson(req)));
+        }
+        if (method === "POST" && url.pathname === "/api/core/profile/topics") {
+          requireCsrf(req, session);
+          return json(res, 201, await coreClient.addLearningTopic(userId, await readJson(req)));
+        }
+        const profileTopicMatch = /^\/api\/core\/profile\/topics\/([a-f0-9-]{36})$/.exec(url.pathname);
+        if (method === "PATCH" && profileTopicMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.updateLearningTopic(userId, profileTopicMatch[1], await readJson(req)));
+        }
+        if (method === "DELETE" && profileTopicMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.deleteLearningTopic(userId, profileTopicMatch[1]));
+        }
+        if (method === "GET" && url.pathname === "/api/core/capsules") {
+          return json(res, 200, await coreClient.listCapsules(userId));
+        }
+        if (method === "POST" && url.pathname === "/api/core/capsules") {
+          requireCsrf(req, session);
+          return json(res, 201, await coreClient.createCapsule(userId, await readJson(req)));
+        }
+        const capsuleActivateMatch = /^\/api\/core\/capsules\/([a-f0-9-]{36})\/activate$/.exec(url.pathname);
+        if (method === "POST" && capsuleActivateMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.activateCapsule(userId, capsuleActivateMatch[1]));
+        }
+        const capsuleMatch = /^\/api\/core\/capsules\/([a-f0-9-]{36})$/.exec(url.pathname);
+        if (method === "PATCH" && capsuleMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.updateCapsule(userId, capsuleMatch[1], await readJson(req)));
+        }
+        if (method === "DELETE" && capsuleMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.deleteCapsule(userId, capsuleMatch[1]));
+        }
         if (method === "GET" && url.pathname === "/api/core/system/vram") {
           return json(res, 200, await coreClient.getVramStatus(userId));
         }
@@ -496,6 +593,9 @@ export function createAlfieInterfaceServer({
           return json(res, 200, await coreClient.request(userId, "/v1/permissions", { method: "DELETE", body }));
         }
         if (method === "GET" && url.pathname === "/api/core/tools/pending") return json(res, 200, await coreClient.listPendingActions(userId));
+        if (method === "GET" && url.pathname === "/api/core/tools/receipts") {
+          return json(res, 200, await coreClient.listActionReceipts(userId, Number(url.searchParams.get("limit") || 25)));
+        }
         if (method === "POST" && url.pathname === "/api/core/tools/approve") {
           requireCsrf(req, session);
           const body = await readJson(req);
@@ -539,6 +639,7 @@ export function createAlfieInterfaceServer({
     const ALLOWED_ASSETS = {
       "index.html": "text/html; charset=utf-8",
       "app.js": "text/javascript; charset=utf-8",
+      "markdown-export.mjs": "text/javascript; charset=utf-8",
       "shortcuts.mjs": "text/javascript; charset=utf-8",
       "voice-waveform.mjs": "text/javascript; charset=utf-8",
       "styles.css": "text/css; charset=utf-8",
@@ -551,6 +652,7 @@ export function createAlfieInterfaceServer({
       "apple-touch-icon.png": "image/png",
       "vendor/react.production.min.js": "application/javascript; charset=utf-8",
       "vendor/react-dom.production.min.js": "application/javascript; charset=utf-8",
+      "vendor/prop-types.min.js": "application/javascript; charset=utf-8",
       "vendor/recharts.js": "application/javascript; charset=utf-8"
     };
     if (!ALLOWED_ASSETS[relative]) return json(res, 404, { error: "Not found." });

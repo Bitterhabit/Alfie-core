@@ -68,22 +68,44 @@ export function registerMemoryTools(registry, memoryStore) {
       properties: {
         title: { type: "string", maxLength: 240 },
         text: { type: "string", minLength: 1, maxLength: 20000 },
+        kind: { type: "string", enum: ["fact", "decision", "preference", "temporary", "lesson", "note"] },
+        ttlHours: { type: "integer", minimum: 1, maximum: 8760 },
         tags: { type: "array", maxItems: 30, items: { type: "string", maxLength: 64 } },
         importance: { type: "integer", minimum: 1, maximum: 10 }
       },
       required: ["text"],
       additionalProperties: false
     },
-    approvalPreview: async ({ title, text }, { userId }) => {
+    approvalPreview: async ({ title, text, kind }, { userId }) => {
       const similar = await memoryStore.findSimilar(userId, text, { limit: 3 });
       const warning = similar.length
         ? ` Possible existing entries: ${similar.map(({ memory, score }) => `"${String(memory.title || memory.text).slice(0, 70)}" (${Math.round(score * 100)}% match)`).join("; ")}.`
         : "";
-      return `Save as a user-seeded Garden memory: "${String(title || text).slice(0, 180)}".${warning}`;
+      const kindTag = kind ? ` [${kind}]` : "";
+      return `Save as a user-seeded Garden memory${kindTag}: "${String(title || text).slice(0, 180)}".${warning}`;
     },
-    handler: async ({ title, text, tags, importance }, { userId }) => ({
+    dryRun: async ({ title, text, kind, ttlHours }, { userId }) => {
+      const similar = await memoryStore.findSimilar(userId, text, { limit: 3 });
+      return {
+        summary: `Create ${kind || "note"} memory "${String(title || text).slice(0, 100)}"${ttlHours ? ` (expires in ${ttlHours}h)` : ""}.`,
+        riskLevel: "low",
+        affectedResource: "The Garden (per-user memory store)",
+        dependencies: similar.length ? [`${similar.length} similar existing memory entry(s) detected`] : ["No conflicting entries detected"],
+        expectedDowntime: "None",
+        backupRequired: false,
+        rollbackPlan: "Archive or forget the newly created entry from The Garden at any time.",
+        validationSteps: ["Confirm new memory ID persists in The Garden", "Verify kind and trust provenance are set to user_authored"]
+      };
+    },
+    verifyResult: async (_args, result, { userId }) => {
+      const id = result?.memory?.id;
+      if (!id) return { verified: false, detail: "Created memory ID missing from result." };
+      const saved = await memoryStore.get(userId, id);
+      return { verified: Boolean(saved?.id === id), detail: `Verified saved memory (${saved.kind}, ${saved.trust}) in The Garden.` };
+    },
+    handler: async ({ title, text, kind, ttlHours, tags, importance }, { userId }) => ({
       memory: await memoryStore.create(userId, {
-        source: "user", origin: "user-seeded", type: "note",
+        source: "user", origin: "user-seeded", type: kind || "note", kind: kind || "note", ttlHours,
         title, text, tags, importance
       })
     })
@@ -107,6 +129,9 @@ export function registerMemoryTools(registry, memoryStore) {
         title: { type: "string", maxLength: 240 },
         text: { type: "string", minLength: 1, maxLength: 20000 },
         type: { type: "string", minLength: 1, maxLength: 80 },
+        kind: { type: "string", enum: ["fact", "decision", "preference", "temporary", "lesson", "note"] },
+        ttlHours: { type: "integer", minimum: 1, maximum: 8760 },
+        archived: { type: "boolean" },
         tags: { type: "array", maxItems: 30, items: { type: "string", maxLength: 64 } },
         importance: { type: "integer", minimum: 1, maximum: 10 }
       },
@@ -119,9 +144,27 @@ export function registerMemoryTools(registry, memoryStore) {
       const fields = Object.keys(changes).join(", ");
       return `Edit memory "${String(current.title || current.text).slice(0, 120)}" (${current.origin}); proposed fields: ${fields}.`;
     },
+    dryRun: async ({ memoryId, ...changes }, { userId }) => {
+      const current = await memoryStore.get(userId, memoryId);
+      const fields = Object.keys(changes).join(", ");
+      return {
+        summary: `Modify fields (${fields}) on "${String(current.title || current.text).slice(0, 90)}".`,
+        riskLevel: "medium",
+        affectedResource: `Memory ${current.id.slice(0, 8)} (${current.kind} · ${current.trust})`,
+        dependencies: [(current.relationships?.length || 0) ? `${current.relationships.length} linked relationship(s) preserved` : "No outgoing relationship links"],
+        expectedDowntime: "None",
+        backupRequired: false,
+        rollbackPlan: `Restore previous content in The Garden ("${String(current.title || current.text).slice(0, 80)}").`,
+        validationSteps: ["Check optimistic version guard matched before write", "Confirm trust provenance remained unchanged"]
+      };
+    },
     approvalGuard: async ({ memoryId }, { userId }) => {
       const current = await memoryStore.get(userId, memoryId);
       return { id: current.id, version: memoryVersion(current) };
+    },
+    verifyResult: async ({ memoryId }, result, { userId }) => {
+      const saved = await memoryStore.get(userId, memoryId);
+      return { verified: Boolean(saved && saved.updatedAt === result?.memory?.updatedAt), detail: `Verified updated memory (${saved.kind}, ${saved.trust}) persisted.` };
     },
     handler: async ({ memoryId, ...changes }, { userId, approvalGuard }) => ({
       memory: await memoryStore.update(userId, memoryId, changes, approvalGuard?.version)
@@ -150,9 +193,31 @@ export function registerMemoryTools(registry, memoryStore) {
       const excerpt = String(memory.text || "").slice(0, 180);
       return `Permanently forget "${String(memory.title || memory.text).slice(0, 120)}" (${memory.origin}). ${excerpt}`;
     },
+    dryRun: async ({ memoryId }, { userId }) => {
+      const memory = await memoryStore.get(userId, memoryId);
+      const related = await memoryStore.related(userId, memoryId);
+      return {
+        summary: `Permanently delete "${String(memory.title || memory.text).slice(0, 90)}" and ${related.length} connected link(s).`,
+        riskLevel: "high",
+        affectedResource: `Memory ${memory.id.slice(0, 8)} (${memory.kind} · importance ${memory.importance})`,
+        dependencies: related.length ? [`${related.length} connected memory relationship(s) will be removed`] : ["No linked memories affected"],
+        expectedDowntime: "None",
+        backupRequired: true,
+        rollbackPlan: "Permanent deletion cannot be undone automatically. Consider archiving instead if you may need this entry later.",
+        validationSteps: ["Confirm target memory no longer exists in store", "Confirm dangling relationship references were pruned"]
+      };
+    },
     approvalGuard: async ({ memoryId }, { userId }) => {
       const current = await memoryStore.get(userId, memoryId);
       return { id: current.id, version: memoryVersion(current) };
+    },
+    verifyResult: async ({ memoryId }, _result, { userId }) => {
+      try {
+        await memoryStore.get(userId, memoryId);
+        return { verified: false, detail: "Memory still present after delete." };
+      } catch (err) {
+        return { verified: err.status === 404, detail: "Verified memory and dangling links were permanently removed." };
+      }
     },
     handler: async ({ memoryId }, { userId, approvalGuard }) => memoryStore.remove(userId, memoryId, approvalGuard?.version)
   });

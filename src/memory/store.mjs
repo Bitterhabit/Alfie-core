@@ -1,23 +1,93 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { safeUserKey, userDataFile, UserMutex, atomicWriteJson } from "../storage/userJsonStore.mjs";
 
-const USER_ID_PATTERN = /^[a-zA-Z0-9._:@-]{1,128}$/;
 const MEMORY_ID_PATTERN = /^[a-f0-9-]{36}$/i;
 const ORIGINS = new Set(["user-seeded", "alfie-created", "integration-imported"]);
 const RELATIONSHIP_TYPES = new Set(["similar", "supports", "contradicts", "caused_by", "follow_up", "references", "created"]);
+export const MEMORY_KINDS = Object.freeze(["fact", "decision", "preference", "temporary", "lesson", "note"]);
+export const MEMORY_TRUST_LEVELS = Object.freeze(["user_authored", "system_verified", "external_untrusted"]);
+const MEMORY_KIND_SET = new Set(MEMORY_KINDS);
+const MEMORY_TRUST_SET = new Set(MEMORY_TRUST_LEVELS);
 const MAX_MEMORIES = 2000;
 const MAX_TEXT_LENGTH = 20000;
 
-function userKey(userId) {
-  if (typeof userId !== "string" || !USER_ID_PATTERN.test(userId)) {
-    throw Object.assign(new Error("A verified user identity is required."), { status: 401 });
-  }
-  return createHash("sha256").update(userId).digest("hex");
-}
-
 function cleanString(value, max = 500) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+
+function cleanKind(value, fallbackType = "note") {
+  const candidate = cleanString(value, 40).toLowerCase();
+  if (MEMORY_KIND_SET.has(candidate)) return candidate;
+  const fromType = cleanString(fallbackType, 40).toLowerCase();
+  if (MEMORY_KIND_SET.has(fromType)) return fromType;
+  return "note";
+}
+
+function deriveTrust(origin, requestedTrust) {
+  // ADR-003 invariant: integration-imported records can never be silently marked trusted.
+  if (origin === "integration-imported") return "external_untrusted";
+  const candidate = cleanString(requestedTrust, 40).toLowerCase();
+  if (MEMORY_TRUST_SET.has(candidate)) return candidate;
+  if (origin === "user-seeded") return "user_authored";
+  return "system_verified";
+}
+
+function cleanExpiresAt(value, ttlHours, nowIso) {
+  if (value === null || value === "") return null;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value.trim());
+    if (!Number.isFinite(parsed)) {
+      throw Object.assign(new Error("Memory expiry must be a valid ISO-8601 timestamp."), { status: 400 });
+    }
+    return new Date(parsed).toISOString();
+  }
+  if (ttlHours !== undefined && ttlHours !== null && ttlHours !== "") {
+    const hours = Number(ttlHours);
+    if (!Number.isFinite(hours) || hours <= 0 || hours > 8760) {
+      throw Object.assign(new Error("Memory TTL must be between 1 and 8,760 hours."), { status: 400 });
+    }
+    const baseMs = Number.isFinite(Date.parse(nowIso)) ? Date.parse(nowIso) : Date.now();
+    return new Date(baseMs + Math.round(hours * 3600 * 1000)).toISOString();
+  }
+  return null;
+}
+
+function isMemoryExpired(memory, nowIso) {
+  if (!memory?.expiresAt) return false;
+  const expiryMs = Date.parse(memory.expiresAt);
+  if (!Number.isFinite(expiryMs)) return false;
+  const nowMs = Number.isFinite(Date.parse(nowIso)) ? Date.parse(nowIso) : Date.now();
+  return expiryMs <= nowMs;
+}
+
+function normaliseMemory(memory, nowIso) {
+  const origin = ORIGINS.has(memory.origin) ? memory.origin : deriveOrigin(memory.source);
+  const kind = cleanKind(memory.kind, memory.type);
+  const trust = deriveTrust(origin, memory.trust || memory.provenance?.trust);
+  const expiresAt = typeof memory.expiresAt === "string" && Number.isFinite(Date.parse(memory.expiresAt))
+    ? new Date(Date.parse(memory.expiresAt)).toISOString()
+    : null;
+  const archived = Boolean(memory.archived);
+  const supersededBy = MEMORY_ID_PATTERN.test(String(memory.supersededBy || "")) ? String(memory.supersededBy) : null;
+  const expired = isMemoryExpired({ expiresAt }, nowIso);
+  return {
+    ...memory,
+    origin,
+    kind,
+    trust,
+    expiresAt,
+    expired,
+    archived,
+    supersededBy,
+    provenance: {
+      ...(memory.provenance && typeof memory.provenance === "object" ? memory.provenance : {}),
+      source: origin,
+      capturedBy: memory.provenance?.capturedBy || (origin === "user-seeded" ? "user" : origin === "alfie-created" ? "alfie" : "integration"),
+      trust
+    }
+  };
 }
 
 function cleanTags(value) {
@@ -43,6 +113,10 @@ export function memoryVersion(memory) {
   return createHash("sha256").update(JSON.stringify({
     id: memory.id, updatedAt: memory.updatedAt, origin: memory.origin,
     title: memory.title, text: memory.text, type: memory.type,
+    kind: memory.kind || cleanKind(memory.kind, memory.type),
+    trust: memory.trust || deriveTrust(memory.origin, memory.provenance?.trust),
+    expiresAt: memory.expiresAt || null,
+    archived: Boolean(memory.archived),
     tags: memory.tags, importance: memory.importance, metadata: memory.metadata
   })).digest("hex");
 }
@@ -82,21 +156,15 @@ export class MemoryStore {
     this.dataDirectory = path.resolve(dataDirectory);
     this.now = now;
     this.uuid = uuid;
-    this.queues = new Map();
+    this.mutex = new UserMutex();
   }
 
   fileFor(userId) {
-    return path.join(this.dataDirectory, "users", userKey(userId), "memories.json");
+    return userDataFile(this.dataDirectory, userId, "memories.json");
   }
 
   async exclusive(userId, operation) {
-    const key = userKey(userId);
-    const previous = this.queues.get(key) || Promise.resolve();
-    const current = previous.then(operation, operation);
-    const queued = current.catch(() => {});
-    this.queues.set(key, queued);
-    try { return await current; }
-    finally { if (this.queues.get(key) === queued) this.queues.delete(key); }
+    return this.mutex.run(safeUserKey(userId), operation);
   }
 
   async load(userId) {
@@ -113,43 +181,51 @@ export class MemoryStore {
   }
 
   async save(userId, store) {
-    const file = this.fileFor(userId);
-    const directory = path.dirname(file);
-    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-    await fs.chmod(directory, 0o700);
-    const temporary = path.join(directory, `memories.${this.uuid()}.tmp`);
-    const handle = await fs.open(temporary, "wx", 0o600);
-    try {
-      await handle.writeFile(JSON.stringify(store, null, 2), "utf8");
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await fs.rename(temporary, file);
-    await fs.chmod(file, 0o600);
+    await atomicWriteJson(this.fileFor(userId), store, { uuid: this.uuid });
   }
 
   async list(userId, options = {}) {
-    const { origin, source, type, tag, minImportance = 0, query, q, limit = 100, sort = "newest" } = options;
+    const {
+      origin, source, type, kind, trust, tag,
+      minImportance = 0, query, q, limit = 100, sort = "newest",
+      includeArchived = false, includeExpired = false
+    } = options;
     if (origin && !ORIGINS.has(origin)) throw Object.assign(new Error("Unknown memory provenance."), { status: 400 });
+    const kindFilter = cleanString(kind, 40).toLowerCase();
+    if (kindFilter && kindFilter !== "all" && !MEMORY_KIND_SET.has(kindFilter)) {
+      throw Object.assign(new Error("Unknown memory kind."), { status: 400 });
+    }
+    const trustFilter = cleanString(trust, 40).toLowerCase();
+    if (trustFilter && trustFilter !== "all" && !MEMORY_TRUST_SET.has(trustFilter)) {
+      throw Object.assign(new Error("Unknown memory trust tier."), { status: 400 });
+    }
     const sourceFilter = cleanString(source, 80).toLowerCase();
     const typeFilter = cleanString(type, 80).toLowerCase();
     const tagFilter = cleanString(tag, 64).toLowerCase();
     const terms = String(query || q || "").toLowerCase().split(/\s+/).filter((term) => term.length > 1);
+    const allowArchived = includeArchived === true || includeArchived === "true" || includeArchived === "1";
+    const allowExpired = includeExpired === true || includeExpired === "true" || includeExpired === "1";
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
-      const memories = store.memories.filter((item) => {
-        if (origin && item.origin !== origin) return false;
-        if (sourceFilter && item.source !== sourceFilter) return false;
-        if (typeFilter && item.type !== typeFilter) return false;
-        if (tagFilter && !item.tags?.includes(tagFilter)) return false;
-        if (Number(minImportance) > 0 && Number(item.importance) < Number(minImportance)) return false;
-        if (terms.length) {
-          const haystack = [item.title, item.text, item.source, item.type, ...(item.tags || [])].join(" ").toLowerCase();
-          if (!terms.every((term) => haystack.includes(term))) return false;
-        }
-        return true;
-      });
+      const nowIso = this.now();
+      const memories = store.memories
+        .map((raw) => normaliseMemory(raw, nowIso))
+        .filter((item) => {
+          if (!allowArchived && item.archived) return false;
+          if (!allowExpired && item.expired) return false;
+          if (origin && item.origin !== origin) return false;
+          if (sourceFilter && item.source !== sourceFilter) return false;
+          if (typeFilter && item.type !== typeFilter) return false;
+          if (kindFilter && kindFilter !== "all" && item.kind !== kindFilter) return false;
+          if (trustFilter && trustFilter !== "all" && item.trust !== trustFilter) return false;
+          if (tagFilter && !item.tags?.includes(tagFilter)) return false;
+          if (Number(minImportance) > 0 && Number(item.importance) < Number(minImportance)) return false;
+          if (terms.length) {
+            const haystack = [item.title, item.text, item.source, item.type, item.kind, item.trust, ...(item.tags || [])].join(" ").toLowerCase();
+            if (!terms.every((term) => haystack.includes(term))) return false;
+          }
+          return true;
+        });
       memories.sort((a, b) => sort === "oldest"
         ? String(a.createdAt).localeCompare(String(b.createdAt))
         : sort === "importance"
@@ -159,7 +235,7 @@ export class MemoryStore {
     });
   }
 
-  async search(userId, query, { limit = 8 } = {}) {
+  async search(userId, query, { limit = 8, includeArchived = false, includeExpired = false } = {}) {
     const stopWords = new Set(["about", "after", "again", "also", "and", "are", "can", "could", "did", "does", "for", "from", "have", "how", "into", "just", "like", "memory", "memories", "me", "my", "not", "our", "please", "tell", "that", "the", "their", "them", "there", "this", "those", "what", "when", "where", "which", "who", "why", "with", "would", "you", "your"]);
     const terms = [...new Set(String(query || "").toLowerCase().match(/[a-z0-9_'-]+/g) || [])]
       .filter((term) => term.length > 2 && !stopWords.has(term))
@@ -167,19 +243,26 @@ export class MemoryStore {
     if (!terms.length) return [];
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
-      return store.memories.map((memory) => {
-        const title = String(memory.title || "").toLowerCase();
-        const text = String(memory.text || "").toLowerCase();
-        const tags = (memory.tags || []).join(" ").toLowerCase();
-        let score = 0;
-        for (const term of terms) {
-          if (title.includes(term)) score += 4;
-          if (text.includes(term)) score += 2;
-          if (tags.includes(term)) score += 1;
-        }
-        if (String(memory.origin || "") === "user-seeded") score += 0.25;
-        return { memory, score };
-      }).filter((item) => item.score > 0)
+      const nowIso = this.now();
+      return store.memories
+        .map((raw) => normaliseMemory(raw, nowIso))
+        .filter((memory) => (includeArchived || !memory.archived) && (includeExpired || !memory.expired))
+        .map((memory) => {
+          const title = String(memory.title || "").toLowerCase();
+          const text = String(memory.text || "").toLowerCase();
+          const tags = (memory.tags || []).join(" ").toLowerCase();
+          let score = 0;
+          for (const term of terms) {
+            if (title.includes(term)) score += 4;
+            if (text.includes(term)) score += 2;
+            if (tags.includes(term)) score += 1;
+          }
+          if (score > 0) {
+            if (String(memory.origin || "") === "user-seeded") score += 0.25;
+            if (memory.kind === "decision") score += 0.2;
+          }
+          return { memory, score };
+        }).filter((item) => item.score > 0)
         .sort((a, b) => b.score - a.score
           || Number(b.memory.importance || 0) - Number(a.memory.importance || 0)
           || String(b.memory.updatedAt || b.memory.createdAt).localeCompare(String(a.memory.updatedAt || a.memory.createdAt)))
@@ -193,11 +276,15 @@ export class MemoryStore {
     if (!query) return [];
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
-      return store.memories.map((memory) => {
-        const candidate = normaliseMemoryText([memory.title, memory.text].filter(Boolean).join(" "));
-        const exact = candidate === query || normaliseMemoryText(memory.text) === query;
-        return { memory, score: exact ? 1 : memorySimilarity(query, candidate), exact };
-      }).filter((item) => item.exact || item.score >= threshold)
+      const nowIso = this.now();
+      return store.memories
+        .map((raw) => normaliseMemory(raw, nowIso))
+        .filter((memory) => !memory.archived && !memory.expired)
+        .map((memory) => {
+          const candidate = normaliseMemoryText([memory.title, memory.text].filter(Boolean).join(" "));
+          const exact = candidate === query || normaliseMemoryText(memory.text) === query;
+          return { memory, score: exact ? 1 : memorySimilarity(query, candidate), exact };
+        }).filter((item) => item.exact || item.score >= threshold)
         .sort((a, b) => Number(b.exact) - Number(a.exact) || b.score - a.score)
         .slice(0, Math.max(1, Math.min(10, Number(limit) || 5)))
         .map(({ memory, score, exact }) => ({ memory, score: Number(score.toFixed(3)), exact }));
@@ -207,15 +294,29 @@ export class MemoryStore {
   async stats(userId) {
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
+      const nowIso = this.now();
       const sources = {};
       const types = {};
+      const kinds = {};
+      const trusts = {};
       let relationships = 0;
-      for (const memory of store.memories) {
+      let archived = 0;
+      let expired = 0;
+      for (const raw of store.memories) {
+        const memory = normaliseMemory(raw, nowIso);
         sources[memory.source] = (sources[memory.source] || 0) + 1;
         types[memory.type] = (types[memory.type] || 0) + 1;
+        kinds[memory.kind] = (kinds[memory.kind] || 0) + 1;
+        trusts[memory.trust] = (trusts[memory.trust] || 0) + 1;
+        if (memory.archived) archived += 1;
+        if (memory.expired) expired += 1;
         relationships += Array.isArray(memory.relationships) ? memory.relationships.length : 0;
       }
-      return { total: store.memories.length, relationships, sources, types };
+      const active = store.memories.filter((raw) => {
+        const m = normaliseMemory(raw, nowIso);
+        return !m.archived && !m.expired;
+      }).length;
+      return { total: store.memories.length, active, archived, expired, relationships, sources, types, kinds, trusts };
     });
   }
 
@@ -225,7 +326,7 @@ export class MemoryStore {
       const store = await this.load(userId);
       const memory = store.memories.find((item) => item.id === memoryId);
       if (!memory) throw Object.assign(new Error("Memory not found."), { status: 404 });
-      return memory;
+      return normaliseMemory(memory, this.now());
     });
   }
 
@@ -233,18 +334,28 @@ export class MemoryStore {
     if (input.origin !== undefined && !ORIGINS.has(input.origin)) {
       throw Object.assign(new Error("Unknown memory provenance."), { status: 400 });
     }
+    if (input.kind !== undefined && input.kind !== "" && !MEMORY_KIND_SET.has(cleanString(input.kind, 40).toLowerCase())) {
+      throw Object.assign(new Error("Unknown memory kind."), { status: 400 });
+    }
+    if (input.trust !== undefined && input.trust !== "" && !MEMORY_TRUST_SET.has(cleanString(input.trust, 40).toLowerCase())) {
+      throw Object.assign(new Error("Unknown memory trust tier."), { status: 400 });
+    }
     const source = cleanString(input.source || (input.origin === "alfie-created" ? "alfie" : input.origin === "integration-imported" ? "integration" : "user"), 80).toLowerCase();
     const origin = input.origin || deriveOrigin(source);
     const text = cleanString(input.text, MAX_TEXT_LENGTH);
     const title = cleanString(input.title, 240) || text;
-    const type = cleanString(input.type, 80).toLowerCase() || "note";
+    const kind = cleanKind(input.kind, input.type || "note");
+    const type = cleanString(input.type, 80).toLowerCase() || (kind === "note" ? "note" : kind);
+    const trust = deriveTrust(origin, input.trust);
     if (!source || !type || (!title && !text)) {
       throw Object.assign(new Error("A memory requires source, type, and either title or text."), { status: 400 });
     }
+    const now = this.now();
+    const expiresAt = cleanExpiresAt(input.expiresAt, input.ttlHours, now);
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
       const normalizedText = normaliseMemoryText(text);
-      const duplicate = store.memories.find((item) => normaliseMemoryText(item.text) === normalizedText);
+      const duplicate = store.memories.find((item) => !item.archived && normaliseMemoryText(item.text) === normalizedText);
       if (normalizedText && duplicate) {
         throw Object.assign(new Error("An identical memory already exists. Review the existing Garden entry instead of creating a duplicate."), {
           status: 409, code: "MEMORY_DUPLICATE", duplicateId: duplicate.id
@@ -253,24 +364,33 @@ export class MemoryStore {
       if (store.memories.length >= MAX_MEMORIES) {
         throw Object.assign(new Error("This account has reached its memory limit."), { status: 409 });
       }
-      const now = this.now();
       const memory = {
-        id: this.uuid(), origin, source, type, title, text,
+        id: this.uuid(), origin, source, type, kind, trust, title, text,
         tags: cleanTags(input.tags),
         createdAt: now, updatedAt: now,
+        expiresAt,
+        archived: false,
+        supersededBy: null,
         importance: cleanImportance(input.importance, 5),
         relationships: [],
         metadata: cleanMetadata(input.metadata),
-        provenance: { source: origin, capturedBy: origin === "user-seeded" ? "user" : origin === "alfie-created" ? "alfie" : "integration" }
+        provenance: {
+          source: origin,
+          capturedBy: origin === "user-seeded" ? "user" : origin === "alfie-created" ? "alfie" : "integration",
+          trust
+        }
       };
       store.memories.push(memory);
       await this.save(userId, store);
-      return memory;
+      return normaliseMemory(memory, now);
     });
   }
 
   async update(userId, memoryId, changes = {}, expectedVersion = null) {
     if (!MEMORY_ID_PATTERN.test(String(memoryId || ""))) throw Object.assign(new Error("Memory not found."), { status: 404 });
+    if (changes.kind !== undefined && changes.kind !== "" && !MEMORY_KIND_SET.has(cleanString(changes.kind, 40).toLowerCase())) {
+      throw Object.assign(new Error("Unknown memory kind."), { status: 400 });
+    }
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
       const memory = store.memories.find((item) => item.id === memoryId);
@@ -278,21 +398,42 @@ export class MemoryStore {
       if (expectedVersion && memoryVersion(memory) !== expectedVersion) {
         throw Object.assign(new Error("Memory changed after approval was requested. Review it again before retrying."), { status: 409, code: "STALE_APPROVAL" });
       }
+      const now = this.now();
       if (typeof changes.title === "string") memory.title = cleanString(changes.title, 240) || memory.title;
       if (typeof changes.text === "string") {
         const text = cleanString(changes.text, MAX_TEXT_LENGTH);
         if (!text) throw Object.assign(new Error("Memory text cannot be empty."), { status: 400 });
         memory.text = text;
       }
+      if (typeof changes.kind === "string" && changes.kind.trim()) {
+        memory.kind = cleanKind(changes.kind, memory.type);
+      }
       if (typeof changes.type === "string") memory.type = cleanString(changes.type, 80).toLowerCase() || memory.type;
       if (Array.isArray(changes.tags)) memory.tags = cleanTags(changes.tags);
       if (changes.importance !== undefined) memory.importance = cleanImportance(changes.importance, 5);
+      if (changes.expiresAt !== undefined || changes.ttlHours !== undefined) {
+        memory.expiresAt = cleanExpiresAt(changes.expiresAt, changes.ttlHours, now);
+      }
+      if (typeof changes.archived === "boolean") {
+        memory.archived = changes.archived;
+      }
+      if (changes.supersededBy !== undefined) {
+        if (changes.supersededBy === null || changes.supersededBy === "") {
+          memory.supersededBy = null;
+        } else if (MEMORY_ID_PATTERN.test(String(changes.supersededBy))) {
+          memory.supersededBy = String(changes.supersededBy);
+        } else {
+          throw Object.assign(new Error("Invalid superseding memory ID."), { status: 400 });
+        }
+      }
       if (changes.metadata && typeof changes.metadata === "object" && !Array.isArray(changes.metadata)) {
         memory.metadata = { ...memory.metadata, ...changes.metadata };
       }
-      memory.updatedAt = this.now();
+      // Preserve ADR-003 trust provenance invariant across edits.
+      memory.trust = deriveTrust(memory.origin, memory.trust || memory.provenance?.trust);
+      memory.updatedAt = now;
       await this.save(userId, store);
-      return memory;
+      return normaliseMemory(memory, now);
     });
   }
 
@@ -396,16 +537,21 @@ export class MemoryStore {
         }
         if (store.memories.length >= MAX_MEMORIES) throw Object.assign(new Error("This account has reached its memory limit."), { status: 409 });
         const origin = ORIGINS.has(item.origin) ? item.origin : deriveOrigin(source);
+        const kind = cleanKind(item.kind, type);
+        const trust = deriveTrust(origin, item.trust);
         const relationships = (Array.isArray(item.relationships) ? item.relationships : []).map(cleanRelationship).filter(Boolean);
         store.memories.push({
-          id: item.id, origin, source, type, title, text,
+          id: item.id, origin, source, type, kind, trust, title, text,
           tags: cleanTags(item.tags),
           createdAt: cleanString(item.createdAt, 40) || this.now(),
           updatedAt: cleanString(item.updatedAt, 40) || cleanString(item.createdAt, 40) || this.now(),
+          expiresAt: null,
+          archived: Boolean(item.archived),
+          supersededBy: null,
           importance: cleanImportance(item.importance, 5),
           relationships,
           metadata: cleanMetadata(item.metadata),
-          provenance: { source: origin, capturedBy: origin === "user-seeded" ? "user" : origin === "alfie-created" ? "alfie" : "integration", migratedFrom: "petrio-memory-v2" }
+          provenance: { source: origin, capturedBy: origin === "user-seeded" ? "user" : origin === "alfie-created" ? "alfie" : "integration", trust, migratedFrom: "petrio-memory-v2" }
         });
         existing.add(item.id);
         imported += 1;

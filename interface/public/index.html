@@ -11,13 +11,15 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" type="image/svg+xml" href="/icon.svg">
   <link rel="apple-touch-icon" href="/icon.svg">
-  <link rel="stylesheet" href="/styles.css?v=alfie-workspace-0.9.0">
+  <link rel="stylesheet" href="/styles.css?v=alfie-workspace-0.10.0">
   <script src="/vendor/react.production.min.js"></script>
   <script src="/vendor/react-dom.production.min.js"></script>
+  <script src="/vendor/prop-types.min.js"></script>
   <script src="/vendor/recharts.js"></script>
-  <script type="module" src="/shortcuts.mjs?v=alfie-workspace-0.9.0"></script>
-  <script type="module" src="/voice-waveform.mjs?v=alfie-workspace-0.9.0"></script>
-  <script src="/app.js?v=alfie-workspace-0.9.0" defer></script>
+  <script type="module" src="/markdown-export.mjs?v=alfie-workspace-0.10.0"></script>
+  <script type="module" src="/shortcuts.mjs?v=alfie-workspace-0.10.0"></script>
+  <script type="module" src="/voice-waveform.mjs?v=alfie-workspace-0.10.0"></script>
+  <script src="/app.js?v=alfie-workspace-0.10.0" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -156,6 +158,7 @@
       <button id="new-chat" class="new-chat-button" type="button"><span>＋</span> New conversation</button>
       <nav class="main-nav" aria-label="Main navigation">
         <button class="nav-item active" data-view="chat" type="button"><span>◈</span> Chat</button>
+        <button class="nav-item" data-view="ideas" type="button"><span>✦</span> Ideas</button>
         <button class="nav-item" data-view="garden" type="button"><span>✳</span> Garden</button>
         <button class="nav-item" data-view="tools" type="button"><span>⌘</span> Tools & access</button>
         <button class="nav-item" data-view="settings" type="button"><span>⚙</span> Settings</button>
@@ -215,6 +218,10 @@
         <div class="topbar-actions">
           <button id="mobile-history-button" class="mobile-action" type="button">History</button>
           <button id="mobile-new-chat" class="mobile-action" type="button" aria-label="New conversation">＋</button>
+          <button id="shortcuts-help-btn" class="topbar-shortcuts-btn" type="button" aria-label="Keyboard shortcuts help" aria-haspopup="dialog" aria-controls="shortcuts-help-modal" title="Keyboard shortcuts (?)">
+            <span class="topbar-shortcuts-icon" aria-hidden="true">⌨</span>
+            <span class="topbar-shortcuts-label">Shortcuts</span>
+          </button>
           <div class="connection-state"><span id="connection-dot"></span><span id="connection-label">Connecting</span></div>
           <button id="mobile-logout" class="mobile-action" type="button" aria-label="Sign out">⇥</button>
         </div>
@@ -253,16 +260,51 @@
 
       <section id="view-chat" class="view view-chat">
         <div id="chat-context-bar" class="chat-context-bar">
-          <div class="chat-project-assign">
-            <label class="chat-project-label" for="chat-project-select">Project</label>
-            <select id="chat-project-select" class="chat-project-select" aria-label="Assign conversation to project">
-              <option value="">No project</option>
-            </select>
+          <div class="chat-context-selectors">
+            <div class="chat-project-assign">
+              <label class="chat-project-label" for="chat-project-select">Project</label>
+              <select id="chat-project-select" class="chat-project-select" aria-label="Assign conversation to project">
+                <option value="">No project</option>
+              </select>
+              <button id="chat-project-dossier-btn" class="chat-dossier-btn" type="button" title="View or edit the active project dossier" hidden>Dossier</button>
+            </div>
+            <div class="chat-mode-assign">
+              <label class="chat-project-label" for="working-mode-select">Posture</label>
+              <select id="working-mode-select" class="chat-project-select" aria-label="Select Alfie working mode">
+                <option value="companion">Companion</option>
+                <option value="engineer">Engineer</option>
+                <option value="investigator">Investigator</option>
+                <option value="researcher">Researcher</option>
+                <option value="planner">Planner</option>
+                <option value="thinking-partner">Thinking Partner</option>
+                <option value="creator">Creator</option>
+                <option value="tutor">Tutor</option>
+              </select>
+            </div>
+            <div class="chat-mode-assign">
+              <label class="chat-project-label" for="learning-mode-select">Learn</label>
+              <select id="learning-mode-select" class="chat-project-select" aria-label="Select learning companion posture">
+                <option value="solve">Solve it</option>
+                <option value="explain" selected>Explain as you go</option>
+                <option value="tutor">Tutor me</option>
+                <option value="challenge">Challenge me</option>
+                <option value="attempt_first">Attempt first</option>
+              </select>
+            </div>
+            <div class="chat-mode-assign" id="chat-capsule-wrap" hidden>
+              <label class="chat-project-label" for="chat-capsule-select">Capsule</label>
+              <select id="chat-capsule-select" class="chat-project-select" aria-label="Switch active Context Capsule">
+                <option value="">Manual setup</option>
+              </select>
+            </div>
           </div>
           <div class="chat-context-actions">
             <button id="vram-status-btn" class="vram-readout-btn" type="button" title="Inspect GPU VRAM status in Settings">
               <span class="vram-readout-label">VRAM</span>
               <span id="vram-readout-value" class="vram-readout-value">—</span>
+            </button>
+            <button id="export-chat-btn" class="export-chat-btn" type="button" aria-label="Export conversation as Markdown" title="Export current conversation history as a Markdown (.md) file" disabled>
+              <span aria-hidden="true">↓</span> Export .md
             </button>
             <button id="continue-chat-btn" class="continue-chat-btn" type="button" title="Create a new chat seeded with context from this conversation" disabled>
               Continue in new chat ↗
@@ -372,18 +414,23 @@
         <button id="scroll-to-bottom" class="scroll-to-bottom-btn" type="button" aria-label="Scroll to latest messages" hidden><span>↓</span> Latest messages</button>
         <form id="chat-form" class="composer">
           <div id="composer-suggestions" class="composer-suggestions" hidden>
+            <button type="button" class="composer-suggestion-item" data-cmd="/idea ">
+              <span class="cmd-badge">✦ /idea</span>
+              <span class="cmd-desc">Squirrel an idea into your Ideas Vault without breaking flow</span>
+            </button>
             <button type="button" class="composer-suggestion-item" data-cmd="/image ">
               <span class="cmd-badge">🎨 /image</span>
               <span class="cmd-desc">Generate visual asset from descriptive prompt</span>
             </button>
           </div>
           <div class="composer-input-wrapper">
-            <textarea name="message" rows="1" placeholder="Message Alfie or type /image &lt;prompt&gt;… (Ctrl+K)" aria-label="Message Alfie or type /image followed by prompt" aria-keyshortcuts="Control+K Meta+K" required></textarea>
+            <textarea name="message" rows="1" placeholder="Message Alfie, /idea &lt;thought&gt;, or /image &lt;prompt&gt;… (Ctrl+K)" aria-label="Message Alfie or enter a slash command" aria-keyshortcuts="Control+K Meta+K" required></textarea>
           </div>
           <div class="composer-footer">
             <div class="composer-hints">
+              <button type="button" class="composer-cmd-btn" id="idea-cmd-btn" title="Squirrel an idea into your Ideas Vault">✦ /idea</button>
               <button type="button" class="composer-cmd-btn" id="image-cmd-btn" title="Insert /image command into composer">🎨 /image</button>
-              <span class="composer-disclaimer">Type /image &lt;prompt&gt; to generate art.</span>
+              <span class="composer-disclaimer">Quick slash commands</span>
             </div>
             <div class="composer-controls">
               <label class="mode-control agent-control" for="agent-provider">Agent<select id="agent-provider" name="agentProvider" aria-label="Select AI agent"><option value="local">Alfie Local</option><option value="gemini" disabled>Gemini (off)</option><option value="openai" disabled>ChatGPT (off)</option></select></label>
@@ -408,6 +455,64 @@
             </div>
           </div>
         </form>
+      </section>
+
+      <section id="view-ideas" class="view" hidden>
+        <div class="view-intro">
+          <p class="eyebrow">IDEAS VAULT</p>
+          <h2>Squirrelled Ideas</h2>
+          <p class="muted">Capture raw thoughts without derailing active work, link them to projects, and revisit them on your terms.</p>
+        </div>
+
+        <form id="idea-form" class="surface idea-capture-form" aria-label="Capture a new idea">
+          <div class="idea-capture-row">
+            <label class="idea-field-grow">Idea
+              <input id="idea-title-input" name="title" maxlength="160" placeholder="e.g. Add Proxmox backup watcher with quiet digest routing" required>
+            </label>
+            <label class="idea-field-compact">Priority
+              <select id="idea-priority-select" name="priority">
+                <option value="medium" selected>Medium</option>
+                <option value="high">High</option>
+                <option value="low">Low</option>
+              </select>
+            </label>
+            <label class="idea-field-compact">Project
+              <select id="idea-project-select" name="projectId">
+                <option value="">Unlinked</option>
+              </select>
+            </label>
+          </div>
+          <label>Notes &amp; context (optional)
+            <textarea id="idea-body-input" name="body" rows="2" maxlength="4000" placeholder="Why this matters, rough sketch, or #hashtags to organize…"></textarea>
+          </label>
+          <div class="idea-capture-footer">
+            <span class="muted idea-capture-tip">Tip: In chat, type <code>/idea your thought</code> to park it immediately.</span>
+            <button class="primary-button" type="submit">Save to Vault</button>
+          </div>
+        </form>
+
+        <div class="ideas-toolbar">
+          <div id="idea-status-tabs" class="segmented-tabs" role="tablist" aria-label="Filter ideas by status">
+            <button type="button" class="segmented-tab active" data-idea-status="all" role="tab" aria-selected="true">All</button>
+            <button type="button" class="segmented-tab" data-idea-status="inbox" role="tab" aria-selected="false">Inbox</button>
+            <button type="button" class="segmented-tab" data-idea-status="active" role="tab" aria-selected="false">Active</button>
+            <button type="button" class="segmented-tab" data-idea-status="parked" role="tab" aria-selected="false">Parked</button>
+            <button type="button" class="segmented-tab" data-idea-status="promoted" role="tab" aria-selected="false">Promoted</button>
+            <button type="button" class="segmented-tab" data-idea-status="archived" role="tab" aria-selected="false">Archived</button>
+          </div>
+          <div class="ideas-search-wrap">
+            <select id="idea-project-filter" class="idea-project-filter" aria-label="Filter ideas by project">
+              <option value="all">All projects</option>
+              <option value="unassigned">Unlinked</option>
+            </select>
+            <input id="idea-search" type="search" placeholder="Filter ideas…" aria-label="Filter ideas">
+            <button id="refresh-ideas" class="secondary-button" type="button">Refresh</button>
+          </div>
+        </div>
+
+        <div id="idea-tag-filters" class="idea-tag-filters" role="group" aria-label="Filter ideas by hashtag" hidden></div>
+
+        <div id="idea-list" class="idea-list" aria-live="polite"></div>
       </section>
 
       <section id="view-garden" class="view" hidden>
@@ -436,22 +541,228 @@
           </div>
         </section>
 
-        <div class="toolbar"><input id="memory-search" type="search" placeholder="Search memories…"><button id="refresh-memories" class="secondary-button" type="button">Refresh</button></div>
+        <div class="garden-toolbar">
+          <div class="garden-toolbar-top">
+            <div id="memory-kind-tabs" class="segmented-tabs" role="tablist" aria-label="Filter memories by kind">
+              <button type="button" class="segmented-tab active" data-memory-kind="all" role="tab" aria-selected="true">All</button>
+              <button type="button" class="segmented-tab" data-memory-kind="fact" role="tab" aria-selected="false">Fact</button>
+              <button type="button" class="segmented-tab" data-memory-kind="decision" role="tab" aria-selected="false">Decision</button>
+              <button type="button" class="segmented-tab" data-memory-kind="preference" role="tab" aria-selected="false">Preference</button>
+              <button type="button" class="segmented-tab" data-memory-kind="temporary" role="tab" aria-selected="false">Temporary</button>
+              <button type="button" class="segmented-tab" data-memory-kind="lesson" role="tab" aria-selected="false">Lesson</button>
+              <button type="button" class="segmented-tab" data-memory-kind="note" role="tab" aria-selected="false">Note</button>
+            </div>
+            <label class="garden-archive-toggle">
+              <input id="memory-show-archived" type="checkbox">
+              <span>Show archived &amp; expired</span>
+            </label>
+          </div>
+          <div class="toolbar"><input id="memory-search" type="search" placeholder="Search memories…"><button id="refresh-memories" class="secondary-button" type="button">Refresh</button></div>
+        </div>
         <div id="memory-list" class="memory-list"></div>
         <form id="memory-form" class="memory-form">
           <h3>Plant a memory</h3>
           <label>What should Alfie remember?<textarea name="text" rows="2" maxlength="20000" required></textarea></label>
-          <label>Importance (1–10)<input name="importance" type="number" min="1" max="10" value="5" required></label>
+          <div class="memory-form-row">
+            <label>Kind
+              <select id="memory-kind-select" name="kind">
+                <option value="fact">Fact</option>
+                <option value="decision">Decision</option>
+                <option value="preference">Preference</option>
+                <option value="temporary">Temporary</option>
+                <option value="lesson">Lesson</option>
+                <option value="note" selected>Note</option>
+              </select>
+            </label>
+            <label>Expiry (TTL)
+              <select id="memory-ttl-select" name="ttlHours">
+                <option value="">Permanent</option>
+                <option value="24">24 hours</option>
+                <option value="168">7 days</option>
+                <option value="720">30 days</option>
+              </select>
+            </label>
+            <label>Importance (1–10)<input name="importance" type="number" min="1" max="10" value="5" required></label>
+          </div>
           <button class="primary-button" type="submit">Save to Garden</button>
         </form>
       </section>
 
       <section id="view-tools" class="view" hidden>
-        <div class="view-intro"><p class="eyebrow">PERMISSIONS & SAFETY</p><h2>Tools & access</h2><p class="muted">Reads run only within granted scopes. Changes and external actions wait for your approval.</p></div>
+        <div class="view-intro"><p class="eyebrow">PERMISSIONS &amp; SAFETY</p><h2>Tools &amp; access</h2><p class="muted">Reads run only within granted capability leases. Changes wait for approval, and deterministic watchers route alerts by attention budget.</p></div>
         <div class="two-column">
-          <section class="surface"><h3>Registered tools</h3><div id="tool-list" class="item-list"></div></section>
-          <section class="surface"><h3>Pending approvals</h3><div id="pending-list" class="item-list"></div></section>
+          <section class="surface">
+            <div class="surface-head-stack">
+              <h3>Registered tools &amp; capability leases</h3>
+              <div class="lease-selector-bar" aria-label="Capability lease defaults when granting access">
+                <label class="lease-select-field">Grant duration
+                  <select id="permission-lease-ttl" aria-label="Capability lease duration">
+                    <option value="">Permanent</option>
+                    <option value="60">1 hour lease</option>
+                    <option value="1440">24 hour lease</option>
+                    <option value="10080">7 day lease</option>
+                  </select>
+                </label>
+                <label class="lease-select-field">Project scope
+                  <select id="permission-lease-project" aria-label="Capability lease project lock">
+                    <option value="">All projects</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div id="tool-list" class="item-list"></div>
+          </section>
+          <section class="surface">
+            <h3>Pending approvals &amp; dry-run previews</h3>
+            <div id="pending-list" class="item-list"></div>
+            <div class="receipts-subblock">
+              <h4 class="watchers-subhead">Verified action receipts</h4>
+              <div id="receipt-list" class="item-list"></div>
+            </div>
+          </section>
         </div>
+
+        <section class="surface capsules-surface" id="capsules-surface" aria-labelledby="capsules-heading">
+          <div class="watchers-header">
+            <div>
+              <p class="eyebrow">SWITCHABLE WORKSPACES</p>
+              <h3 id="capsules-heading">Context Capsules</h3>
+              <p class="muted">Bind a project dossier, working posture, learning style, privacy boundary, and scoped capability lease into one switchable workspace.</p>
+            </div>
+            <button id="refresh-capsules" class="secondary-button" type="button">Refresh</button>
+          </div>
+
+          <form id="capsule-form" class="watcher-form" aria-label="Create context capsule">
+            <div class="capsule-form-row">
+              <label>Capsule name
+                <input id="capsule-name-input" name="name" maxlength="80" placeholder="e.g. Architecture Deep Work" required>
+              </label>
+              <label>Project dossier
+                <select id="capsule-project-select" name="projectId">
+                  <option value="">No project</option>
+                </select>
+              </label>
+              <label>Working posture
+                <select id="capsule-mode-select" name="workingMode">
+                  <option value="companion">Companion</option>
+                  <option value="engineer" selected>Engineer</option>
+                  <option value="investigator">Investigator</option>
+                  <option value="researcher">Researcher</option>
+                  <option value="planner">Planner</option>
+                  <option value="thinking-partner">Thinking Partner</option>
+                  <option value="creator">Creator</option>
+                  <option value="tutor">Tutor</option>
+                </select>
+              </label>
+              <label>Learning posture
+                <select id="capsule-learning-select" name="learningMode">
+                  <option value="solve">Solve it</option>
+                  <option value="explain" selected>Explain as you go</option>
+                  <option value="tutor">Tutor me</option>
+                  <option value="challenge">Challenge me</option>
+                  <option value="attempt_first">Attempt first</option>
+                </select>
+              </label>
+            </div>
+            <div class="capsule-form-row secondary-row">
+              <label>Privacy posture
+                <select id="capsule-privacy-select" name="privacyPosture">
+                  <option value="local_only" selected>Local only</option>
+                  <option value="cloud_isolated">Cloud (private data locked)</option>
+                  <option value="cloud_scoped">Cloud (explicit sections)</option>
+                </select>
+              </label>
+              <label>Lease scope (optional)
+                <select id="capsule-lease-scope" name="leaseScope">
+                  <option value="">No automatic lease</option>
+                  <option value="memory:read">memory:read</option>
+                  <option value="memory:write">memory:write</option>
+                  <option value="image:generate">image:generate</option>
+                </select>
+              </label>
+              <label>Lease TTL
+                <select id="capsule-lease-ttl" name="leaseTtl">
+                  <option value="60" selected>1 hour</option>
+                  <option value="1440">24 hours</option>
+                  <option value="10080">7 days</option>
+                </select>
+              </label>
+              <label>Description (optional)
+                <input id="capsule-desc-input" name="description" maxlength="240" placeholder="Short note on when to use this workspace">
+              </label>
+            </div>
+            <div class="watcher-form-footer">
+              <span class="muted watcher-form-note">Activating a capsule switches project, posture, learning mode, and scoped leases with a full audit entry.</span>
+              <button class="primary-button" type="submit">Save capsule</button>
+            </div>
+          </form>
+
+          <div id="capsule-list" class="item-list"></div>
+        </section>
+
+        <section class="surface watchers-surface" id="watchers-surface" aria-labelledby="watchers-heading">
+          <div class="watchers-header">
+            <div>
+              <p class="eyebrow">PROACTIVE MONITORING</p>
+              <h3 id="watchers-heading">Deterministic Watchers &amp; Attention Budget</h3>
+              <p class="muted">Monitors run deterministically with zero LLM calls and route findings across Quiet log, Digest, Notify, and Urgent tiers.</p>
+            </div>
+            <button id="refresh-watchers" class="secondary-button" type="button">Refresh</button>
+          </div>
+
+          <form id="watcher-form" class="watcher-form" aria-label="Create deterministic watcher">
+            <div class="watcher-form-row">
+              <label class="watcher-field-grow">Watcher name
+                <input id="watcher-name-input" name="name" maxlength="100" placeholder="e.g. Active project stall monitor" required>
+              </label>
+              <label class="watcher-field-compact">Monitor type
+                <select id="watcher-kind-select" name="kind">
+                  <option value="project_stall">Project stall</option>
+                  <option value="vram_threshold">GPU VRAM threshold</option>
+                  <option value="push_metric">Push metric</option>
+                  <option value="http_probe">HTTP endpoint probe</option>
+                </select>
+              </label>
+              <label class="watcher-field-compact">Alert tier
+                <select id="watcher-tier-select" name="tier">
+                  <option value="notify" selected>Notify</option>
+                  <option value="digest">Digest</option>
+                  <option value="urgent">Urgent</option>
+                  <option value="quiet_log">Quiet log</option>
+                </select>
+              </label>
+              <label class="watcher-field-mini">Cooldown (m)
+                <input id="watcher-cooldown-input" name="cooldownMinutes" type="number" min="0" max="1440" value="30">
+              </label>
+            </div>
+            <div id="watcher-config-fields" class="watcher-config-fields"></div>
+            <div class="watcher-form-footer">
+              <span class="muted watcher-form-note">External probes block loopback, private, and cloud metadata addresses and stamp readings as external untrusted data.</span>
+              <button class="primary-button" type="submit">Add watcher</button>
+            </div>
+          </form>
+
+          <div class="watchers-grid">
+            <div class="watchers-col">
+              <h4 class="watchers-subhead">Configured watchers</h4>
+              <div id="watcher-list" class="item-list"></div>
+            </div>
+            <div class="watchers-col">
+              <div class="watchers-feed-head">
+                <h4 class="watchers-subhead">Attention feed</h4>
+                <div id="watcher-event-tabs" class="segmented-tabs compact-tabs" role="tablist" aria-label="Filter watcher events by attention tier">
+                  <button type="button" class="segmented-tab active" data-watcher-tier="all" role="tab" aria-selected="true">All</button>
+                  <button type="button" class="segmented-tab" data-watcher-tier="urgent" role="tab" aria-selected="false">Urgent</button>
+                  <button type="button" class="segmented-tab" data-watcher-tier="notify" role="tab" aria-selected="false">Notify</button>
+                  <button type="button" class="segmented-tab" data-watcher-tier="digest" role="tab" aria-selected="false">Digest</button>
+                  <button type="button" class="segmented-tab" data-watcher-tier="quiet_log" role="tab" aria-selected="false">Quiet log</button>
+                </div>
+              </div>
+              <div id="watcher-event-list" class="item-list"></div>
+            </div>
+          </div>
+        </section>
+
         <section class="surface activity-surface"><h3>Recent activity</h3><div id="audit-list" class="item-list"></div></section>
       </section>
 
@@ -600,6 +911,96 @@
               <span>Maps to <code>--soul-glow</code>, <code>--soul-core-1</code>, <code>--soul-core-2</code>, <code>--soul-accent</code>, <code>--soul-ring</code></span>
             </div>
           </section>
+          <section class="surface surface-span-2 workflow-profile-surface" id="settings-workflow-surface" aria-labelledby="settings-workflow-heading">
+            <div class="shortcuts-section-header">
+              <div>
+                <p class="eyebrow">TRANSPARENT ADAPTATION</p>
+                <h3 id="settings-workflow-heading">Workflow &amp; Learning Companion Profile</h3>
+                <p class="muted">Inspect and adjust how Alfie explains, paces work, and coaches you. Always transparent, editable, and never escalates permissions.</p>
+              </div>
+              <span id="workflow-profile-status" class="muted workflow-profile-status">Saved locally in Core</span>
+            </div>
+
+            <form id="workflow-profile-form" class="workflow-profile-form">
+              <div class="workflow-pref-grid">
+                <label>Explanation depth
+                  <select id="wf-explanation-style" name="explanationStyle">
+                    <option value="concise">Concise</option>
+                    <option value="balanced" selected>Balanced</option>
+                    <option value="deep">Deep dive</option>
+                  </select>
+                </label>
+                <label>Technical change style
+                  <select id="wf-change-presentation" name="changePresentation">
+                    <option value="diffs_and_rollback" selected>Diffs &amp; rollback</option>
+                    <option value="step_by_step">Step by step</option>
+                    <option value="high_level">Outcome first</option>
+                  </select>
+                </label>
+                <label>Interruption tolerance
+                  <select id="wf-interruption-tolerance" name="interruptionTolerance">
+                    <option value="quiet">Quiet focus</option>
+                    <option value="balanced" selected>Balanced</option>
+                    <option value="proactive">Proactive</option>
+                  </select>
+                </label>
+                <label>Work increment size
+                  <select id="wf-chunk-size" name="chunkSize">
+                    <option value="small_steps">Small steps</option>
+                    <option value="balanced" selected>Balanced</option>
+                    <option value="large_chunks">Large chunks</option>
+                  </select>
+                </label>
+                <label>Learning posture
+                  <select id="wf-learning-mode" name="learningMode">
+                    <option value="solve">Solve it</option>
+                    <option value="explain" selected>Explain as you go</option>
+                    <option value="tutor">Tutor me</option>
+                    <option value="challenge">Challenge me</option>
+                    <option value="attempt_first">Attempt first</option>
+                  </select>
+                </label>
+              </div>
+              <label class="workflow-notes-field">Personal working note (optional)
+                <input id="wf-custom-notes" name="customNotes" maxlength="400" placeholder="e.g. Prefer explicit rollback commands before infrastructure changes">
+              </label>
+              <div class="watcher-form-footer">
+                <span class="muted watcher-form-note">Injected transparently into prompt assembly and visible in Turn Provenance.</span>
+                <button class="primary-button" type="submit">Save workflow profile</button>
+              </div>
+            </form>
+
+            <div class="learning-topics-block">
+              <h4 class="watchers-subhead">Developing Expertise &amp; Learning Topics</h4>
+              <p class="muted workflow-topics-sub">Qualitative self-tracked confidence — no scores or grading.</p>
+              <form id="learning-topic-form" class="learning-topic-form">
+                <input id="learning-topic-input" name="topic" maxlength="100" placeholder="Add a topic (e.g. Rust ownership, ZFS tuning)" required>
+                <select id="learning-topic-confidence" name="confidence" aria-label="Confidence level">
+                  <option value="exploring" selected>Exploring</option>
+                  <option value="practicing">Practicing</option>
+                  <option value="comfortable">Comfortable</option>
+                  <option value="confident">Confident</option>
+                </select>
+                <button class="secondary-button" type="submit">Add topic</button>
+              </form>
+              <div id="learning-topic-list" class="item-list"></div>
+            </div>
+          </section>
+
+          <section class="surface surface-span-2" id="settings-shortcuts-surface" aria-labelledby="settings-shortcuts-heading">
+            <div class="shortcuts-section-header">
+              <div>
+                <h3 id="settings-shortcuts-heading">Keyboard Shortcuts</h3>
+                <p class="muted">Rebind global shortcuts for focusing the composer, closing modals, and cycling Alfie Soul moods. Changes save automatically in this browser.</p>
+              </div>
+              <div class="shortcuts-section-actions">
+                <button id="shortcuts-open-help-btn" class="secondary-button" type="button">Shortcut reference</button>
+                <button id="shortcuts-reset-all-btn" class="secondary-button" type="button">Reset defaults</button>
+              </div>
+            </div>
+            <div id="settings-shortcuts-list" class="shortcuts-settings-list" role="list" aria-label="Customizable keyboard shortcuts"></div>
+            <p id="settings-shortcuts-status" class="shortcuts-status-note" role="status" aria-live="polite"></p>
+          </section>
           <section class="surface" id="settings-vram-surface">
             <div class="vram-surface-head">
               <h3>GPU VRAM &amp; Context Handoff</h3>
@@ -700,18 +1101,54 @@
 
   <div id="project-modal" class="project-modal" role="dialog" aria-modal="true" aria-labelledby="project-modal-title" hidden>
     <div class="project-modal-backdrop" data-project-modal-close="backdrop"></div>
-    <form id="project-form" class="project-modal-card">
+    <form id="project-form" class="project-modal-card project-dossier-modal">
       <div class="project-modal-header">
         <h2 id="project-modal-title">New project</h2>
         <button type="button" id="project-modal-close" class="icon-button" aria-label="Close project dialog">×</button>
       </div>
       <input type="hidden" name="projectId" value="">
-      <label>Project name
-        <input id="project-name-input" name="name" maxlength="80" placeholder="e.g. Local Harness Refactor" required>
+      <div class="project-modal-row">
+        <label class="project-field-grow">Project name
+          <input id="project-name-input" name="name" maxlength="80" placeholder="e.g. Local Harness Refactor" required>
+        </label>
+        <label class="project-field-status">Status
+          <select id="project-status-select" name="status">
+            <option value="active">Active</option>
+            <option value="planning">Planning</option>
+            <option value="paused">Paused</option>
+            <option value="completed">Completed</option>
+            <option value="archived">Archived</option>
+          </select>
+        </label>
+      </div>
+      <label>Vision &amp; objective
+        <textarea id="project-vision-input" name="vision" rows="2" maxlength="600" placeholder="What does success look like for this project?"></textarea>
       </label>
-      <label>Shared project notes (carried into continuation chats)
-        <textarea id="project-description-input" name="description" rows="3" maxlength="600" placeholder="Goals, architecture decisions, or constraints shared across chats in this project…"></textarea>
+      <label>Shared project notes
+        <textarea id="project-description-input" name="description" rows="2" maxlength="600" placeholder="Key context carried across chats and handoffs in this project…"></textarea>
       </label>
+      <details class="project-dossier-details" id="project-dossier-details" open>
+        <summary>Living Project Dossier (Architecture, Next Actions, Blockers &amp; Decisions)</summary>
+        <div class="project-dossier-fields">
+          <label>Architecture &amp; constraints
+            <textarea id="project-architecture-input" name="architecture" rows="2" maxlength="1200" placeholder="Stack, system boundaries, invariants, or hosting topology…"></textarea>
+          </label>
+          <div class="project-dossier-grid">
+            <label>Next actions (one per line)
+              <textarea id="project-next-actions-input" name="nextActions" rows="3" placeholder="Migrate storage to SQLite WAL&#10;Verify Petrio read adapters"></textarea>
+            </label>
+            <label>Blockers (one per line)
+              <textarea id="project-blockers-input" name="blockers" rows="3" placeholder="Waiting on Proxmox backup token"></textarea>
+            </label>
+          </div>
+          <label>Key decisions (one per line, e.g. Choice — Rationale)
+            <textarea id="project-decisions-input" name="decisions" rows="2" placeholder="Keep Core in Node.js — Single authoritative owner for memory and approvals"></textarea>
+          </label>
+          <label>Deliberately postponed (one per line)
+            <textarea id="project-postponed-input" name="postponed" rows="2" placeholder="Multi-agent workshop until async job queue lands"></textarea>
+          </label>
+        </div>
+      </details>
       <fieldset class="project-color-fieldset">
         <legend>Project accent</legend>
         <div class="project-color-choices" id="project-color-choices">
@@ -729,6 +1166,36 @@
         <button type="submit" id="project-submit-btn" class="primary-button">Create project</button>
       </div>
     </form>
+  </div>
+
+  <div id="shortcuts-help-modal" class="shortcuts-modal" role="dialog" aria-modal="true" aria-labelledby="shortcuts-help-title" hidden>
+    <div class="shortcuts-modal-backdrop" data-shortcuts-modal-close="backdrop"></div>
+    <section class="shortcuts-modal-card">
+      <header class="shortcuts-modal-header">
+        <div>
+          <p class="eyebrow">KEYBOARD REFERENCE</p>
+          <h2 id="shortcuts-help-title">Keyboard Shortcuts</h2>
+        </div>
+        <button type="button" id="shortcuts-help-close" class="icon-button" aria-label="Close keyboard shortcuts help">×</button>
+      </header>
+      <div class="shortcuts-modal-body">
+        <div class="shortcuts-help-group">
+          <h3 class="shortcuts-help-group-title">Global shortcuts (customizable)</h3>
+          <div id="shortcuts-help-custom-list" class="shortcuts-help-list" role="list"></div>
+        </div>
+        <div class="shortcuts-help-group">
+          <h3 class="shortcuts-help-group-title">Chat &amp; workspace</h3>
+          <div id="shortcuts-help-builtin-list" class="shortcuts-help-list" role="list"></div>
+        </div>
+      </div>
+      <footer class="shortcuts-modal-footer">
+        <span class="muted shortcuts-modal-tip">Tip: Press <kbd class="shortcut-kbd">?</kbd> anytime outside text fields to open this guide.</span>
+        <div class="shortcuts-modal-footer-actions">
+          <button type="button" id="shortcuts-help-customize-btn" class="secondary-button">Customize in Settings</button>
+          <button type="button" id="shortcuts-help-done-btn" class="primary-button">Done</button>
+        </div>
+      </footer>
+    </section>
   </div>
 </body>
 </html>

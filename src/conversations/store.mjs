@@ -1,18 +1,55 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { safeUserKey, userDataFile, UserMutex, atomicWriteJson } from "../storage/userJsonStore.mjs";
 
-const USER_ID_PATTERN = /^[a-zA-Z0-9._:@-]{1,128}$/;
 const CONVERSATION_ID_PATTERN = /^[a-f0-9-]{36}$/i;
 const MAX_CONVERSATIONS = 500;
 const MAX_MESSAGES = 500;
 const MAX_CONTENT_LENGTH = 50000;
 
-function safeUserKey(userId) {
-  if (typeof userId !== "string" || !USER_ID_PATTERN.test(userId)) {
-    throw Object.assign(new Error("A verified user identity is required."), { status: 401 });
-  }
-  return createHash("sha256").update(userId).digest("hex");
+function cleanProvenance(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const workingMode = raw.workingMode && typeof raw.workingMode === "object"
+    ? {
+        id: String(raw.workingMode.id || "companion").slice(0, 40),
+        label: String(raw.workingMode.label || "Companion").slice(0, 60)
+      }
+    : undefined;
+  const project = raw.project && typeof raw.project === "object" && raw.project.name
+    ? {
+        id: CONVERSATION_ID_PATTERN.test(String(raw.project.id || "")) ? String(raw.project.id) : null,
+        name: String(raw.project.name).slice(0, 80),
+        status: String(raw.project.status || "active").slice(0, 32)
+      }
+    : null;
+  const memoriesInjected = Array.isArray(raw.memoriesInjected)
+    ? raw.memoriesInjected.slice(0, 6).map((m) => ({
+        id: String(m?.id || "").slice(0, 64),
+        title: String(m?.title || "Memory").slice(0, 120),
+        importance: Math.max(1, Math.min(10, Number(m?.importance) || 5))
+      }))
+    : [];
+  const toolsShortlisted = Array.isArray(raw.toolsShortlisted)
+    ? raw.toolsShortlisted.slice(0, 12).map((t) => String(t).slice(0, 80))
+    : [];
+  const toolsUsed = Array.isArray(raw.toolsUsed)
+    ? raw.toolsUsed.slice(0, 12).map((t) => String(t).slice(0, 80))
+    : [];
+  const blockedCategories = Array.isArray(raw.blockedCategories)
+    ? raw.blockedCategories.slice(0, 10).map((c) => String(c).slice(0, 60))
+    : [];
+  return {
+    ...(workingMode ? { workingMode } : {}),
+    project,
+    memoriesInjected,
+    toolsShortlisted,
+    toolsUsed,
+    tainted: Boolean(raw.tainted),
+    privacyFiltered: Boolean(raw.privacyFiltered),
+    blockedCategories,
+    steps: Number.isFinite(Number(raw.steps)) ? Math.max(0, Math.min(20, Math.round(Number(raw.steps)))) : 1
+  };
 }
 
 export class ConversationStore {
@@ -20,22 +57,15 @@ export class ConversationStore {
     this.dataDirectory = path.resolve(dataDirectory);
     this.now = now;
     this.uuid = uuid;
-    this.queues = new Map();
+    this.mutex = new UserMutex();
   }
 
   fileFor(userId) {
-    const key = safeUserKey(userId);
-    return path.join(this.dataDirectory, "users", key, "conversations.json");
+    return userDataFile(this.dataDirectory, userId, "conversations.json");
   }
 
   async exclusive(userId, operation) {
-    const key = safeUserKey(userId);
-    const previous = this.queues.get(key) || Promise.resolve();
-    const current = previous.then(operation, operation);
-    const queued = current.catch(() => {});
-    this.queues.set(key, queued);
-    try { return await current; }
-    finally { if (this.queues.get(key) === queued) this.queues.delete(key); }
+    return this.mutex.run(safeUserKey(userId), operation);
   }
 
   async load(userId) {
@@ -54,21 +84,8 @@ export class ConversationStore {
   }
 
   async save(userId, store) {
-    const file = this.fileFor(userId);
-    const directory = path.dirname(file);
-    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-    await fs.chmod(directory, 0o700);
-    const temporary = path.join(directory, `conversations.${this.uuid()}.tmp`);
-    const handle = await fs.open(temporary, "wx", 0o600);
-    try {
-      store.revision = Math.max(0, Number(store.revision) || 0) + 1;
-      await handle.writeFile(JSON.stringify(store, null, 2), "utf8");
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await fs.rename(temporary, file);
-    await fs.chmod(file, 0o600);
+    store.revision = Math.max(0, Number(store.revision) || 0) + 1;
+    await atomicWriteJson(this.fileFor(userId), store, { uuid: this.uuid });
   }
 
   cleanDatabase(userId, source = {}) {
@@ -118,6 +135,10 @@ export class ConversationStore {
         }
         if (rawMessage.metrics && typeof rawMessage.metrics === "object" && !Array.isArray(rawMessage.metrics)) {
           message.metrics = rawMessage.metrics;
+        }
+        if (role === "assistant" && rawMessage.provenance) {
+          const safeProv = cleanProvenance(rawMessage.provenance);
+          if (safeProv) message.provenance = safeProv;
         }
         if (rawMessage.reaction && ["like", "flag"].includes(String(rawMessage.reaction))) {
           message.reaction = String(rawMessage.reaction);
@@ -391,7 +412,16 @@ export class ConversationStore {
           }
         : undefined;
       const reaction = (input.reaction && ["like", "flag"].includes(String(input.reaction))) ? String(input.reaction) : undefined;
-      const message = { id: this.uuid(), role, content, createdAt: this.now(), ...(metrics ? { metrics } : {}), ...(reaction ? { reaction, reactedAt: this.now() } : {}) };
+      const provenance = role === "assistant" ? cleanProvenance(input.provenance) : undefined;
+      const message = {
+        id: this.uuid(),
+        role,
+        content,
+        createdAt: this.now(),
+        ...(metrics ? { metrics } : {}),
+        ...(provenance ? { provenance } : {}),
+        ...(reaction ? { reaction, reactedAt: this.now() } : {})
+      };
       conversation.messages.push(message);
       conversation.updatedAt = message.createdAt;
       if (role === "user" && conversation.title === "New conversation") {

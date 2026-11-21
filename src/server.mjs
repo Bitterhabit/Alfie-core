@@ -19,6 +19,11 @@ import { registerMemoryTools } from "./integrations/memoryTools.mjs";
 import { ImageGenerator } from "./integrations/imageGenerator.mjs";
 import { registerImageTools } from "./integrations/imageTools.mjs";
 import { ProjectStore } from "./projects/store.mjs";
+import { IdeaStore } from "./ideas/store.mjs";
+import { WatcherStore } from "./watchers/store.mjs";
+import { WorkflowProfileStore, EXPLANATION_STYLES, CHANGE_PRESENTATIONS, INTERRUPTION_TOLERANCES, CHUNK_SIZES, LEARNING_MODES, TOPIC_CONFIDENCE_LEVELS } from "./profile/store.mjs";
+import { ContextCapsuleStore, PRIVACY_POSTURES } from "./capsules/store.mjs";
+import { listWorkingModes, resolveWorkingMode } from "./agent/workingModes.mjs";
 import { buildHandoffBrief } from "./conversations/handoff.mjs";
 import { VramMonitor } from "./system/vramMonitor.mjs";
 import { CloudAgentStore } from "./providers/cloudAgentStore.mjs";
@@ -163,6 +168,10 @@ export function createAlfieCoreServer({
   petrioIdentityAuth = createPetrioIdentityAuth(),
   conversationStore = new ConversationStore(),
   projectStore = new ProjectStore(),
+  ideaStore = new IdeaStore(),
+  watcherStore = new WatcherStore(),
+  profileStore = new WorkflowProfileStore(),
+  capsuleStore = new ContextCapsuleStore(),
   vramMonitor = new VramMonitor(),
   memoryStore = new MemoryStore(),
   auditStore = new AuditStore(),
@@ -181,7 +190,7 @@ export function createAlfieCoreServer({
   registerMemoryTools(toolRegistry, memoryStore);
   registerImageTools(toolRegistry, imageGenerator);
   const toolDispatcher = new ToolDispatcher({ registry: toolRegistry, permissionStore, pendingActionStore, auditStore, assetsDirectory });
-  const agentLoop = new AgentLoop({ providerRegistry, providerConfig: providers, toolRegistry, dispatcher: toolDispatcher, contextAssembler, memoryStore, imageGenerator, cloudAgentStore, cloudAdapters, assetsDirectory });
+  const agentLoop = new AgentLoop({ providerRegistry, providerConfig: providers, toolRegistry, dispatcher: toolDispatcher, contextAssembler, memoryStore, projectStore, watcherStore, profileStore, imageGenerator, cloudAgentStore, cloudAdapters, assetsDirectory });
 
   return createHttpServer(async (req, res) => {
     const url = new URL(req.url || "/", "http://alfie-core.internal");
@@ -275,9 +284,18 @@ export function createAlfieCoreServer({
         service: "alfie-core",
         version: SERVICE_VERSION,
         identityProviders: identityAuth.providerIds || [identityAuth.providerId].filter(Boolean),
-        implemented: ["multi-client-signed-identity", "cross-client-account-linking", "service-authentication", "health", "readiness", "provider-registry", "provider-health", "model-selection", "cloud-coding-agents", "cloud-privacy-controls", "bounded-agent-loop", "intent-based-context-assembly", "strict-json-schema-tool-validation", "read-draft-write-risk-tiers", "persistent-pending-actions", "explicit-approve-reject", "untrusted-data-envelopes", "tool-call-deduplication", "four-step-turn-budget", "30-second-wall-clock-budget", "tool-output-truncation", "signed-identity-provider-contract", "conversation-persistence", "conversation-snapshot-migration", "projects", "context-handoff", "vram-monitoring", "memory-crud", "memory-provenance", "ranked-memory-retrieval", "untrusted-memory-context", "memory-search-tool", "memory-read-tool", "approval-gated-memory-create", "approval-gated-memory-update", "approval-gated-memory-forget", "per-user-action-audit-log", "scoped-tool-registry", "permission-grants", "dashboard-approval-ui", "dashboard-permission-management"],
-        planned: ["mail-tool-adapter", "calendar-journal-write-adapters", "standalone-account-recovery", "multi-user-administration"]
+        implemented: ["multi-client-signed-identity", "cross-client-account-linking", "service-authentication", "health", "readiness", "provider-registry", "provider-health", "model-selection", "cloud-coding-agents", "cloud-privacy-controls", "adaptive-working-modes", "living-project-dossiers", "ideas-vault", "typed-memory-v2", "persistent-trust-provenance", "capability-leases", "deterministic-watcher-framework", "attention-budget-router", "dry-run-simulation-receipts", "workflow-learning-profile", "context-capsules", "turn-provenance", "bounded-agent-loop", "intent-based-context-assembly", "strict-json-schema-tool-validation", "read-draft-write-risk-tiers", "persistent-pending-actions", "explicit-approve-reject", "untrusted-data-envelopes", "tool-call-deduplication", "four-step-turn-budget", "30-second-wall-clock-budget", "tool-output-truncation", "signed-identity-provider-contract", "conversation-persistence", "conversation-snapshot-migration", "projects", "context-handoff", "vram-monitoring", "memory-crud", "memory-provenance", "ranked-memory-retrieval", "untrusted-memory-context", "memory-search-tool", "memory-read-tool", "approval-gated-memory-create", "approval-gated-memory-update", "approval-gated-memory-forget", "per-user-action-audit-log", "scoped-tool-registry", "permission-grants", "dashboard-approval-ui", "dashboard-permission-management"],
+        planned: ["sqlite-wal-storage-migration", "mail-tool-adapter", "calendar-journal-write-adapters", "standalone-account-recovery", "multi-user-administration"]
       });
+    }
+
+    if (req.method === "GET" && url.pathname === "/v1/modes") {
+      try {
+        await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search });
+        return json(res, 200, { modes: listWorkingModes() });
+      } catch (error) {
+        return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) });
+      }
     }
 
 
@@ -291,30 +309,64 @@ export function createAlfieCoreServer({
     const isToolExecution = url.pathname === "/v1/tools/execute";
     const isToolRejection = url.pathname === "/v1/tools/reject";
     const isPendingActions = url.pathname === "/v1/tools/pending";
-    if (isToolsCollection || isPermissionsCollection || isToolPlan || isToolApproval || isToolExecution || isToolRejection || isPendingActions) {
+    const isActionReceipts = url.pathname === "/v1/tools/receipts";
+    if (isToolsCollection || isPermissionsCollection || isToolPlan || isToolApproval || isToolExecution || isToolRejection || isPendingActions || isActionReceipts) {
       let identity;
       try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
       catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
       try {
-        const scopes = await permissionStore.list(identity.userId);
+        const detailed = typeof permissionStore.listDetailed === "function"
+          ? await permissionStore.listDetailed(identity.userId)
+          : { scopes: await permissionStore.list(identity.userId), leases: [] };
+        const scopes = detailed.scopes;
         if (isToolsCollection && req.method === "GET") {
-          return json(res, 200, { tools: toolRegistry.list(scopes) });
+          return json(res, 200, { tools: toolRegistry.list(scopes), leases: detailed.leases });
         }
         if (isPermissionsCollection && req.method === "GET") {
-          return json(res, 200, { scopes });
+          return json(res, 200, { scopes, leases: detailed.leases });
         }
         if (isPendingActions && req.method === "GET") {
           return json(res, 200, { actions: await pendingActionStore.list(identity.userId) });
+        }
+        if (isActionReceipts && req.method === "GET") {
+          const receipts = typeof pendingActionStore.listReceipts === "function"
+            ? await pendingActionStore.listReceipts(identity.userId, { limit: url.searchParams.get("limit") || 25 })
+            : [];
+          return json(res, 200, { receipts });
         }
         if (isPermissionsCollection && req.method === "POST") {
           const body = await readJsonBody(req);
           const knownScope = toolRegistry.list().some((tool) => tool.scope === body.scope);
           if (!knownScope) return json(res, 404, { error: "No registered tool currently uses that permission scope." });
-          return json(res, 200, { scopes: await permissionStore.grant(identity.userId, body.scope) });
+          if (body.projectId) await projectStore.get(identity.userId, body.projectId);
+          await permissionStore.grant(identity.userId, body.scope, {
+            ttlMinutes: body.ttlMinutes,
+            expiresAt: body.expiresAt,
+            projectId: body.projectId,
+            note: body.note
+          });
+          const next = typeof permissionStore.listDetailed === "function"
+            ? await permissionStore.listDetailed(identity.userId)
+            : { scopes: await permissionStore.list(identity.userId), leases: [] };
+          await auditStore.record(identity.userId, {
+            event: "permission.granted",
+            actor: "user",
+            toolId: body.scope,
+            risk: "low",
+            status: "granted",
+            detail: body.ttlMinutes
+              ? `Granted capability lease for ${body.scope} (${body.ttlMinutes} min${body.projectId ? ", project-scoped" : ""}).`
+              : `Granted ${body.scope}${body.projectId ? " (project-scoped)" : ""}.`
+          });
+          return json(res, 200, next);
         }
         if (isPermissionsCollection && req.method === "DELETE") {
           const body = await readJsonBody(req);
-          return json(res, 200, { scopes: await permissionStore.revoke(identity.userId, body.scope) });
+          await permissionStore.revoke(identity.userId, body.scope);
+          const next = typeof permissionStore.listDetailed === "function"
+            ? await permissionStore.listDetailed(identity.userId)
+            : { scopes: await permissionStore.list(identity.userId), leases: [] };
+          return json(res, 200, next);
         }
         if (isToolPlan && req.method === "POST") {
           const body = await readJsonBody(req);
@@ -360,8 +412,12 @@ export function createAlfieCoreServer({
             origin: url.searchParams.get("origin") || undefined,
             source: url.searchParams.get("source") || undefined,
             type: url.searchParams.get("type") || undefined,
+            kind: url.searchParams.get("kind") || undefined,
+            trust: url.searchParams.get("trust") || undefined,
             tag: url.searchParams.get("tag") || undefined,
             minImportance: url.searchParams.get("minImportance") || 0,
+            includeArchived: url.searchParams.get("includeArchived") === "true",
+            includeExpired: url.searchParams.get("includeExpired") === "true",
             q: url.searchParams.get("q") || undefined,
             limit: url.searchParams.get("limit") || 100,
             sort: url.searchParams.get("sort") || "newest"
@@ -465,11 +521,251 @@ export function createAlfieCoreServer({
         if (projectMatch && req.method === "DELETE") {
           const removed = await projectStore.remove(identity.userId, projectMatch[1]);
           const cleared = await conversationStore.clearProject(identity.userId, projectMatch[1]);
-          return json(res, 200, { deleted: removed.deleted, unassignedConversations: cleared.cleared });
+          const clearedIdeas = await ideaStore.clearProject(identity.userId, projectMatch[1]);
+          return json(res, 200, { deleted: removed.deleted, unassignedConversations: cleared.cleared, unassignedIdeas: clearedIdeas.cleared });
         }
       } catch (error) {
         return json(res, error.status || 500, {
           error: error.message || "Project operation failed.",
+          ...(error.code ? { code: error.code } : {})
+        });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    const ideaMatch = /^\/v1\/ideas\/([a-f0-9-]{36})$/i.exec(url.pathname);
+    const isIdeaCollection = url.pathname === "/v1/ideas";
+    if (isIdeaCollection || ideaMatch) {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      try {
+        if (isIdeaCollection && req.method === "GET") {
+          const filters = {
+            status: url.searchParams.get("status") || "",
+            projectId: url.searchParams.get("projectId") || "",
+            query: url.searchParams.get("q") || ""
+          };
+          const tag = url.searchParams.get("tag") || "";
+          const [ideas, tags] = await Promise.all([
+            ideaStore.list(identity.userId, { ...filters, tag }),
+            ideaStore.listTags(identity.userId, filters)
+          ]);
+          return json(res, 200, { ideas, tags });
+        }
+        if (isIdeaCollection && req.method === "POST") {
+          const body = await readJsonBody(req);
+          if (body.projectId) {
+            await projectStore.get(identity.userId, body.projectId);
+          }
+          const idea = await ideaStore.create(identity.userId, body);
+          return json(res, 201, { idea });
+        }
+        if (ideaMatch && req.method === "GET") {
+          return json(res, 200, { idea: await ideaStore.get(identity.userId, ideaMatch[1]) });
+        }
+        if (ideaMatch && req.method === "PATCH") {
+          const body = await readJsonBody(req);
+          if (body.projectId) {
+            await projectStore.get(identity.userId, body.projectId);
+          }
+          return json(res, 200, { idea: await ideaStore.update(identity.userId, ideaMatch[1], body) });
+        }
+        if (ideaMatch && req.method === "DELETE") {
+          return json(res, 200, await ideaStore.remove(identity.userId, ideaMatch[1]));
+        }
+      } catch (error) {
+        return json(res, error.status || 500, {
+          error: error.message || "Idea operation failed.",
+          ...(error.code ? { code: error.code } : {})
+        });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    const watcherMatch = /^\/v1\/watchers\/([a-f0-9-]{36})$/i.exec(url.pathname);
+    const watcherCheckMatch = /^\/v1\/watchers\/([a-f0-9-]{36})\/check$/i.exec(url.pathname);
+    const watcherIngestMatch = /^\/v1\/watchers\/([a-f0-9-]{36})\/ingest$/i.exec(url.pathname);
+    const watcherEventAckMatch = /^\/v1\/watchers\/events\/([a-f0-9-]{36})\/ack$/i.exec(url.pathname);
+    const isWatchersCollection = url.pathname === "/v1/watchers";
+    const isWatcherEventsCollection = url.pathname === "/v1/watchers/events";
+    if (isWatchersCollection || isWatcherEventsCollection || watcherMatch || watcherCheckMatch || watcherIngestMatch || watcherEventAckMatch) {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      try {
+        if (isWatchersCollection && req.method === "GET") {
+          const [watchers, events] = await Promise.all([
+            watcherStore.list(identity.userId),
+            watcherStore.listEvents(identity.userId, { limit: 40 })
+          ]);
+          const unacknowledgedCount = events.filter((e) => !e.acknowledged).length;
+          return json(res, 200, { watchers, unacknowledgedCount });
+        }
+        if (isWatchersCollection && req.method === "POST") {
+          const body = await readJsonBody(req);
+          if (body.kind === "project_stall" && body.config?.projectId) {
+            await projectStore.get(identity.userId, body.config.projectId);
+          }
+          const watcher = await watcherStore.create(identity.userId, body);
+          await auditStore.record(identity.userId, {
+            event: "watcher.created",
+            actor: "user",
+            toolId: watcher.kind,
+            risk: "low",
+            status: "active",
+            detail: `Created deterministic watcher "${watcher.name}" (${watcher.tier}).`
+          });
+          return json(res, 201, { watcher });
+        }
+        if (watcherMatch && req.method === "GET") {
+          return json(res, 200, { watcher: await watcherStore.get(identity.userId, watcherMatch[1]) });
+        }
+        if (watcherMatch && req.method === "PATCH") {
+          const body = await readJsonBody(req);
+          return json(res, 200, { watcher: await watcherStore.update(identity.userId, watcherMatch[1], body) });
+        }
+        if (watcherMatch && req.method === "DELETE") {
+          const removed = await watcherStore.remove(identity.userId, watcherMatch[1]);
+          return json(res, 200, removed);
+        }
+        if (watcherCheckMatch && req.method === "POST") {
+          const result = await watcherStore.runCheck(identity.userId, watcherCheckMatch[1], {
+            projectStore,
+            vramMonitor,
+            endpoints: providers.endpoints
+          });
+          return json(res, 200, result);
+        }
+        if (watcherIngestMatch && req.method === "POST") {
+          const body = await readJsonBody(req);
+          const result = await watcherStore.ingestMetric(identity.userId, watcherIngestMatch[1], body);
+          return json(res, 200, result);
+        }
+        if (isWatcherEventsCollection && req.method === "GET") {
+          const events = await watcherStore.listEvents(identity.userId, {
+            tier: url.searchParams.get("tier") || "",
+            unacknowledged: url.searchParams.get("unacknowledged") === "true",
+            limit: url.searchParams.get("limit") || 50
+          });
+          return json(res, 200, { events });
+        }
+        if (watcherEventAckMatch && req.method === "POST") {
+          const event = await watcherStore.acknowledgeEvent(identity.userId, watcherEventAckMatch[1]);
+          return json(res, 200, { event });
+        }
+      } catch (error) {
+        return json(res, error.status || 500, {
+          error: error.message || "Watcher operation failed.",
+          ...(error.code ? { code: error.code } : {})
+        });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    const isProfileRoot = url.pathname === "/v1/profile";
+    const isProfileTopics = url.pathname === "/v1/profile/topics";
+    const profileTopicMatch = /^\/v1\/profile\/topics\/([a-f0-9-]{36})$/i.exec(url.pathname);
+    if (isProfileRoot || isProfileTopics || profileTopicMatch) {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      try {
+        if (isProfileRoot && req.method === "GET") {
+          return json(res, 200, {
+            profile: await profileStore.get(identity.userId),
+            options: {
+              explanationStyles: EXPLANATION_STYLES,
+              changePresentations: CHANGE_PRESENTATIONS,
+              interruptionTolerances: INTERRUPTION_TOLERANCES,
+              chunkSizes: CHUNK_SIZES,
+              learningModes: LEARNING_MODES,
+              confidenceLevels: TOPIC_CONFIDENCE_LEVELS
+            }
+          });
+        }
+        if (isProfileRoot && (req.method === "PUT" || req.method === "PATCH")) {
+          const body = await readJsonBody(req);
+          const profile = await profileStore.update(identity.userId, body);
+          return json(res, 200, { profile });
+        }
+        if (isProfileTopics && req.method === "POST") {
+          const body = await readJsonBody(req);
+          return json(res, 201, await profileStore.addTopic(identity.userId, body));
+        }
+        if (profileTopicMatch && req.method === "PATCH") {
+          const body = await readJsonBody(req);
+          return json(res, 200, await profileStore.updateTopic(identity.userId, profileTopicMatch[1], body));
+        }
+        if (profileTopicMatch && req.method === "DELETE") {
+          return json(res, 200, await profileStore.removeTopic(identity.userId, profileTopicMatch[1]));
+        }
+      } catch (error) {
+        return json(res, error.status || 500, {
+          error: error.message || "Workflow profile operation failed.",
+          ...(error.code ? { code: error.code } : {})
+        });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    const isCapsulesCollection = url.pathname === "/v1/capsules";
+    const capsuleMatch = /^\/v1\/capsules\/([a-f0-9-]{36})$/i.exec(url.pathname);
+    const capsuleActivateMatch = /^\/v1\/capsules\/([a-f0-9-]{36})\/activate$/i.exec(url.pathname);
+    if (isCapsulesCollection || capsuleMatch || capsuleActivateMatch) {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      try {
+        const knownScopes = new Set(toolRegistry.list().map((tool) => tool.scope));
+        if (isCapsulesCollection && req.method === "GET") {
+          const data = await capsuleStore.list(identity.userId);
+          return json(res, 200, { ...data, privacyPostures: PRIVACY_POSTURES });
+        }
+        if (isCapsulesCollection && req.method === "POST") {
+          const body = await readJsonBody(req);
+          if (body.projectId) await projectStore.get(identity.userId, body.projectId);
+          const capsule = await capsuleStore.create(identity.userId, body, { allowedScopes: knownScopes });
+          return json(res, 201, { capsule });
+        }
+        if (capsuleMatch && req.method === "GET") {
+          return json(res, 200, { capsule: await capsuleStore.get(identity.userId, capsuleMatch[1]) });
+        }
+        if (capsuleMatch && req.method === "PATCH") {
+          const body = await readJsonBody(req);
+          if (body.projectId) await projectStore.get(identity.userId, body.projectId);
+          const capsule = await capsuleStore.update(identity.userId, capsuleMatch[1], body, { allowedScopes: knownScopes });
+          return json(res, 200, { capsule });
+        }
+        if (capsuleMatch && req.method === "DELETE") {
+          return json(res, 200, await capsuleStore.remove(identity.userId, capsuleMatch[1]));
+        }
+        if (capsuleActivateMatch && req.method === "POST") {
+          const { activeCapsuleId, capsule } = await capsuleStore.markActivated(identity.userId, capsuleActivateMatch[1]);
+          const profile = await profileStore.update(identity.userId, { learningMode: capsule.learningMode });
+          const grantedLeases = [];
+          for (const lease of (capsule.leaseTemplate || [])) {
+            if (!knownScopes.has(lease.scope)) continue;
+            await permissionStore.grant(identity.userId, lease.scope, {
+              ttlMinutes: lease.ttlMinutes ?? null,
+              projectId: capsule.projectId || null,
+              note: `Activated via capsule "${capsule.name}"`
+            });
+            grantedLeases.push({ scope: lease.scope, ttlMinutes: lease.ttlMinutes ?? null, projectId: capsule.projectId || null });
+          }
+          await auditStore.record(identity.userId, {
+            event: "capsule.activated",
+            actor: "user",
+            toolId: capsule.id,
+            risk: "low",
+            status: "active",
+            detail: `Activated Context Capsule "${capsule.name}" (${capsule.workingMode} · ${capsule.learningMode} · ${grantedLeases.length} lease(s)).`
+          });
+          return json(res, 200, { activeCapsuleId, capsule, profile, grantedLeases });
+        }
+      } catch (error) {
+        return json(res, error.status || 500, {
+          error: error.message || "Context capsule operation failed.",
           ...(error.code ? { code: error.code } : {})
         });
       }
@@ -752,17 +1048,21 @@ export function createAlfieCoreServer({
         };
 
         const agentProvider = ["local", "gemini", "openai"].includes(body.agentProvider) ? body.agentProvider : "local";
+        const workingMode = resolveWorkingMode(body.workingMode).id;
+        const projectId = typeof body.projectId === "string" && /^[a-f0-9-]{36}$/i.test(body.projectId) ? body.projectId : null;
         const result = await agentLoop.run({
           userId: identity.userId, messages: cleanMessages(body.messages),
           dashboardState: body.dashboardState || {},
           mode: ["auto", "light", "standard", "work"].includes(body.mode) ? body.mode : providers.mode,
+          workingMode,
+          projectId,
           agentProvider,
           turnId: body.turnId || randomUUID(), signal: controller.signal,
           onProgress
         });
         if (controller.signal.aborted) return;
         ensureStreamHeaders(result.status === "awaiting_user_approval" ? 202 : 200);
-        writeStreamEvent(res, { type: "meta", status: result.status, steps: result.steps, ...(result.privacyReport ? { privacyReport: result.privacyReport } : {}) });
+        writeStreamEvent(res, { type: "meta", status: result.status, steps: result.steps, ...(result.privacyReport ? { privacyReport: result.privacyReport } : {}), ...(result.provenance ? { provenance: result.provenance } : {}) });
         if (result.message) writeStreamEvent(res, { type: "delta", content: result.message });
         if (result.status === "awaiting_user_approval") {
           writeStreamEvent(res, { type: "approval_required", actionId: result.actionId, toolId: result.toolId, summary: result.summary });
@@ -785,12 +1085,14 @@ export function createAlfieCoreServer({
         const body = await readJsonBody(req);
         const messages = cleanMessages(body.messages);
         const requestedMode = ["auto", "light", "standard", "work"].includes(body.mode) ? body.mode : providers.mode;
+        const workingMode = resolveWorkingMode(body.workingMode).id;
+        const projectId = typeof body.projectId === "string" && /^[a-f0-9-]{36}$/i.test(body.projectId) ? body.projectId : null;
         const agentProvider = ["local", "gemini", "openai"].includes(body.agentProvider) ? body.agentProvider : "local";
         const turnId = randomUUID();
         try {
           const result = await agentLoop.run({
             userId: identity.userId, messages, dashboardState: body.dashboardState || {},
-            mode: requestedMode, agentProvider, turnId, signal: controller.signal
+            mode: requestedMode, workingMode, projectId, agentProvider, turnId, signal: controller.signal
           });
           return json(res, result.status === "awaiting_user_approval" ? 202 : 200, result);
         } finally {

@@ -34,7 +34,8 @@ export class ToolRegistry {
 
   register({
     id, name, description, scope, risk = "read", trust, network, externalAction,
-    untrustedOutput = false, approvalPreview = null, approvalGuard = null, tags = [],
+    untrustedOutput = false, approvalPreview = null, approvalGuard = null,
+    dryRun = null, verifyResult = null, tags = [],
     inputSchema = { type: "object", properties: {}, additionalProperties: false },
     handler
   }) {
@@ -71,6 +72,8 @@ export class ToolRegistry {
       untrustedOutput: trust === "external" || Boolean(untrustedOutput),
       approvalPreview: typeof approvalPreview === "function" ? approvalPreview : null,
       approvalGuard: typeof approvalGuard === "function" ? approvalGuard : null,
+      dryRun: typeof dryRun === "function" ? dryRun : null,
+      verifyResult: typeof verifyResult === "function" ? verifyResult : null,
       tags: Object.freeze(Array.isArray(tags) ? tags.map(String).slice(0, 20) : []),
       requiresApproval: risk === "write" || externalAction || (network && risk === "draft"),
       approvalWhenUntrusted: network,

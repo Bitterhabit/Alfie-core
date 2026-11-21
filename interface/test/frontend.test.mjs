@@ -72,13 +72,13 @@ test("login screen removes hardcoded default credentials, updates asset version,
   const css = await fs.readFile(new URL("styles.css", root), "utf8");
   const sw = await fs.readFile(new URL("sw.js", root), "utf8");
 
-  assert.match(html, /styles\.css\?v=alfie-workspace-0\.9\.0/);
-  assert.match(html, /app\.js\?v=alfie-workspace-0\.9\.0/);
+  assert.match(html, /styles\.css\?v=alfie-workspace-0\.10\.0/);
+  assert.match(html, /app\.js\?v=alfie-workspace-0\.10\.0/);
   assert.doesNotMatch(html, /value="admin"/);
   assert.doesNotMatch(html, /alfie123/);
   assert.match(html, /id="setup-form"/);
 
-  assert.match(sw, /alfie-core-v4/);
+  assert.match(sw, /alfie-core-v5/);
   assert.doesNotMatch(sw, /offline-mode-token/);
   assert.match(sw, /url\.pathname\.startsWith\("\/api\/"\)/);
 
@@ -165,7 +165,7 @@ test("composer includes a Web Speech API microphone button placed next to the Se
   const app = await fs.readFile(new URL("app.js", root), "utf8");
   const metadata = JSON.parse(await fs.readFile(new URL("../../metadata.json", root), "utf8"));
 
-  assert.match(html, /src="\/voice-waveform\.mjs\?v=alfie-workspace-0\.9\.0"/);
+  assert.match(html, /src="\/voice-waveform\.mjs\?v=alfie-workspace-0\.10\.0"/);
   assert.match(html, /class="composer-action-group"[\s\S]*id="voice-input-btn"[\s\S]*class="voice-waveform"[\s\S]*class="voice-bar"[\s\S]*class="send-button"/);
   assert.match(css, /\.composer-action-group/);
   assert.match(css, /\.voice-button/);
@@ -185,4 +185,169 @@ test("composer includes a Web Speech API microphone button placed next to the Se
   assert.ok(Array.isArray(metadata.permissions) && metadata.permissions.includes("microphone"));
 });
 
+test("workspace wires global keyboard shortcuts, Settings rebinding, and shortcut help dialog", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+  const sw = await fs.readFile(new URL("sw.js", root), "utf8");
 
+  assert.match(html, /src="\/shortcuts\.mjs\?v=alfie-workspace-0\.10\.0"/);
+  assert.match(html, /aria-keyshortcuts="Control\+K Meta\+K"/);
+  assert.match(html, /aria-keyshortcuts="Control\+Shift\+L Meta\+Shift\+L"/);
+  assert.match(html, /id="settings-shortcuts-surface"/);
+  assert.match(html, /id="settings-shortcuts-list"/);
+  assert.match(html, /id="shortcuts-reset-all-btn"/);
+  assert.match(html, /id="shortcuts-help-btn"/);
+  assert.match(html, /id="shortcuts-help-modal"/);
+  assert.match(html, /id="shortcuts-help-custom-list"/);
+  assert.match(html, /id="shortcuts-help-builtin-list"/);
+  assert.match(css, /\.shortcuts-settings-list/);
+  assert.match(css, /\.shortcut-kbd/);
+  assert.match(css, /\.shortcuts-modal/);
+  assert.match(css, /@keyframes shortcut-row-pulse/);
+  assert.match(css, /@keyframes shortcut-prompt-pulse/);
+  assert.match(css, /@keyframes shortcut-dot-pulse/);
+  assert.match(css, /\.shortcut-recording-dot/);
+  assert.match(sw, /\/shortcuts\.mjs\?v=alfie-workspace-0\.10\.0/);
+  assert.match(app, /initGlobalKeyboardShortcuts/);
+  assert.match(app, /renderShortcutSettings/);
+  assert.match(app, /renderShortcutsHelpModal/);
+  assert.match(app, /openShortcutsHelpModal/);
+  assert.match(app, /handleShortcutRecordingKeydown/);
+  assert.match(app, /closeAnyOpenModal/);
+  assert.match(app, /focusComposerFromShortcut/);
+  assert.match(app, /cycleSoulMoodFromShortcut/);
+  assert.match(app, /AlfieShortcuts/);
+});
+
+test("chat header includes client-side Markdown conversation export button", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+  const sw = await fs.readFile(new URL("sw.js", root), "utf8");
+
+  assert.match(html, /src="\/markdown-export\.mjs\?v=alfie-workspace-0\.10\.0"/);
+  assert.match(html, /id="export-chat-btn"/);
+  assert.match(html, /Export \.md/);
+  assert.match(css, /\.export-chat-btn/);
+  assert.match(sw, /\/markdown-export\.mjs\?v=alfie-workspace-0\.10\.0/);
+  assert.match(app, /exportCurrentConversationMarkdown/);
+  assert.match(app, /AlfieMarkdownExport/);
+  assert.match(app, /text\/markdown;charset=utf-8/);
+});
+
+test("workspace includes Adaptive Working Modes, Living Project Dossier, Ideas Vault, and Turn Provenance", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+
+  assert.match(html, /id="working-mode-select"/);
+  assert.match(html, /data-view="ideas"/);
+  assert.match(html, /id="view-ideas"/);
+  assert.match(html, /id="idea-form"/);
+  assert.match(html, /id="idea-status-tabs"/);
+  assert.match(html, /id="idea-tag-filters"/);
+  assert.match(html, /id="idea-cmd-btn"/);
+  assert.match(html, /id="project-vision-input"/);
+  assert.match(html, /id="project-next-actions-input"/);
+  assert.match(html, /id="project-blockers-input"/);
+  assert.match(html, /id="project-decisions-input"/);
+
+  assert.match(css, /\.turn-provenance/);
+  assert.match(css, /\.idea-card/);
+  assert.match(css, /\.idea-tag-filter-btn/);
+  assert.match(css, /\.idea-card-tag-btn/);
+  assert.match(css, /\.segmented-tabs/);
+
+  assert.match(app, /createProvenanceDisclosure/);
+  assert.match(app, /initWorkingModeSelector/);
+  assert.match(app, /initIdeasVault/);
+  assert.match(app, /renderIdeaTagFilters/);
+  assert.match(app, /toggleIdeaTagFilter/);
+  assert.match(app, /\/api\/core\/ideas/);
+});
+
+test("audit regressions: prop-types loads before Recharts, no async event.currentTarget.reset(), and single Copy button per message", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  const sw = await fs.readFile(new URL("sw.js", root), "utf8");
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+  const ifaceServer = await fs.readFile(new URL("../src/server.mjs", import.meta.url), "utf8");
+
+  const propTypesIdx = html.indexOf("/vendor/prop-types.min.js");
+  const rechartsIdx = html.indexOf("/vendor/recharts.js");
+  assert.ok(propTypesIdx > 0 && rechartsIdx > propTypesIdx, "prop-types.min.js must load before recharts.js");
+  assert.match(sw, /\/vendor\/prop-types\.min\.js/);
+  assert.match(ifaceServer, /"vendor\/prop-types\.min\.js"/);
+
+  // Never call event.currentTarget.reset() after an await
+  assert.doesNotMatch(app, /event\.currentTarget\.reset\(\)/);
+
+  // Tightened feature controls: in-chat Dossier button, Promoted Ideas tab, project filter, inline editing, and explore-in-chat
+  assert.match(html, /id="chat-project-dossier-btn"/);
+  assert.match(html, /data-idea-status="promoted"/);
+  assert.match(html, /id="idea-project-filter"/);
+  assert.match(app, /createIdeaInlineEditForm/);
+  assert.match(app, /exploreIdeaInChat/);
+  assert.match(app, /resetIdeaFilters/);
+  assert.match(app, /updateSlashSuggestions/);
+  assert.match(app, /WORKING_MODE_DESCRIPTIONS/);
+});
+
+test("workspace includes Typed Memory v2 Garden controls, Capability Leases, and Deterministic Watchers & Attention Budget UI", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+
+  assert.match(html, /id="memory-kind-tabs"/);
+  assert.match(html, /id="memory-kind-select"/);
+  assert.match(html, /id="memory-ttl-select"/);
+  assert.match(html, /id="memory-show-archived"/);
+  assert.match(html, /id="permission-lease-ttl"/);
+  assert.match(html, /id="permission-lease-project"/);
+  assert.match(html, /id="watchers-surface"/);
+  assert.match(html, /id="watcher-form"/);
+  assert.match(html, /id="watcher-list"/);
+  assert.match(html, /id="watcher-event-tabs"/);
+  assert.match(html, /id="watcher-event-list"/);
+
+  assert.match(css, /\.garden-toolbar/);
+  assert.match(css, /\.lease-selector-bar/);
+  assert.match(css, /\.watchers-surface/);
+  assert.match(css, /\.watcher-event-urgent/);
+
+  assert.match(app, /initWatchers/);
+  assert.match(app, /loadWatchers/);
+  assert.match(app, /\/api\/core\/watchers/);
+  assert.match(app, /MEMORY_KIND_LABELS/);
+  assert.match(app, /MEMORY_TRUST_LABELS/);
+  assert.match(app, /formatShortExpiry/);
+});
+
+test("workspace includes Simulation & Action Receipts, Learning Companion & Workflow Profile, and Context Capsules UI", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+
+  assert.match(html, /id="learning-mode-select"/);
+  assert.match(html, /id="chat-capsule-select"/);
+  assert.match(html, /id="receipt-list"/);
+  assert.match(html, /id="capsules-surface"/);
+  assert.match(html, /id="capsule-form"/);
+  assert.match(html, /id="capsule-list"/);
+  assert.match(html, /id="settings-workflow-surface"/);
+  assert.match(html, /id="workflow-profile-form"/);
+  assert.match(html, /id="learning-topic-form"/);
+  assert.match(html, /id="learning-topic-list"/);
+
+  assert.match(css, /\.simulation-preview/);
+  assert.match(css, /\.receipt-verified/);
+  assert.match(css, /\.capsules-surface/);
+  assert.match(css, /\.workflow-profile-surface/);
+  assert.match(css, /\.learning-topic-form/);
+
+  assert.match(app, /initWorkflowProfile/);
+  assert.match(app, /initCapsules/);
+  assert.match(app, /\/api\/core\/profile/);
+  assert.match(app, /\/api\/core\/capsules/);
+  assert.match(app, /\/api\/core\/tools\/receipts/);
+});
