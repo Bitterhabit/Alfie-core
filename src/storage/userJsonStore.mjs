@@ -122,8 +122,10 @@ export async function writeUserJsonDocuments(dataDirectory, userId, documents, {
     try {
       for (const entry of documents) {
         const filePath = userDataFile(dataDirectory, userId, entry.filename);
-        await atomicWriteJson(filePath, entry.data);
+        // Track before the write: atomicWriteJson can rename successfully and
+        // then fail during its final chmod, leaving this path modified.
         written.push(filePath);
+        await atomicWriteJson(filePath, entry.data);
       }
     } catch (writeError) {
       const rollbackErrors = [];
