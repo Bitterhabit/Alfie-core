@@ -162,6 +162,7 @@ export class WatcherStore {
     this.now = now;
     this.uuid = uuid;
     this.mutex = new UserMutex();
+    this.checkLocks = new Map();
   }
 
   watchersFile(userId) {
@@ -174,6 +175,21 @@ export class WatcherStore {
 
   async exclusive(userId, operation) {
     return this.mutex.run(safeUserKey(userId), operation);
+  }
+
+  async withWatcherCheckLock(userId, watcherId, operation) {
+    const key = `${safeUserKey(userId)}:${watcherId}`;
+    const previous = this.checkLocks.get(key) || Promise.resolve();
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    this.checkLocks.set(key, gate);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.checkLocks.get(key) === gate) this.checkLocks.delete(key);
+    }
   }
 
   async loadWatchers(userId) {
@@ -369,27 +385,31 @@ export class WatcherStore {
   }
 
   async runCheck(userId, watcherId, dependencies = {}) {
-    const watcher = await this.get(userId, watcherId);
-    const evaluation = await evaluateWatcher(watcher, {
-      userId,
-      projectStore: dependencies.projectStore || null,
-      vramMonitor: dependencies.vramMonitor || null,
-      endpoints: dependencies.endpoints || [],
-      ...(dependencies.dnsLookup ? { dnsLookup: dependencies.dnsLookup } : {}),
-      ...(dependencies.requestImpl ? { requestImpl: dependencies.requestImpl } : {}),
-      ...(dependencies.tlsOptions ? { tlsOptions: dependencies.tlsOptions } : {}),
-      now: this.now
+    return this.withWatcherCheckLock(userId, watcherId, async () => {
+      const watcher = await this.get(userId, watcherId);
+      const evaluation = await evaluateWatcher(watcher, {
+        userId,
+        projectStore: dependencies.projectStore || null,
+        vramMonitor: dependencies.vramMonitor || null,
+        endpoints: dependencies.endpoints || [],
+        ...(dependencies.dnsLookup ? { dnsLookup: dependencies.dnsLookup } : {}),
+        ...(dependencies.requestImpl ? { requestImpl: dependencies.requestImpl } : {}),
+        ...(dependencies.tlsOptions ? { tlsOptions: dependencies.tlsOptions } : {}),
+        now: this.now
+      });
+      return this.recordEvaluation(userId, watcherId, evaluation);
     });
-    return this.recordEvaluation(userId, watcherId, evaluation);
   }
 
   async ingestMetric(userId, watcherId, reading = {}) {
-    const watcher = await this.get(userId, watcherId);
-    if (watcher.kind !== "push_metric") {
-      throw Object.assign(new Error("Only push_metric watchers accept pushed metric readings."), { status: 400 });
-    }
-    const evaluation = evaluatePushMetricReading(watcher, reading);
-    return this.recordEvaluation(userId, watcherId, evaluation);
+    return this.withWatcherCheckLock(userId, watcherId, async () => {
+      const watcher = await this.get(userId, watcherId);
+      if (watcher.kind !== "push_metric") {
+        throw Object.assign(new Error("Only push_metric watchers accept pushed metric readings."), { status: 400 });
+      }
+      const evaluation = evaluatePushMetricReading(watcher, reading);
+      return this.recordEvaluation(userId, watcherId, evaluation);
+    });
   }
 
   async listEvents(userId, { tier = "", unacknowledged = false, limit = 50 } = {}) {
