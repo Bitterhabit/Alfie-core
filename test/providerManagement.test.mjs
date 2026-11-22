@@ -207,9 +207,10 @@ test("ProviderRegistry pins real HTTP requests to the exact DNS answers it valid
     assert.deepEqual(health.models, ["qwen3:8b"]);
     assert.equal(dnsCalls, 1, "The socket must not perform a second DNS resolution after validation.");
 
+    dnsCalls = 0;
     const chat = await registry.chat(endpoint, [{ role: "user", content: "hello" }]);
     assert.equal(chat.content, "pinned response");
-    assert.equal(dnsCalls, 2, "Each request gets one fresh validation and uses that result for its socket.");
+    assert.equal(dnsCalls, 1, "The chat socket must use the single validated DNS answer too.");
     assert.equal(requestCount, 2);
   } finally {
     await new Promise((resolve) => server.close(resolve));
