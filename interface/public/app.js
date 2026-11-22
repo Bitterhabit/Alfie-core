@@ -8687,6 +8687,22 @@ function initPhase6Vault() {
     const mode = $("#vault-restore-mode")?.value === "replace" ? "replace" : "merge";
     try {
       const archive = readArchiveInput();
+      if (mode === "replace") {
+        const collectionNames = Object.keys(archive?.collections || {});
+        const collectionSummary = collectionNames.length
+          ? collectionNames.map((name) => name.replace(/\.json$/i, "")).join(", ")
+          : "no collections";
+        const confirmed = window.confirm(
+          "Overwrite local data from this encrypted backup?\n\n" +
+          "Collections included in this archive will replace their current local contents. " +
+          "Collections not included in the archive will remain unchanged.\n\n" +
+          "Included: " + collectionSummary + "\n\nThis cannot be undone unless you have a separate backup."
+        );
+        if (!confirmed) {
+          if (statusEl) statusEl.textContent = "Restore cancelled.";
+          return;
+        }
+      }
       if (statusEl) statusEl.textContent = `Restoring vault (${mode} mode)…`;
       const res = await api("/api/core/vault/restore", {
         method: "POST",
