@@ -44,16 +44,20 @@ test("peer tokens with malformed expiry timestamps fail closed", async () => {
   const store = new PeerTokenStore({ dataDirectory: directory });
 
   try {
-    const minted = await store.create("user-peer-invalid-expiry", {
-      name: "Corrupted expiry client",
-      scopes: ["status:read"],
-      expiresInDays: 30
-    });
-    const document = await store.load("user-peer-invalid-expiry");
-    document.tokens[0].expiresAt = "not-a-valid-date";
-    await store.save("user-peer-invalid-expiry", document);
+    const malformedExpiries = ["not-a-valid-date", "", 0, false];
+    for (let index = 0; index < malformedExpiries.length; index += 1) {
+      const minted = await store.create("user-peer-invalid-expiry", {
+        name: `Corrupted expiry client ${index + 1}`,
+        scopes: ["status:read"],
+        expiresInDays: 30
+      });
+      const document = await store.load("user-peer-invalid-expiry");
+      const record = document.tokens.find((token) => token.id === minted.record.id);
+      record.expiresAt = malformedExpiries[index];
+      await store.save("user-peer-invalid-expiry", document);
 
-    assert.equal(await store.authenticate(minted.token, "status:read"), null);
+      assert.equal(await store.authenticate(minted.token, "status:read"), null);
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
