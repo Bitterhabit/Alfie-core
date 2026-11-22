@@ -242,6 +242,7 @@ test("WatcherStore serializes edits and deletion with in-flight checks", async (
       return { available: true, percent: 95, gpuName: "Test GPU" };
     }
   };
+  let releaseSecondInspect;
 
   try {
     const check = watcherStore.runCheck("mutation-user", watcher.id, { vramMonitor: monitor });
@@ -254,7 +255,6 @@ test("WatcherStore serializes edits and deletion with in-flight checks", async (
     await Promise.all([check, update]);
     assert.equal((await watcherStore.get("mutation-user", watcher.id)).enabled, false);
 
-    let releaseSecondInspect;
     let signalSecondInspect;
     const secondStarted = new Promise((resolve) => { signalSecondInspect = resolve; });
     const secondGate = new Promise((resolve) => { releaseSecondInspect = resolve; });
@@ -276,6 +276,7 @@ test("WatcherStore serializes edits and deletion with in-flight checks", async (
     await assert.rejects(() => watcherStore.get("mutation-user", watcher.id), (error) => error.status === 404);
   } finally {
     releaseInspect();
+    releaseSecondInspect?.();
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
