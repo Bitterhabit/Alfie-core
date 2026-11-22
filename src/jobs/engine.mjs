@@ -182,28 +182,35 @@ export class AsyncJobEngine {
       try {
         const vram = await this.vramMonitor.inspect();
         if (vram?.warning && Number(vram?.usagePercent || 0) >= 92) {
-          const paused = await this.jobStore.update(userId, job.id, (cur, nowIso) => ({
+          const paused = await this.jobStore.update(userId, job.id, (cur, nowIso) => {
+            if (cur.status === "cancelled") return cur;
+            return {
             ...cur,
             status: "queued",
             checkpoints: [
               ...cur.checkpoints.slice(-24),
               { at: nowIso, step: cur.stepsCompleted, status: "queued", summary: `Deferred due to high GPU VRAM (${Math.round(vram.usagePercent)}%).` }
             ]
-          }));
+            };
+          });
           this.activeControllers.delete(controllerKey);
           return paused;
         }
       } catch {}
     }
 
-    let current = await this.jobStore.update(userId, job.id, (cur, nowIso) => ({
+    let current = await this.jobStore.update(userId, job.id, (cur, nowIso) => {
+      if (cur.status === "cancelled") return cur;
+      return {
       ...cur,
       status: "running",
       checkpoints: [
         ...cur.checkpoints.slice(-24),
         { at: nowIso, step: cur.stepsCompleted, status: "running", summary: "Started execution within configured budgets." }
       ]
-    }));
+      };
+    });
+    if (controller.signal.aborted || current.status === "cancelled") return current;
 
     const context = {
       lowestTrustTouched: "user_authored",
@@ -353,7 +360,9 @@ export class AsyncJobEngine {
         current = await this.jobStore.get(userId, job.id);
         return current;
       }
-      current = await this.jobStore.update(userId, job.id, (cur, nowIso) => ({
+      current = await this.jobStore.update(userId, job.id, (cur, nowIso) => {
+        if (cur.status === "cancelled" || TERMINAL_STATUSES.has(cur.status)) return cur;
+        return {
         ...cur,
         status: "failed",
         error: cleanString(error?.message || "Job execution failed.", 240),
@@ -363,7 +372,8 @@ export class AsyncJobEngine {
           ...cur.checkpoints.slice(-24),
           { at: nowIso, step: cur.stepsCompleted, status: "failed", summary: cleanString(error?.message || "Job execution failed.", 240) }
         ]
-      }));
+        };
+      });
       return current;
     } finally {
       this.activeControllers.delete(controllerKey);
