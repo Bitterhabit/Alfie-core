@@ -84,6 +84,68 @@ export async function writeUserJsonDocument(dataDirectory, userId, filename, dat
   return { revision: 1, updatedAt: new Date().toISOString(), indexedRows: 0 };
 }
 
+
+const documentBatchMutex = new UserMutex();
+
+/**
+ * Writes multiple user documents as one SQLite transaction. The JSON fallback
+ * uses atomic per-file replacements with compensating rollback on failure.
+ */
+export async function writeUserJsonDocuments(dataDirectory, userId, documents, { backend } = {}) {
+  const key = safeUserKey(userId);
+  if (!Array.isArray(documents) || documents.some((entry) =>
+    !entry || typeof entry.filename !== "string" || !/^[a-z0-9][a-z0-9._-]{0,127}$/i.test(entry.filename) ||
+    !Object.prototype.hasOwnProperty.call(entry, "data")
+  ) || new Set(documents.map((entry) => entry.filename)).size !== documents.length) {
+    throw new TypeError("A valid, unique user document batch is required.");
+  }
+  return documentBatchMutex.run(key, async () => {
+    const { resolveStorageBackend, writeUserSqliteDocuments } = await import("./sqliteStore.mjs");
+    if (resolveStorageBackend(backend) === "sqlite") {
+      return writeUserSqliteDocuments(dataDirectory, userId, documents.map(({ filename, data }) => ({
+        collection: filename, payload: data
+      })));
+    }
+
+    const snapshots = [];
+    for (const { filename } of documents) {
+      const filePath = userDataFile(dataDirectory, userId, filename);
+      try {
+        snapshots.push({ filePath, existed: true, data: JSON.parse(await fs.readFile(filePath, "utf8")) });
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        snapshots.push({ filePath, existed: false });
+      }
+    }
+
+    const written = [];
+    try {
+      for (const entry of documents) {
+        const filePath = userDataFile(dataDirectory, userId, entry.filename);
+        await atomicWriteJson(filePath, entry.data);
+        written.push(filePath);
+      }
+    } catch (writeError) {
+      const rollbackErrors = [];
+      for (const snapshot of snapshots.filter((item) => written.includes(item.filePath)).reverse()) {
+        try {
+          if (snapshot.existed) await atomicWriteJson(snapshot.filePath, snapshot.data);
+          else await fs.unlink(snapshot.filePath).catch((error) => { if (error.code !== "ENOENT") throw error; });
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
+      }
+      if (rollbackErrors.length) {
+        throw Object.assign(new Error("Document batch failed and rollback was incomplete; inspect workspace storage before retrying.", {
+          cause: writeError
+        }), { code: "DOCUMENT_BATCH_ROLLBACK_FAILED", rollbackErrors });
+      }
+      throw writeError;
+    }
+    return documents.map(({ filename }) => ({ collection: filename, revision: 1, indexedRows: 0 }));
+  });
+}
+
 export async function searchUserWorkspace(dataDirectory, userId, options = {}) {
   const { resolveStorageBackend, searchUserSqlite, searchUserJsonFallback } = await import("./sqliteStore.mjs");
   if (resolveStorageBackend(options.backend) === "sqlite") {
