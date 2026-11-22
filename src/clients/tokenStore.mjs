@@ -114,7 +114,15 @@ export class PeerTokenStore {
 
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
-      const activeCount = store.tokens.filter((t) => !t.revokedAt).length;
+      const nowIso = this.now();
+      const nowMs = Date.parse(nowIso);
+      const activeCount = store.tokens.filter((token) => {
+        if (token.revokedAt) return false;
+        if (token.expiresAt === null || token.expiresAt === undefined) return true;
+        if (typeof token.expiresAt !== "string") return false;
+        const expiresAtMs = Date.parse(token.expiresAt);
+        return Number.isFinite(expiresAtMs) && expiresAtMs > nowMs;
+      }).length;
       if (activeCount >= MAX_TOKENS_PER_USER) {
         throw Object.assign(new Error(`Maximum of ${MAX_TOKENS_PER_USER} active peer tokens reached.`), { status: 400 });
       }
@@ -122,7 +130,6 @@ export class PeerTokenStore {
       const tokenId = this.uuid();
       const rawSecret = randomBytes(32).toString("base64url");
       const tokenString = encodePeerToken(userId, tokenId, rawSecret);
-      const nowIso = this.now();
 
       const record = {
         id: tokenId,
@@ -181,8 +188,10 @@ export class PeerTokenStore {
       if (rec.revokedAt) return null;
 
       const nowIso = this.now();
-      if (rec.expiresAt && Date.parse(rec.expiresAt) <= Date.parse(nowIso)) {
-        return null;
+      if (rec.expiresAt !== null && rec.expiresAt !== undefined) {
+        if (typeof rec.expiresAt !== "string") return null;
+        const expiresAtMs = Date.parse(rec.expiresAt);
+        if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.parse(nowIso)) return null;
       }
 
       const providedHash = Buffer.from(hashTokenSecret(rawSecret), "utf8");
