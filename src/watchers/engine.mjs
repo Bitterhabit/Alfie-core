@@ -144,8 +144,6 @@ export function isPrivateOrReservedIpv6(ip) {
   if (g0 === 0x2001 && (g1 & 0xfff0) === 0x0010) return true; // ORCHID (2001:10::/28)
   if (g0 === 0x2001 && (g1 & 0xfff0) === 0x0020) return true; // ORCHIDv2 (2001:20::/28)
   if (g0 === 0x2001 && g1 === 0x0db8) return true; // Documentation (2001:db8::/32)
-  if (g0 === 0x2001 && g1 === 0x0004) return true; // Special-purpose 2001:4::/32 (including AS112)
-  if (g0 === 0x2001 && g1 === 0x0003) return true; // Special-purpose 2001:3::/32
   if (g0 === 0x2002) return true; // Deprecated 6to4 (2002::/16)
   if (g0 === 0x3fff && (g1 & 0xf000) === 0x0000) return true; // RFC 9637 Documentation (3fff::/20)
 
