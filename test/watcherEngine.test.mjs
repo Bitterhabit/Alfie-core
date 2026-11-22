@@ -161,3 +161,55 @@ test("WatcherStore runs deterministic checks, stamps external_untrusted provenan
 
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+
+test("WatcherStore serializes overlapping checks for the same watcher", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-watcher-race-"));
+  const watcherStore = new WatcherStore({ dataDirectory: dir });
+  const watcher = await watcherStore.create("race-user", {
+    name: "Concurrent GPU Monitor",
+    kind: "vram_threshold",
+    tier: "notify",
+    config: { thresholdPercent: 80 }
+  });
+
+  let calls = 0;
+  let active = 0;
+  let maxActive = 0;
+  let firstEntered;
+  const firstStarted = new Promise((resolve) => { firstEntered = resolve; });
+  const monitor = {
+    async inspect() {
+      calls += 1;
+      const call = calls;
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      if (call === 1) firstEntered();
+      try {
+        if (call === 1) await new Promise((resolve) => setTimeout(resolve, 40));
+        return { available: true, percent: call === 1 ? 95 : 55, gpuName: "Test GPU" };
+      } finally {
+        active -= 1;
+      }
+    }
+  };
+
+  try {
+    const first = watcherStore.runCheck("race-user", watcher.id, { vramMonitor: monitor });
+    await firstStarted;
+    const second = watcherStore.runCheck("race-user", watcher.id, { vramMonitor: monitor });
+    await Promise.all([first, second]);
+
+    assert.equal(calls, 2);
+    assert.equal(maxActive, 1, "checks for one watcher must not overlap");
+    const finalWatcher = await watcherStore.get("race-user", watcher.id);
+    assert.equal(finalWatcher.lastStatus, "ok");
+    assert.match(finalWatcher.lastSummary, /55%/);
+    const events = await watcherStore.listEvents("race-user", { limit: 2 });
+    assert.equal(events.length, 2);
+    assert.equal(events[0].severity, "ok");
+    assert.equal(events[1].severity, "alert");
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
