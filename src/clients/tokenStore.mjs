@@ -187,8 +187,9 @@ export class PeerTokenStore {
       if (rec.revokedAt) return null;
 
       const nowIso = this.now();
-      if (rec.expiresAt && Date.parse(rec.expiresAt) <= Date.parse(nowIso)) {
-        return null;
+      if (rec.expiresAt) {
+        const expiresAtMs = Date.parse(rec.expiresAt);
+        if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.parse(nowIso)) return null;
       }
 
       const providedHash = Buffer.from(hashTokenSecret(rawSecret), "utf8");
