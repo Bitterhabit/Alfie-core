@@ -5,8 +5,7 @@ import { safeUserKey, UserMutex, readUserJsonDocument, writeUserJsonDocument } f
 export const PEER_TOKEN_SCOPES = Object.freeze([
   "capture:write",
   "search:read",
-  "status:read",
-  "projects:read"
+  "status:read"
 ]);
 
 const SCOPE_SET = new Set(PEER_TOKEN_SCOPES);
