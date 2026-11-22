@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { safeUserKey, userDataFile, UserMutex, atomicWriteJson } from "../storage/userJsonStore.mjs";
+import { safeUserKey, userDataFile, UserMutex, readUserJsonDocument, writeUserJsonDocument } from "../storage/userJsonStore.mjs";
 
 export const PROJECT_ID_PATTERN = /^[a-f0-9-]{36}$/i;
 const MAX_PROJECTS = 100;
@@ -146,23 +146,17 @@ export class ProjectStore {
   }
 
   async load(userId) {
-    const file = this.fileFor(userId);
-    try {
-      const raw = await fs.readFile(file, "utf8");
-      const store = JSON.parse(raw);
-      if (store.schemaVersion !== 1 || store.ownerId !== userId || !Array.isArray(store.projects)) {
-        throw new Error("Project store failed its integrity check.");
-      }
-      return store;
-    } catch (error) {
-      if (error.code === "ENOENT") return { schemaVersion: 1, revision: 0, ownerId: userId, projects: [] };
-      throw error;
+    const store = await readUserJsonDocument(this.dataDirectory, userId, "projects.json");
+    if (!store) return { schemaVersion: 1, revision: 0, ownerId: userId, projects: [] };
+    if (store.schemaVersion !== 1 || store.ownerId !== userId || !Array.isArray(store.projects)) {
+      throw new Error("Project store failed its integrity check.");
     }
+    return store;
   }
 
   async save(userId, store) {
     store.revision = Math.max(0, Number(store.revision) || 0) + 1;
-    await atomicWriteJson(this.fileFor(userId), store, { uuid: this.uuid });
+    await writeUserJsonDocument(this.dataDirectory, userId, "projects.json", store, { uuid: this.uuid });
   }
 
   async list(userId) {

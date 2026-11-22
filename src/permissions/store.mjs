@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { safeUserKey, userDataFile, UserMutex, atomicWriteJson } from "../storage/userJsonStore.mjs";
+import { safeUserKey, userDataFile, UserMutex, readUserJsonDocument, writeUserJsonDocument } from "../storage/userJsonStore.mjs";
 
 const SCOPE_PATTERN = /^[a-z0-9][a-z0-9:._-]{1,120}$/;
 const UUID_PATTERN = /^[a-f0-9-]{36}$/i;
@@ -12,6 +12,22 @@ function cleanProjectId(value) {
     throw Object.assign(new Error("Capability lease projectId must be a valid project UUID."), { status: 400 });
   }
   return candidate;
+}
+
+function leaseKey(scope, projectId) {
+  return `${scope}::${projectId || "*"}`;
+}
+
+function sortLeases(leases) {
+  return leases.sort((a, b) => {
+    const scopeCmp = a.scope.localeCompare(b.scope);
+    if (scopeCmp !== 0) return scopeCmp;
+    return String(a.projectId || "").localeCompare(String(b.projectId || ""));
+  });
+}
+
+function uniqueSortedScopes(leases) {
+  return [...new Set(leases.map((lease) => lease.scope))].sort();
 }
 
 function cleanLeaseExpiry(expiresAt, ttlMinutes, nowMs) {
@@ -33,32 +49,46 @@ function cleanLeaseExpiry(expiresAt, ttlMinutes, nowMs) {
 }
 
 function normaliseStoreLeases(store) {
-  const existing = Array.isArray(store.leases) ? store.leases : [];
-  const byScope = new Map();
+  const hasLeasesArray = Array.isArray(store.leases);
+  const existing = hasLeasesArray ? store.leases : [];
+  const byKey = new Map();
+  const coveredScopes = new Set();
+
   for (const lease of existing) {
     if (!lease || typeof lease.scope !== "string" || !SCOPE_PATTERN.test(lease.scope)) continue;
-    byScope.set(lease.scope, {
+    const projectId = UUID_PATTERN.test(String(lease.projectId || "")) ? String(lease.projectId) : null;
+    const key = leaseKey(lease.scope, projectId);
+    coveredScopes.add(lease.scope);
+    byKey.set(key, {
       scope: lease.scope,
       grantedAt: typeof lease.grantedAt === "string" ? lease.grantedAt : (store.updatedAt || null),
       expiresAt: typeof lease.expiresAt === "string" && Number.isFinite(Date.parse(lease.expiresAt))
         ? new Date(Date.parse(lease.expiresAt)).toISOString()
         : null,
-      projectId: UUID_PATTERN.test(String(lease.projectId || "")) ? String(lease.projectId) : null,
+      projectId,
       note: typeof lease.note === "string" ? lease.note.trim().slice(0, 200) : ""
     });
   }
-  for (const scope of (store.scopes || [])) {
-    if (typeof scope === "string" && SCOPE_PATTERN.test(scope) && !byScope.has(scope)) {
-      byScope.set(scope, {
-        scope,
-        grantedAt: store.updatedAt || null,
-        expiresAt: null,
-        projectId: null,
-        note: ""
-      });
+
+  // Legacy migration: ONLY migrate store.scopes into global leases for legacy files
+  // that predate the `leases` array. Modern stores treat `leases` as authoritative
+  // so project-scoped or expired leases can never be widened into global grants.
+  if (!hasLeasesArray) {
+    for (const scope of (store.scopes || [])) {
+      if (typeof scope === "string" && SCOPE_PATTERN.test(scope) && !coveredScopes.has(scope)) {
+        coveredScopes.add(scope);
+        byKey.set(leaseKey(scope, null), {
+          scope,
+          grantedAt: store.updatedAt || null,
+          expiresAt: null,
+          projectId: null,
+          note: ""
+        });
+      }
     }
   }
-  return [...byScope.values()].sort((a, b) => a.scope.localeCompare(b.scope));
+
+  return sortLeases([...byKey.values()]);
 }
 
 export class PermissionStore {
@@ -77,20 +107,16 @@ export class PermissionStore {
   }
 
   async load(userId) {
-    try {
-      const store = JSON.parse(await fs.readFile(this.fileFor(userId), "utf8"));
-      if (store.schemaVersion !== 1 || store.ownerId !== userId || !Array.isArray(store.scopes)) {
-        throw new Error("Permission store failed its integrity check.");
-      }
-      return store;
-    } catch (error) {
-      if (error.code === "ENOENT") return { schemaVersion: 1, ownerId: userId, scopes: [], leases: [], updatedAt: null };
-      throw error;
+    const store = await readUserJsonDocument(this.dataDirectory, userId, "permissions.json");
+    if (!store) return { schemaVersion: 1, ownerId: userId, scopes: [], leases: [], updatedAt: null };
+    if (store.schemaVersion !== 1 || store.ownerId !== userId || !Array.isArray(store.scopes)) {
+      throw new Error("Permission store failed its integrity check.");
     }
+    return store;
   }
 
   async save(userId, store) {
-    await atomicWriteJson(this.fileFor(userId), store);
+    await writeUserJsonDocument(this.dataDirectory, userId, "permissions.json", store);
   }
 
   async pruneAndLoad(userId) {
@@ -101,7 +127,7 @@ export class PermissionStore {
     const expiredCount = leases.length - active.length;
     if (expiredCount > 0) {
       store.leases = active;
-      store.scopes = active.map((lease) => lease.scope);
+      store.scopes = uniqueSortedScopes(active);
       store.updatedAt = new Date(nowMs).toISOString();
       await this.save(userId, store);
     }
@@ -112,10 +138,8 @@ export class PermissionStore {
     return this.exclusive(userId, async () => {
       const { active } = await this.pruneAndLoad(userId);
       const targetProject = projectId ? String(projectId) : null;
-      return active
-        .filter((lease) => !lease.projectId || (targetProject && lease.projectId === targetProject))
-        .map((lease) => lease.scope)
-        .sort();
+      const matching = active.filter((lease) => !lease.projectId || (targetProject && lease.projectId === targetProject));
+      return uniqueSortedScopes(matching);
     });
   }
 
@@ -123,7 +147,7 @@ export class PermissionStore {
     return this.exclusive(userId, async () => {
       const { active } = await this.pruneAndLoad(userId);
       return {
-        scopes: active.map((lease) => lease.scope).sort(),
+        scopes: uniqueSortedScopes(active),
         leases: active
       };
     });
@@ -146,26 +170,44 @@ export class PermissionStore {
         projectId,
         note
       };
-      const filtered = active.filter((item) => item.scope !== scope);
+      // Identity is (scope, projectId): preserve global and other projects' leases for the same scope.
+      const targetKey = leaseKey(scope, projectId);
+      const filtered = active.filter((item) => leaseKey(item.scope, item.projectId) !== targetKey);
       filtered.push(nextLease);
-      filtered.sort((a, b) => a.scope.localeCompare(b.scope));
+      sortLeases(filtered);
       store.leases = filtered;
-      store.scopes = filtered.map((item) => item.scope);
+      store.scopes = uniqueSortedScopes(filtered);
       store.updatedAt = new Date(nowMs).toISOString();
       await this.save(userId, store);
       return store.scopes.slice();
     });
   }
 
-  async revoke(userId, scope) {
+  /**
+   * Revokes capability lease(s) for a scope:
+   * - revoke(userId, scope) [no projectId option]: revokes ALL leases for `scope` (global + all projects).
+   * - revoke(userId, scope, { projectId: "<uuid>" }): revokes ONLY the lease for that specific project.
+   * - revoke(userId, scope, { projectId: null }): revokes ONLY the global lease for `scope`.
+   */
+  async revoke(userId, scope, options = {}) {
     if (typeof scope !== "string" || !SCOPE_PATTERN.test(scope)) {
       throw Object.assign(new Error("Permission scope is invalid."), { status: 400 });
     }
+    const hasExplicitProject = Boolean(
+      options &&
+      typeof options === "object" &&
+      Object.prototype.hasOwnProperty.call(options, "projectId") &&
+      options.projectId !== undefined
+    );
+    const targetProjectId = hasExplicitProject ? cleanProjectId(options.projectId) : undefined;
+
     return this.exclusive(userId, async () => {
       const { store, active } = await this.pruneAndLoad(userId);
-      const filtered = active.filter((item) => item.scope !== scope);
+      const filtered = hasExplicitProject
+        ? active.filter((item) => !(item.scope === scope && (item.projectId || null) === targetProjectId))
+        : active.filter((item) => item.scope !== scope);
       store.leases = filtered;
-      store.scopes = filtered.map((item) => item.scope);
+      store.scopes = uniqueSortedScopes(filtered);
       store.updatedAt = new Date(this.now()).toISOString();
       await this.save(userId, store);
       return store.scopes.slice();

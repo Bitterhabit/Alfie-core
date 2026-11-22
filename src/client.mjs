@@ -104,6 +104,7 @@ export function createAlfieCoreClient({
     updateCapsule(userId, id, body = {}) { return request(userId, "/v1/capsules/" + encodeURIComponent(id), { method: "PATCH", body }); },
     deleteCapsule(userId, id) { return request(userId, "/v1/capsules/" + encodeURIComponent(id), { method: "DELETE" }); },
     activateCapsule(userId, id) { return request(userId, "/v1/capsules/" + encodeURIComponent(id) + "/activate", { method: "POST", body: {} }); },
+    getKnowledgeGraph(userId, query = "") { return request(userId, "/v1/graph" + (query ? "?" + query : "")); },
     getVramStatus(userId) { return request(userId, "/v1/system/vram"); },
     reportVramStatus(userId, body = {}) { return request(userId, "/v1/system/vram/report", { method: "POST", body }); },
     async reportExternalVram(body = {}) {
@@ -150,6 +151,57 @@ export function createAlfieCoreClient({
     approveAction(userId, actionId) { return request(userId, "/v1/tools/approve", { method: "POST", body: { actionId } }); },
     rejectAction(userId, actionId) { return request(userId, "/v1/tools/reject", { method: "POST", body: { actionId } }); },
     listAudit(userId, limit = 50) { return request(userId, "/v1/audit?limit=" + encodeURIComponent(limit)); },
+    getStorageStatus(userId) { return request(userId, "/v1/storage/status"); },
+    migrateStorage(userId) { return request(userId, "/v1/storage/migrate", { method: "POST", body: {} }); },
+    searchWorkspace(userId, query = "") { return request(userId, "/v1/search" + (query ? "?" + query : "")); },
+    getIntegrationsStatus(userId) { return request(userId, "/v1/integrations/status"); },
+    listJobs(userId, query = "") { return request(userId, "/v1/jobs" + (query ? "?" + query : "")); },
+    createJob(userId, body = {}) { return request(userId, "/v1/jobs", { method: "POST", body }); },
+    cancelJob(userId, jobId, body = {}) { return request(userId, "/v1/jobs/" + encodeURIComponent(jobId) + "/cancel", { method: "POST", body }); },
+    listWorkshopRoles(userId) { return request(userId, "/v1/workshop/roles"); },
+    delegateWorkshopTask(userId, body = {}) { return request(userId, "/v1/workshop/delegate", { method: "POST", body }); },
+    previewPrivacyAirlock(userId, body = {}) { return request(userId, "/v1/privacy/airlock/preview", { method: "POST", body }); },
+    getVoiceStatus(userId) { return request(userId, "/v1/voice/status"); },
+    transcribeVoice(userId, body = {}) { return request(userId, "/v1/voice/transcribe", { method: "POST", body }); },
+    synthesizeVoice(userId, body = {}) { return request(userId, "/v1/voice/synthesize", { method: "POST", body }); },
+    getReflections(userId, query = "") { return request(userId, "/v1/reflections" + (query ? "?" + query : "")); },
+    saveReflectionSnapshot(userId, body = {}) { return request(userId, "/v1/reflections/snapshot", { method: "POST", body }); },
+    getAmbientState(userId) { return request(userId, "/v1/ambient/state"); },
+    pushAmbientBridge(userId) { return request(userId, "/v1/ambient/push", { method: "POST", body: {} }); },
+    exportVault(userId, body = {}) { return request(userId, "/v1/vault/export", { method: "POST", body }); },
+    verifyVault(userId, body = {}) { return request(userId, "/v1/vault/verify", { method: "POST", body }); },
+    restoreVault(userId, body = {}) { return request(userId, "/v1/vault/restore", { method: "POST", body }); },
+    getDiagnosticsAudit(userId) { return request(userId, "/v1/diagnostics/audit"); },
+    remediateDiagnostics(userId, body = {}) { return request(userId, "/v1/diagnostics/remediate", { method: "POST", body }); },
+    listPeerTokens(userId) { return request(userId, "/v1/clients/tokens"); },
+    createPeerToken(userId, body = {}) { return request(userId, "/v1/clients/tokens", { method: "POST", body }); },
+    revokePeerToken(userId, id) { return request(userId, "/v1/clients/tokens/" + encodeURIComponent(id), { method: "DELETE" }); },
+    listPlaybooks(userId) { return request(userId, "/v1/playbooks"); },
+    createPlaybook(userId, body = {}) { return request(userId, "/v1/playbooks", { method: "POST", body }); },
+    updatePlaybook(userId, id, body = {}) { return request(userId, "/v1/playbooks/" + encodeURIComponent(id), { method: "PATCH", body }); },
+    deletePlaybook(userId, id) { return request(userId, "/v1/playbooks/" + encodeURIComponent(id), { method: "DELETE" }); },
+    runPlaybook(userId, id, body = {}) { return request(userId, "/v1/playbooks/" + encodeURIComponent(id) + "/run", { method: "POST", body }); },
+    getTimeline(userId, query = "") { return request(userId, "/v1/timeline" + (query ? "?" + query : "")); },
+    exportMarkdownDigest(userId, query = "") { return request(userId, "/v1/export/markdown" + (query ? "?" + query : "")); },
+    async callPeerEndpoint(peerToken, pathname, { method = "GET", body, query = "" } = {}) {
+      const target = new URL(pathname + (query ? "?" + query : ""), root);
+      const headers = {
+        authorization: "Bearer " + serviceToken,
+        "x-alfie-peer-token": String(peerToken || ""),
+        accept: "application/json"
+      };
+      if (body !== undefined) headers["content-type"] = "application/json";
+      const response = await fetchImpl(target, {
+        method,
+        headers,
+        body: body !== undefined ? JSON.stringify(body) : undefined
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw Object.assign(new Error(payload?.error || "Peer request failed."), { status: response.status, code: payload?.code });
+      }
+      return payload;
+    },
     listCloudAgents(userId) { return request(userId, "/v1/cloud-agents"); },
     updateCloudAgent(userId, provider, body = {}) {
       return request(userId, "/v1/cloud-agents/" + encodeURIComponent(provider), { method: "PATCH", body });

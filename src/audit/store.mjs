@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { safeUserKey, userDataFile, UserMutex, atomicWriteJson } from "../storage/userJsonStore.mjs";
+import { safeUserKey, userDataFile, UserMutex, readUserJsonDocument, writeUserJsonDocument } from "../storage/userJsonStore.mjs";
 
 export class AuditStore {
   constructor({ dataDirectory = process.env.ALFIE_CORE_DATA_DIR || "/data", now = () => new Date().toISOString() } = {}) {
@@ -19,16 +19,12 @@ export class AuditStore {
   }
 
   async load(userId) {
-    try {
-      const value = JSON.parse(await fs.readFile(this.fileFor(userId), "utf8"));
-      if (value.schemaVersion !== 1 || value.ownerId !== userId || !Array.isArray(value.events)) {
-        throw new Error("Audit store failed its integrity check.");
-      }
-      return value;
-    } catch (error) {
-      if (error.code === "ENOENT") return { schemaVersion: 1, ownerId: userId, events: [] };
-      throw error;
+    const value = await readUserJsonDocument(this.dataDirectory, userId, "audit.json");
+    if (!value) return { schemaVersion: 1, ownerId: userId, events: [] };
+    if (value.schemaVersion !== 1 || value.ownerId !== userId || !Array.isArray(value.events)) {
+      throw new Error("Audit store failed its integrity check.");
     }
+    return value;
   }
 
   async record(userId, event = {}) {
@@ -48,7 +44,7 @@ export class AuditStore {
       };
       store.events.push(entry);
       store.events = store.events.slice(-500);
-      await atomicWriteJson(this.fileFor(userId), store);
+      await writeUserJsonDocument(this.dataDirectory, userId, "audit.json", store);
       return entry;
     });
   }

@@ -59,3 +59,36 @@ export async function atomicWriteJson(filePath, data, { uuid = randomUUID, prett
     throw error;
   }
 }
+
+export async function readUserJsonDocument(dataDirectory, userId, filename, { backend } = {}) {
+  const { resolveStorageBackend, readUserSqliteDocument } = await import("./sqliteStore.mjs");
+  if (resolveStorageBackend(backend) === "sqlite") {
+    return readUserSqliteDocument(dataDirectory, userId, filename);
+  }
+  const filePath = userDataFile(dataDirectory, userId, filename);
+  try {
+    return JSON.parse(await fs.readFile(filePath, "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+export async function writeUserJsonDocument(dataDirectory, userId, filename, data, { backend, uuid = randomUUID, pretty = true } = {}) {
+  const { resolveStorageBackend, writeUserSqliteDocument } = await import("./sqliteStore.mjs");
+  if (resolveStorageBackend(backend) === "sqlite") {
+    return writeUserSqliteDocument(dataDirectory, userId, filename, data);
+  }
+  const filePath = userDataFile(dataDirectory, userId, filename);
+  await atomicWriteJson(filePath, data, { uuid, pretty });
+  return { revision: 1, updatedAt: new Date().toISOString(), indexedRows: 0 };
+}
+
+export async function searchUserWorkspace(dataDirectory, userId, options = {}) {
+  const { resolveStorageBackend, searchUserSqlite, searchUserJsonFallback } = await import("./sqliteStore.mjs");
+  if (resolveStorageBackend(options.backend) === "sqlite") {
+    return searchUserSqlite(dataDirectory, userId, options);
+  }
+  return searchUserJsonFallback(dataDirectory, userId, options);
+}
+

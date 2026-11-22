@@ -1,7 +1,7 @@
 # ADR-004: Async Job Engine & Bounded Sub-Agent Delegation
 
-- **Status:** Proposed
-- **Target Phase:** Phase 4
+- **Status:** Accepted & Shipped (`src/jobs/engine.mjs`, `src/agents/workshop.mjs`)
+- **Target Phase:** Phase 4 (Complete)
 
 ## Context
 

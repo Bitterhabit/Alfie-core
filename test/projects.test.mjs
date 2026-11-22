@@ -47,7 +47,10 @@ test("ProjectStore enforces per-user isolation, validation, and atomic 0o600 per
     assert.equal(updated.color, "amber");
 
     // Verify 0o600 permissions on stored file
-    const stat = await fs.stat(store.fileFor("user-a"));
+    const legacyFile = store.fileFor("user-a");
+    const sqliteFile = path.join(path.dirname(legacyFile), "alfie.sqlite");
+    const persistedFile = await fs.stat(sqliteFile).then(() => sqliteFile).catch(() => legacyFile);
+    const stat = await fs.stat(persistedFile);
     assert.equal(stat.mode & 0o777, 0o600);
 
     // Delete works

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { safeUserKey, userDataFile, UserMutex, atomicWriteJson } from "../storage/userJsonStore.mjs";
+import { safeUserKey, userDataFile, UserMutex, readUserJsonDocument, writeUserJsonDocument } from "../storage/userJsonStore.mjs";
 import { WORKING_MODES } from "../agent/workingModes.mjs";
 import { LEARNING_MODES } from "../profile/store.mjs";
 
@@ -106,22 +106,18 @@ export class ContextCapsuleStore {
   }
 
   async load(userId) {
-    try {
-      const store = JSON.parse(await fs.readFile(this.fileFor(userId), "utf8"));
-      if (store.schemaVersion !== 1 || store.ownerId !== userId || !Array.isArray(store.capsules)) {
-        throw new Error("Context capsule store failed its integrity check.");
-      }
-      return store;
-    } catch (error) {
-      if (error.code === "ENOENT") {
-        return { schemaVersion: 1, ownerId: userId, activeCapsuleId: null, capsules: [] };
-      }
-      throw error;
+    const store = await readUserJsonDocument(this.dataDirectory, userId, "context-capsules.json");
+    if (!store) {
+      return { schemaVersion: 1, ownerId: userId, activeCapsuleId: null, capsules: [] };
     }
+    if (store.schemaVersion !== 1 || store.ownerId !== userId || !Array.isArray(store.capsules)) {
+      throw new Error("Context capsule store failed its integrity check.");
+    }
+    return store;
   }
 
   async save(userId, store) {
-    await atomicWriteJson(this.fileFor(userId), store, { uuid: this.uuid });
+    await writeUserJsonDocument(this.dataDirectory, userId, "context-capsules.json", store, { uuid: this.uuid });
   }
 
   async list(userId) {

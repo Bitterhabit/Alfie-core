@@ -14,7 +14,10 @@ test("persists permission grants per user and supports revocation", async () => 
     assert.deepEqual(await store.grant("user-1", "calendar:write"), ["calendar:read", "calendar:write"]);
     assert.deepEqual(await store.list("user-2"), []);
     assert.deepEqual(await store.revoke("user-1", "calendar:read"), ["calendar:write"]);
-    const stat = await fs.stat(store.fileFor("user-1"));
+    const legacyFile = store.fileFor("user-1");
+    const sqliteFile = path.join(path.dirname(legacyFile), "alfie.sqlite");
+    const persistedFile = await fs.stat(sqliteFile).then(() => sqliteFile).catch(() => legacyFile);
+    const stat = await fs.stat(persistedFile);
     assert.equal(stat.mode & 0o777, 0o600);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });

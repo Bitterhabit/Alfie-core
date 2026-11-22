@@ -12,6 +12,29 @@ function stable(value) {
 function hashCall(toolId, args) {
   return createHash("sha256").update(JSON.stringify([toolId, stable(args || {})])).digest("hex");
 }
+
+/**
+ * Deterministic SHA-256 fingerprint of execution- and security-relevant tool
+ * metadata. Intentionally excludes purely descriptive fields (name, description,
+ * tags) so cosmetic copy edits do not invalidate pending approvals.
+ */
+export function computeToolFingerprint(tool) {
+  const payload = {
+    id: tool.id,
+    scope: tool.scope,
+    risk: tool.risk,
+    trust: tool.trust,
+    network: Boolean(tool.network),
+    externalAction: Boolean(tool.externalAction),
+    untrustedOutput: Boolean(tool.untrustedOutput),
+    requiresApproval: Boolean(tool.requiresApproval),
+    approvalWhenUntrusted: Boolean(tool.approvalWhenUntrusted),
+    hasApprovalGuard: typeof tool.approvalGuard === "function",
+    hasVerifyResult: typeof tool.verifyResult === "function",
+    inputSchema: tool.inputSchema
+  };
+  return createHash("sha256").update(JSON.stringify(stable(payload))).digest("hex");
+}
 function capOutput(value, maxChars = 2000) {
   if (typeof value === "string") return value.length > maxChars ? value.slice(0, maxChars) + "… [truncated]" : value;
   const serialised = JSON.stringify(value);
@@ -163,8 +186,9 @@ export class ToolDispatcher {
         try { rawSim = await tool.dryRun(args, { userId, toolId, preview }); } catch { rawSim = null; }
       }
       const simulation = normaliseSimulation(rawSim, tool, preview);
+      const toolFingerprint = computeToolFingerprint(tool);
       const pending = await this.pendingActionStore.create(userId, {
-        toolId, arguments: args, argumentsHash: callHash, risk: tool.risk, preview, simulation,
+        toolId, arguments: args, argumentsHash: callHash, toolFingerprint, risk: tool.risk, preview, simulation,
         projectId: projectId || null,
         approvalGuard: tool.approvalGuard ? await tool.approvalGuard(args, { userId, toolId }) : null,
         reason: untrustedContext ? "External/untrusted content is present in this turn" : `Tool risk level: ${tool.risk}`
@@ -188,6 +212,22 @@ export class ToolDispatcher {
     if (!tool) throw Object.assign(new Error("The approved tool is no longer registered."), { status: 404 });
     if (hashCall(action.toolId, action.arguments) !== action.argumentsHash) {
       throw Object.assign(new Error("The pending action failed its integrity check."), { status: 409 });
+    }
+    const currentToolFingerprint = computeToolFingerprint(tool);
+    if (!action.toolFingerprint || action.toolFingerprint !== currentToolFingerprint) {
+      if (this.auditStore) {
+        try {
+          await this.auditStore.record(userId, {
+            event: "tool.approval_stale", actor: "system", toolId: tool.id, actionId,
+            risk: tool.risk, status: "stale", argumentsHash: action.argumentsHash,
+            detail: "The tool definition changed since this action was proposed"
+          });
+        } catch {}
+      }
+      throw Object.assign(
+        new Error("The tool definition changed since this action was proposed. Create a fresh proposal and approve it again."),
+        { status: 409, code: "STALE_APPROVAL" }
+      );
     }
     const scopes = await this.permissionStore.list(userId, { projectId: action.projectId || null });
     if (!scopes.includes(tool.scope)) throw Object.assign(new Error("Permission was revoked or its lease expired before this action was approved."), { status: 403 });
@@ -243,7 +283,8 @@ export class ToolDispatcher {
             affectedResource: action.simulation?.affectedResource || tool.scope,
             rollbackPlan: action.simulation?.rollbackPlan || "",
             verified: false,
-            verificationDetail: String(error.message || "Execution failed").slice(0, 220)
+            verificationState: "execution_failed",
+            verificationDetail: `Execution failed: ${String(error.message || "unknown error").slice(0, 220)}`
           });
         } catch {}
       }
@@ -256,18 +297,33 @@ export class ToolDispatcher {
       }
       throw error;
     }
-    let verification = { verified: true, detail: "Action committed cleanly." };
+    let verification = {
+      verified: false,
+      state: "unverified",
+      detail: "Execution succeeded, but independent post-execution verification is not available for this tool."
+    };
     if (tool.verifyResult) {
       try {
         const checked = await tool.verifyResult(action.arguments, result, { userId, toolId: tool.id });
-        if (checked && typeof checked === "object") {
+        if (checked && typeof checked === "object" && checked.verified === true) {
           verification = {
-            verified: Boolean(checked.verified),
-            detail: String(checked.detail || (checked.verified ? "Post-execution check passed." : "Post-execution check flagged a mismatch.")).slice(0, 240)
+            verified: true,
+            state: "verified",
+            detail: String(checked.detail || "Independent post-execution verification passed.").slice(0, 240)
+          };
+        } else {
+          verification = {
+            verified: false,
+            state: "verification_failed",
+            detail: String(checked?.detail || "Execution succeeded, but independent verification reported a mismatch or unconfirmed state.").slice(0, 240)
           };
         }
       } catch (err) {
-        verification = { verified: false, detail: `Verification check failed: ${String(err.message || "unknown error").slice(0, 180)}` };
+        verification = {
+          verified: false,
+          state: "verification_failed",
+          detail: `Execution succeeded, but independent verification failed: ${String(err.message || "unknown error").slice(0, 180)}`
+        };
       }
     }
     let receipt = null;
@@ -283,6 +339,7 @@ export class ToolDispatcher {
           affectedResource: action.simulation?.affectedResource || tool.scope,
           rollbackPlan: action.simulation?.rollbackPlan || "",
           verified: verification.verified,
+          verificationState: verification.state,
           verificationDetail: verification.detail
         });
       } catch {}

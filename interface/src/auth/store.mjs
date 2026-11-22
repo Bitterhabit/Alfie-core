@@ -231,4 +231,92 @@ export class InterfaceAuthStore {
       if (store.sessions.length !== before) await this.save(store);
     });
   }
+
+  async getRecoveryStatus(userId) {
+    return this.exclusive(async () => {
+      const store = await this.load();
+      const user = store.users.find((item) => item.id === userId);
+      if (!user) throw Object.assign(new Error("Account not found."), { status: 404 });
+      const entries = Array.isArray(user.recoveryCodes) ? user.recoveryCodes : [];
+      const remaining = entries.filter((c) => !c.usedAt).length;
+      return {
+        configured: entries.length > 0,
+        total: entries.length,
+        remaining,
+        generatedAt: user.recoveryCodesGeneratedAt || null
+      };
+    });
+  }
+
+  async generateRecoveryCodes(userId, currentPassword) {
+    return this.exclusive(async () => {
+      const store = await this.load();
+      const user = store.users.find((item) => item.id === userId);
+      if (!user || user.disabled) throw Object.assign(new Error("The interface account is unavailable."), { status: 401 });
+      const validCurrentShape = typeof currentPassword === "string" && currentPassword.length >= 6 && currentPassword.length <= 256;
+      const candidate = typeof currentPassword === "string" ? currentPassword.slice(0, 256) : "";
+      const actual = Buffer.from(await passwordDigest(candidate, user.passwordSalt), "hex");
+      const expected = Buffer.from(user.passwordHash, "hex");
+      const matches = actual.length === expected.length && timingSafeEqual(actual, expected);
+      if (!validCurrentShape || !matches) {
+        throw Object.assign(new Error("Your current password was not accepted."), { status: 401 });
+      }
+      const plaintextCodes = [];
+      const hashedEntries = [];
+      const generatedAt = new Date(this.now()).toISOString();
+      for (let i = 0; i < 8; i += 1) {
+        const raw = randomBytes(5).toString("hex").toUpperCase();
+        const formatted = `${raw.slice(0, 5)}-${raw.slice(5, 10)}`;
+        const salt = randomBytes(16).toString("hex");
+        const hash = await passwordDigest(formatted, salt);
+        plaintextCodes.push(formatted);
+        hashedEntries.push({ id: randomUUID(), salt, hash, usedAt: null });
+      }
+      user.recoveryCodes = hashedEntries;
+      user.recoveryCodesGeneratedAt = generatedAt;
+      await this.save(store);
+      return {
+        codes: plaintextCodes,
+        total: plaintextCodes.length,
+        remaining: plaintextCodes.length,
+        generatedAt
+      };
+    });
+  }
+
+  async recoverWithCode(username, recoveryCode, newPassword) {
+    return this.exclusive(async () => {
+      const store = await this.load();
+      const user = store.users.find((item) => item.username.toLowerCase() === String(username || "").trim().toLowerCase());
+      const normalizedCode = String(recoveryCode || "").trim().toUpperCase();
+      let matchedEntry = null;
+      if (user && !user.disabled && Array.isArray(user.recoveryCodes) && normalizedCode.length >= 8 && normalizedCode.length <= 32) {
+        for (const entry of user.recoveryCodes) {
+          if (entry.usedAt) continue;
+          const actual = Buffer.from(await passwordDigest(normalizedCode, entry.salt), "hex");
+          const expected = Buffer.from(entry.hash, "hex");
+          if (actual.length === expected.length && timingSafeEqual(actual, expected)) {
+            matchedEntry = entry;
+            break;
+          }
+        }
+      } else {
+        // Constant-work dummy derivation to avoid timing leaks on unknown users
+        await passwordDigest(normalizedCode || "00000-00000", DUMMY_SALT);
+      }
+
+      if (!user || user.disabled || !matchedEntry) {
+        throw Object.assign(new Error("Username or recovery code was not accepted."), { status: 401 });
+      }
+      validateCredentials(user.username, newPassword);
+      const salt = randomBytes(16).toString("hex");
+      user.passwordSalt = salt;
+      user.passwordHash = await passwordDigest(newPassword, salt);
+      matchedEntry.usedAt = new Date(this.now()).toISOString();
+      store.sessions = [];
+      await this.save(store);
+      const remaining = user.recoveryCodes.filter((c) => !c.usedAt).length;
+      return { recovered: true, remainingCodes: remaining };
+    });
+  }
 }

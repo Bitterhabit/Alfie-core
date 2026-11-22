@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { safeUserKey, userDataFile, UserMutex, atomicWriteJson } from "../storage/userJsonStore.mjs";
+import { safeUserKey, userDataFile, UserMutex, readUserJsonDocument, writeUserJsonDocument } from "../storage/userJsonStore.mjs";
 
 const MEMORY_ID_PATTERN = /^[a-f0-9-]{36}$/i;
 const ORIGINS = new Set(["user-seeded", "alfie-created", "integration-imported"]);
@@ -168,20 +168,16 @@ export class MemoryStore {
   }
 
   async load(userId) {
-    try {
-      const store = JSON.parse(await fs.readFile(this.fileFor(userId), "utf8"));
-      if (store.schemaVersion !== 1 || store.ownerId !== userId || !Array.isArray(store.memories)) {
-        throw new Error("Memory store failed its integrity check.");
-      }
-      return store;
-    } catch (error) {
-      if (error.code === "ENOENT") return { schemaVersion: 1, ownerId: userId, memories: [] };
-      throw error;
+    const store = await readUserJsonDocument(this.dataDirectory, userId, "memories.json");
+    if (!store) return { schemaVersion: 1, ownerId: userId, memories: [] };
+    if (store.schemaVersion !== 1 || store.ownerId !== userId || !Array.isArray(store.memories)) {
+      throw new Error("Memory store failed its integrity check.");
     }
+    return store;
   }
 
   async save(userId, store) {
-    await atomicWriteJson(this.fileFor(userId), store, { uuid: this.uuid });
+    await writeUserJsonDocument(this.dataDirectory, userId, "memories.json", store, { uuid: this.uuid });
   }
 
   async list(userId, options = {}) {

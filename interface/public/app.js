@@ -1041,7 +1041,13 @@ function setView(view) {
   const mobileHistory = $("#mobile-history-sheet");
   if (mobileHistory) mobileHistory.hidden = true;
   if (view === "ideas") loadIdeas();
-  if (view === "garden") loadMemories();
+  if (view === "garden") {
+    loadMemories();
+    loadKnowledgeGraph();
+    loadReflections();
+    loadTimeline();
+    if ($("#virtual-room-details")?.open) loadVirtualRoom();
+  }
   if (view === "tools") loadToolsAndApprovals();
   if (view === "settings") {
     loadSettings();
@@ -1575,6 +1581,42 @@ function syncIdeaProjectOptions() {
       capsuleProject.appendChild(opt);
     }
     capsuleProject.value = state.projects.some((p) => p.id === currentCapsuleProj) ? currentCapsuleProj : "";
+  }
+
+  const kgProject = $("#kg-project-filter");
+  if (kgProject) {
+    const currentKgProj = state.kgProjectFilter || kgProject.value || "";
+    kgProject.replaceChildren();
+    const allOpt = document.createElement("option");
+    allOpt.value = "";
+    allOpt.textContent = "All projects";
+    kgProject.appendChild(allOpt);
+    for (const project of state.projects) {
+      const opt = document.createElement("option");
+      opt.value = project.id;
+      opt.textContent = project.name;
+      kgProject.appendChild(opt);
+    }
+    const valid = state.projects.some((p) => p.id === currentKgProj);
+    state.kgProjectFilter = valid ? currentKgProj : "";
+    kgProject.value = state.kgProjectFilter;
+  }
+
+  const workshopProject = $("#workshop-project-select");
+  if (workshopProject) {
+    const currentWorkshopProj = workshopProject.value || "";
+    workshopProject.replaceChildren();
+    const allOpt = document.createElement("option");
+    allOpt.value = "";
+    allOpt.textContent = "All projects";
+    workshopProject.appendChild(allOpt);
+    for (const project of state.projects) {
+      const opt = document.createElement("option");
+      opt.value = project.id;
+      opt.textContent = project.name;
+      workshopProject.appendChild(opt);
+    }
+    workshopProject.value = state.projects.some((p) => p.id === currentWorkshopProj) ? currentWorkshopProj : "";
   }
 
   if ($("#watcher-kind-select")?.value === "project_stall" && typeof renderWatcherConfigFields === "function") {
@@ -4485,6 +4527,9 @@ async function sendMessage(rawText) {
     await loadConversations();
     await refreshVramStatus();
     window.alfieSoul?.pulse("completed", 2200, "idle", "purple");
+    if (finalText) {
+      speakAssistantReply?.(finalText);
+    }
     if (finalEvent?.status === "awaiting_user_approval") {
       toast("Alfie is waiting for your approval.");
       await loadToolsAndApprovals();
@@ -6079,7 +6124,7 @@ $("#memory-form").addEventListener("submit", async (event) => {
     if (ttlRaw) body.ttlHours = Number(ttlRaw);
     await api("/api/core/memories", { method: "POST", body: JSON.stringify(body) });
     formEl.reset();
-    await loadMemories();
+    await Promise.all([loadMemories(), loadKnowledgeGraph()]);
     toast("Memory planted in the Garden.");
   } catch (error) { toast(error.message); }
 });
@@ -6203,9 +6248,12 @@ function renderWatchers() {
       ? (watcher.lastStatus === "alert" ? "Alert" : watcher.lastStatus === "ok" ? "Nominal" : "Ready")
       : "Paused";
     const trustLabel = watcher.lastTrust === "external_untrusted" ? "External untrusted" : "System verified";
+    const quietLabel = watcher.quietHours?.enabled
+      ? `Quiet ${watcher.quietHours.start || "22:00"}–${watcher.quietHours.end || "07:00"} (${watcher.quietHours.timezone || "UTC"})`
+      : "";
     const checkedLabel = watcher.lastCheckedAt ? "Checked " + new Date(watcher.lastCheckedAt).toLocaleTimeString() : "Never checked";
     const summaryText = watcher.lastSummary ? ` — ${watcher.lastSummary}` : "";
-    const meta = [kindLabel, tierLabel, statusLabel, trustLabel, checkedLabel].join(" · ") + summaryText;
+    const meta = [kindLabel, tierLabel, statusLabel, trustLabel, quietLabel, checkedLabel].filter(Boolean).join(" · ") + summaryText;
 
     const actions = [];
     let pushRow = null;
@@ -6365,9 +6413,30 @@ async function loadWatchers() {
   }
 }
 
+function syncWatcherQuietControls() {
+  const enabled = Boolean($("#watcher-quiet-enabled")?.checked);
+  const startEl = $("#watcher-quiet-start");
+  const endEl = $("#watcher-quiet-end");
+  const tzEl = $("#watcher-quiet-timezone");
+  const customWrap = $("#watcher-quiet-custom-tz-wrap");
+  const customInput = $("#watcher-quiet-custom-tz");
+  if (startEl) startEl.disabled = !enabled;
+  if (endEl) endEl.disabled = !enabled;
+  if (tzEl) tzEl.disabled = !enabled;
+  const useCustom = enabled && tzEl?.value === "__custom__";
+  if (customWrap) customWrap.hidden = !useCustom;
+  if (customInput) {
+    customInput.disabled = !useCustom;
+    customInput.required = useCustom;
+  }
+}
+
 function initWatchers() {
   renderWatcherConfigFields();
+  syncWatcherQuietControls();
   $("#watcher-kind-select")?.addEventListener("change", renderWatcherConfigFields);
+  $("#watcher-quiet-enabled")?.addEventListener("change", syncWatcherQuietControls);
+  $("#watcher-quiet-timezone")?.addEventListener("change", syncWatcherQuietControls);
   $("#refresh-watchers")?.addEventListener("click", loadWatchers);
 
   $("#watcher-event-tabs")?.addEventListener("click", (event) => {
@@ -6407,13 +6476,28 @@ function initWatchers() {
       config.expectedStatus = Number(formEl.elements.expectedStatus?.value || 200);
     }
 
+    const quietEnabled = Boolean(formEl.elements.quietEnabled?.checked);
+    const rawTz = formEl.elements.quietTimezone?.value || "UTC";
+    const timezone = rawTz === "__custom__"
+      ? (formEl.elements.quietCustomTimezone?.value || "").trim()
+      : rawTz;
+    const quietHours = quietEnabled
+      ? {
+          enabled: true,
+          start: (formEl.elements.quietStart?.value || "22:00").trim(),
+          end: (formEl.elements.quietEnd?.value || "07:00").trim(),
+          timezone: timezone || "UTC"
+        }
+      : { enabled: false, timezone: "UTC" };
+
     try {
       await api("/api/core/watchers", {
         method: "POST",
-        body: JSON.stringify({ name, kind, tier, cooldownMinutes, config })
+        body: JSON.stringify({ name, kind, tier, cooldownMinutes, config, quietHours })
       });
       formEl.reset();
       renderWatcherConfigFields();
+      syncWatcherQuietControls();
       toast(`Watcher "${name}" created.`);
       await loadWatchers();
     } catch (error) {
@@ -6439,8 +6523,11 @@ async function loadToolsAndApprovals() {
       api("/api/core/tools/receipts?limit=12").catch(() => ({ receipts: [] })),
       api("/api/core/audit?limit=30")
     ]);
-    const scopes = new Set(permissions.scopes || []);
-    const leaseByScope = new Map((permissions.leases || []).map((l) => [l.scope, l]));
+    const leasesByScope = new Map();
+    for (const lease of (permissions.leases || [])) {
+      if (!leasesByScope.has(lease.scope)) leasesByScope.set(lease.scope, []);
+      leasesByScope.get(lease.scope).push(lease);
+    }
     const projectNameById = new Map((state.projects || []).map((p) => [p.id, p.name]));
     const groups = new Map();
     for (const tool of (tools.tools || [])) {
@@ -6448,39 +6535,91 @@ async function loadToolsAndApprovals() {
       groups.get(tool.scope).push(tool);
     }
     for (const [scope, scopedTools] of groups) {
-      const allowed = scopes.has(scope);
-      const lease = leaseByScope.get(scope);
+      const scopeLeases = leasesByScope.get(scope) || [];
+      const hasGrants = scopeLeases.length > 0;
       const names = scopedTools.map((tool) => tool.name || tool.id).join(", ");
-      const leaseParts = [];
-      if (allowed) {
-        leaseParts.push(lease?.expiresAt ? `Lease · ${formatShortExpiry(lease.expiresAt)}` : "Granted · Permanent");
-        if (lease?.projectId) {
-          leaseParts.push(`Project: ${projectNameById.get(lease.projectId) || lease.projectId.slice(0, 8)}`);
-        }
-      } else {
-        leaseParts.push("Not granted");
-      }
-      leaseParts.push(scopedTools.length + " tool(s): " + names);
-      const button = {
-        label: allowed ? "Revoke" : "Allow",
-        kind: allowed ? "secondary-button" : "primary-button",
-        onClick: async () => {
-          try {
-            if (allowed) {
-              await api("/api/core/permissions", { method: "DELETE", body: JSON.stringify({ scope }) });
-            } else {
+      const summaryParts = [
+        hasGrants
+          ? `${scopeLeases.length} active ${scopeLeases.length === 1 ? "lease" : "leases"}`
+          : "Not granted",
+        scopedTools.length + " tool(s): " + names
+      ];
+      const scopeActions = [
+        {
+          label: hasGrants ? "Add grant" : "Allow",
+          kind: hasGrants ? "secondary-button" : "primary-button",
+          onClick: async () => {
+            try {
               const ttlRaw = $("#permission-lease-ttl")?.value || "";
               const projRaw = $("#permission-lease-project")?.value || "";
               const payload = { scope };
               if (ttlRaw) payload.ttlMinutes = Number(ttlRaw);
               if (projRaw) payload.projectId = projRaw;
               await api("/api/core/permissions", { method: "POST", body: JSON.stringify(payload) });
-            }
-            await loadToolsAndApprovals();
-          } catch (error) { toast(error.message); }
+              toast(`Granted ${scope}${projRaw ? " for project" : " globally"}.`);
+              await loadToolsAndApprovals();
+            } catch (error) { toast(error.message); }
+          }
         }
-      };
-      toolsHost.appendChild(createItem(scope, leaseParts.join(" · "), [button]));
+      ];
+      if (scopeLeases.length > 1) {
+        scopeActions.push({
+          label: "Revoke all",
+          kind: "secondary-button",
+          onClick: async () => {
+            try {
+              await api("/api/core/permissions", { method: "DELETE", body: JSON.stringify({ scope }) });
+              toast(`Revoked all grants for ${scope}.`);
+              await loadToolsAndApprovals();
+            } catch (error) { toast(error.message); }
+          }
+        });
+      }
+
+      const scopeItem = createItem(scope, summaryParts.join(" · "), scopeActions);
+      if (scopeLeases.length) {
+        scopeItem.classList.add("has-lease-list");
+        const leaseList = document.createElement("div");
+        leaseList.className = "scope-lease-list";
+        leaseList.setAttribute("role", "list");
+        leaseList.setAttribute("aria-label", `Active capability leases for ${scope}`);
+        for (const lease of scopeLeases) {
+          const row = document.createElement("div");
+          row.className = "scope-lease-row";
+          row.setAttribute("role", "listitem");
+
+          const scopeLabel = lease.projectId
+            ? `Project: ${projectNameById.get(lease.projectId) || lease.projectId.slice(0, 8)}`
+            : "Global (all projects)";
+          const expiryLabel = lease.expiresAt ? formatShortExpiry(lease.expiresAt) : "Permanent";
+          const detailText = [scopeLabel, expiryLabel, lease.note || ""].filter(Boolean).join(" · ");
+
+          const info = document.createElement("span");
+          info.className = "scope-lease-meta";
+          info.textContent = detailText;
+
+          const revokeBtn = document.createElement("button");
+          revokeBtn.type = "button";
+          revokeBtn.className = "secondary-button scope-lease-revoke-btn";
+          revokeBtn.textContent = "Revoke";
+          revokeBtn.setAttribute("aria-label", `Revoke ${scope} ${scopeLabel}`);
+          revokeBtn.addEventListener("click", async () => {
+            try {
+              await api("/api/core/permissions", {
+                method: "DELETE",
+                body: JSON.stringify({ scope, projectId: lease.projectId ?? null })
+              });
+              toast(`Revoked ${scope} (${lease.projectId ? "project lease" : "global lease"}).`);
+              await loadToolsAndApprovals();
+            } catch (error) { toast(error.message); }
+          });
+
+          row.append(info, revokeBtn);
+          leaseList.appendChild(row);
+        }
+        scopeItem.appendChild(leaseList);
+      }
+      toolsHost.appendChild(scopeItem);
     }
     if (!tools.tools?.length) toolsHost.textContent = "No registered tools.";
     for (const action of (pending.actions || [])) {
@@ -6541,9 +6680,12 @@ async function loadToolsAndApprovals() {
     state.receipts = receiptsRes.receipts || [];
     if (receiptHost) {
       for (const receipt of state.receipts.slice(0, 8)) {
-        const statusLabel = receipt.status === "failed"
-          ? "Failed"
-          : (receipt.verified ? "Verified" : "Unverified");
+        const vState = receipt.verificationState || (receipt.status === "failed" ? "execution_failed" : (receipt.verified ? "verified" : "unverified"));
+        const statusLabel = vState === "execution_failed"
+          ? "Execution failed"
+          : (vState === "verification_failed"
+            ? "Verification failed"
+            : (vState === "verified" ? "Verified" : "Completed (unverified)"));
         const meta = [
           statusLabel,
           `${String(receipt.riskLevel || "medium").toUpperCase()} risk`,
@@ -6551,7 +6693,8 @@ async function loadToolsAndApprovals() {
           receipt.executedAt ? new Date(receipt.executedAt).toLocaleTimeString() : ""
         ].filter(Boolean).join(" · ") + (receipt.verificationDetail ? ` — ${receipt.verificationDetail}` : "");
         const receiptEl = createItem(receipt.toolName || receipt.toolId, meta);
-        receiptEl.classList.add(receipt.status === "failed" || !receipt.verified ? "receipt-failed" : "receipt-verified");
+        if (vState === "verified") receiptEl.classList.add("receipt-verified");
+        else if (vState === "execution_failed" || vState === "verification_failed") receiptEl.classList.add("receipt-failed");
         receiptHost.appendChild(receiptEl);
       }
       if (!state.receipts.length) {
@@ -6563,7 +6706,7 @@ async function loadToolsAndApprovals() {
       auditHost.appendChild(createItem(event.event, [event.toolId, event.status, event.at ? new Date(event.at).toLocaleString() : ""].filter(Boolean).join(" · ")));
     }
     if (!audit.events?.length) auditHost.textContent = "No recent actions.";
-    await Promise.all([loadWatchers(), loadCapsules()]);
+    await Promise.all([loadWatchers(), loadCapsules(), loadWorkshop(), loadIntegrations(), loadPlaybooks(), loadPeerTokens()]);
   } catch (error) {
     toolsHost.textContent = error.message;
     pendingHost.textContent = "Approval history unavailable.";
@@ -6609,7 +6752,15 @@ async function loadSettings() {
     }
     if (!health.endpoints?.length) providers.textContent = "No model endpoints configured.";
     core.textContent = (status.implemented || []).length + " capabilities active · " + (status.planned || []).length + " planned";
-    await Promise.all([refreshVramStatus(), loadCloudAgents(), loadWorkflowProfile()]);
+    await Promise.all([
+      refreshVramStatus(),
+      loadCloudAgents(),
+      loadWorkflowProfile(),
+      loadStorageStatus(),
+      loadVoiceAndAmbientStatus(),
+      loadRecoveryStatus(),
+      loadDiagnosticsAudit()
+    ]);
   } catch (error) {
     account.textContent = error.message;
     providers.textContent = "Provider information unavailable.";
@@ -7481,9 +7632,1505 @@ function initCapsules() {
   });
 }
 
+// ── Personal Knowledge Graph Explorer ──
+function renderKnowledgeGraphInspector() {
+  const titleEl = $("#kg-inspector-title");
+  const metaEl = $("#kg-inspector-meta");
+  const summaryEl = $("#kg-inspector-summary");
+  const actionsEl = $("#kg-inspector-actions");
+  const neighborsWrap = $("#kg-inspector-neighbors-wrap");
+  const neighborsEl = $("#kg-inspector-neighbors");
+  if (!titleEl || !metaEl) return;
+
+  const graph = state.knowledgeGraph;
+  const kgApi = window.AlfieKnowledgeGraph;
+  const node = graph?.nodes?.find((n) => n.id === state.kgSelectedNodeId) || null;
+
+  if (!node) {
+    titleEl.textContent = "Select a node";
+    metaEl.textContent = graph?.nodes?.length
+      ? "Click any node on the map to inspect its provenance and connected neighbors."
+      : "Create a Project, Idea, Memory, Capsule, or Watcher to populate your Knowledge Graph.";
+    if (summaryEl) { summaryEl.textContent = ""; summaryEl.hidden = true; }
+    if (actionsEl) { actionsEl.replaceChildren(); actionsEl.hidden = true; }
+    if (neighborsWrap) neighborsWrap.hidden = true;
+    return;
+  }
+
+  const kindLabel = kgApi?.GRAPH_KIND_LABELS?.[node.kind] || node.kind;
+  const trustLabel = kgApi?.GRAPH_TRUST_LABELS?.[node.trust] || node.trust || "User authored";
+  titleEl.textContent = node.label;
+  metaEl.textContent = [kindLabel, trustLabel, `${node.degree || 0} connection${node.degree === 1 ? "" : "s"}`].join(" · ");
+
+  if (summaryEl) {
+    summaryEl.textContent = node.summary || node.subtitle || "";
+    summaryEl.hidden = !(node.summary || node.subtitle);
+  }
+
+  if (actionsEl) {
+    actionsEl.replaceChildren();
+    const exploreBtn = document.createElement("button");
+    exploreBtn.type = "button";
+    exploreBtn.className = "primary-button kg-action-btn";
+    exploreBtn.textContent = "Explore in Chat";
+    exploreBtn.addEventListener("click", () => {
+      const prompt = `Let's examine this ${kindLabel.toLowerCase()} from my workspace: "${node.label}" — ${node.summary || node.subtitle || ""}`.trim();
+      setView("chat");
+      const input = $("#chat-form textarea");
+      if (input) {
+        input.value = prompt;
+        input.focus();
+      }
+    });
+    actionsEl.appendChild(exploreBtn);
+
+    if (node.kind === "project") {
+      const proj = (state.projects || []).find((p) => p.id === node.entityId);
+      if (proj) {
+        const dossierBtn = document.createElement("button");
+        dossierBtn.type = "button";
+        dossierBtn.className = "secondary-button kg-action-btn";
+        dossierBtn.textContent = "Open Dossier";
+        dossierBtn.addEventListener("click", () => openProjectModal(proj));
+        actionsEl.appendChild(dossierBtn);
+      }
+    } else if (node.kind === "tag" && node.meta?.tag) {
+      const tagBtn = document.createElement("button");
+      tagBtn.type = "button";
+      tagBtn.className = "secondary-button kg-action-btn";
+      tagBtn.textContent = `Filter #${node.meta.tag} in Ideas`;
+      tagBtn.addEventListener("click", () => {
+        state.ideaTagFilter = node.meta.tag;
+        setView("ideas");
+      });
+      actionsEl.appendChild(tagBtn);
+    }
+    actionsEl.hidden = false;
+  }
+
+  if (neighborsWrap && neighborsEl) {
+    neighborsEl.replaceChildren();
+    const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+    const nodeById = new Map((graph?.nodes || []).map((n) => [n.id, n]));
+    const related = [];
+    for (const edge of edges) {
+      if (edge.source === node.id && nodeById.has(edge.target)) {
+        related.push({ target: nodeById.get(edge.target), relation: edge.relation });
+      } else if (edge.target === node.id && nodeById.has(edge.source)) {
+        related.push({ target: nodeById.get(edge.source), relation: edge.relation });
+      }
+    }
+    if (related.length) {
+      for (const { target, relation } of related.slice(0, 10)) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "kg-neighbor-btn";
+        const relLabel = kgApi?.GRAPH_RELATION_LABELS?.[relation] || relation;
+        const targetKind = kgApi?.GRAPH_KIND_LABELS?.[target.kind] || target.kind;
+        const main = document.createElement("span");
+        main.className = "kg-neighbor-label";
+        main.textContent = target.label;
+        const sub = document.createElement("span");
+        sub.className = "kg-neighbor-sub";
+        sub.textContent = `${relLabel} · ${targetKind}`;
+        btn.append(main, sub);
+        btn.addEventListener("click", () => {
+          state.kgSelectedNodeId = target.id;
+          renderKnowledgeGraph();
+        });
+        neighborsEl.appendChild(btn);
+      }
+      neighborsWrap.hidden = false;
+    } else {
+      neighborsWrap.hidden = true;
+    }
+  }
+}
+
+function renderKnowledgeGraph() {
+  const graph = state.knowledgeGraph || { nodes: [], edges: [], stats: { totalNodes: 0, totalEdges: 0, countsByKind: {}, untrustedNodeCount: 0 } };
+  const stats = graph.stats || {};
+  const setText = (sel, val) => { const el = $(sel); if (el) el.textContent = String(val); };
+  setText("#kg-stat-nodes", stats.totalNodes ?? graph.nodes.length);
+  setText("#kg-stat-edges", stats.totalEdges ?? graph.edges.length);
+  setText("#kg-stat-projects", stats.countsByKind?.project ?? 0);
+  const untrustedCount = stats.untrustedNodeCount ?? 0;
+  const untrustedWrap = $("#kg-stat-untrusted-wrap");
+  if (untrustedWrap) {
+    untrustedWrap.hidden = untrustedCount <= 0;
+    setText("#kg-stat-untrusted", untrustedCount);
+  }
+
+  if (state.kgSelectedNodeId && !graph.nodes.some((n) => n.id === state.kgSelectedNodeId)) {
+    state.kgSelectedNodeId = graph.nodes[0]?.id || null;
+  } else if (!state.kgSelectedNodeId && graph.nodes.length) {
+    state.kgSelectedNodeId = graph.nodes[0].id;
+  }
+
+  const host = $("#kg-canvas-wrap");
+  window.AlfieKnowledgeGraph?.renderKnowledgeGraphSvg(host, graph, {
+    selectedNodeId: state.kgSelectedNodeId,
+    zoom: state.kgZoom || 1,
+    onSelectNode: (nodeId) => {
+      state.kgSelectedNodeId = nodeId;
+      renderKnowledgeGraph();
+    }
+  });
+  renderKnowledgeGraphInspector();
+}
+
+async function loadKnowledgeGraph() {
+  const host = $("#kg-canvas-wrap");
+  if (!host) return;
+  try {
+    const params = new URLSearchParams();
+    if (state.kgKindFilter && state.kgKindFilter !== "all") params.set("kind", state.kgKindFilter);
+    if (state.kgProjectFilter) params.set("projectId", state.kgProjectFilter);
+    const q = ($("#kg-search")?.value || "").trim();
+    if (q) params.set("q", q);
+    const query = params.toString();
+    const res = await api("/api/core/graph" + (query ? "?" + query : ""));
+    state.knowledgeGraph = res.graph || { nodes: [], edges: [], stats: {} };
+    renderKnowledgeGraph();
+  } catch (error) {
+    host.textContent = error.message || "Knowledge graph unavailable.";
+  }
+}
+
+function initKnowledgeGraph() {
+  state.kgKindFilter = "all";
+  state.kgProjectFilter = "";
+  state.kgZoom = 1;
+  state.kgSelectedNodeId = null;
+
+  $("#kg-kind-tabs")?.addEventListener("click", (event) => {
+    const btn = event.target.closest("button[data-kg-kind]");
+    if (!btn) return;
+    state.kgKindFilter = btn.dataset.kgKind || "all";
+    $("#kg-kind-tabs").querySelectorAll("button[data-kg-kind]").forEach((tab) => {
+      const active = tab === btn;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", String(active));
+    });
+    loadKnowledgeGraph();
+  });
+
+  $("#kg-project-filter")?.addEventListener("change", (event) => {
+    state.kgProjectFilter = event.currentTarget.value || "";
+    loadKnowledgeGraph();
+  });
+
+  let searchTimer = null;
+  $("#kg-search")?.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(loadKnowledgeGraph, 180);
+  });
+
+  $("#kg-zoom-in")?.addEventListener("click", () => {
+    state.kgZoom = Math.min(1.65, Number(((state.kgZoom || 1) + 0.15).toFixed(2)));
+    renderKnowledgeGraph();
+  });
+  $("#kg-zoom-out")?.addEventListener("click", () => {
+    state.kgZoom = Math.max(0.75, Number(((state.kgZoom || 1) - 0.15).toFixed(2)));
+    renderKnowledgeGraph();
+  });
+  $("#kg-zoom-reset")?.addEventListener("click", () => {
+    state.kgZoom = 1;
+    renderKnowledgeGraph();
+  });
+  $("#kg-refresh-btn")?.addEventListener("click", loadKnowledgeGraph);
+}
+
+// ── Phase 1–5 Roadmap Surfaces: Recovery, Voice Loop TTS, Hybrid Search, Reflections, Virtual Room, Workshop, Integrations, SQLite WAL, Privacy Airlock ──
+
+let activeTtsAudio = null;
+
+function stopAssistantSpeech() {
+  if (activeTtsAudio) {
+    try {
+      activeTtsAudio.pause();
+      activeTtsAudio.src = "";
+    } catch {}
+    activeTtsAudio = null;
+  }
+  try {
+    window.speechSynthesis?.cancel?.();
+  } catch {}
+  const stopBtn = $("#voice-tts-stop");
+  if (stopBtn) stopBtn.hidden = true;
+}
+
+async function speakAssistantReply(text) {
+  if (!state.voiceTtsEnabled) return;
+  const cleaned = String(text || "")
+    .replace(/```[\s\S]*?```/g, " Code block omitted. ")
+    .replace(/[#*_>`~]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1200);
+  if (!cleaned) return;
+  stopAssistantSpeech();
+  const stopBtn = $("#voice-tts-stop");
+  if (stopBtn) stopBtn.hidden = false;
+
+  try {
+    const res = await api("/api/core/voice/synthesize", {
+      method: "POST",
+      body: JSON.stringify({ text: cleaned })
+    });
+    if (res?.mode === "local_tts" && res.audioBase64) {
+      const audio = new Audio(`data:${res.mimeType || "audio/wav"};base64,${res.audioBase64}`);
+      activeTtsAudio = audio;
+      audio.addEventListener("ended", () => {
+        activeTtsAudio = null;
+        if (stopBtn) stopBtn.hidden = true;
+      });
+      audio.addEventListener("error", () => {
+        activeTtsAudio = null;
+        if (stopBtn) stopBtn.hidden = true;
+      });
+      await audio.play();
+      return;
+    }
+  } catch {
+    // Fall back seamlessly to browser speech synthesis.
+  }
+
+  if (typeof window !== "undefined" && "speechSynthesis" in window && typeof window.SpeechSynthesisUtterance === "function") {
+    try {
+      const utter = new window.SpeechSynthesisUtterance(cleaned);
+      utter.rate = 1.0;
+      utter.onend = () => { if (stopBtn) stopBtn.hidden = true; };
+      utter.onerror = () => { if (stopBtn) stopBtn.hidden = true; };
+      window.speechSynthesis.speak(utter);
+      return;
+    } catch {}
+  }
+  if (stopBtn) stopBtn.hidden = true;
+}
+
+function initVoiceLoopTts() {
+  const toggleBtn = $("#voice-tts-toggle");
+  const stopBtn = $("#voice-tts-stop");
+  state.voiceTtsEnabled = localStorage.getItem("alfie_voice_tts_enabled") === "1";
+
+  const syncToggle = () => {
+    if (!toggleBtn) return;
+    toggleBtn.setAttribute("aria-pressed", String(state.voiceTtsEnabled));
+    toggleBtn.classList.toggle("is-active", state.voiceTtsEnabled);
+    toggleBtn.title = state.voiceTtsEnabled
+      ? "Spoken replies ON — click to mute"
+      : "Read Alfie's replies aloud (push-to-talk voice loop)";
+  };
+  syncToggle();
+
+  toggleBtn?.addEventListener("click", () => {
+    state.voiceTtsEnabled = !state.voiceTtsEnabled;
+    localStorage.setItem("alfie_voice_tts_enabled", state.voiceTtsEnabled ? "1" : "0");
+    if (!state.voiceTtsEnabled) stopAssistantSpeech();
+    syncToggle();
+    toast(state.voiceTtsEnabled ? "Spoken replies enabled (push-to-talk only)" : "Spoken replies muted");
+  });
+
+  stopBtn?.addEventListener("click", () => {
+    stopAssistantSpeech();
+    toast("Stopped speaking");
+  });
+}
+
+function initAccountRecovery() {
+  const loginForm = $("#recovery-form");
+  loginForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const errEl = $("#login-error");
+    if (errEl) errEl.textContent = "";
+    const fd = new FormData(form);
+    const username = String(fd.get("username") || "").trim();
+    const recoveryCode = String(fd.get("recoveryCode") || "").trim();
+    const newPassword = String(fd.get("newPassword") || "");
+    try {
+      const res = await api("/api/auth/recover", {
+        method: "POST",
+        body: JSON.stringify({ username, recoveryCode, newPassword })
+      });
+      form.reset();
+      const details = $("#recovery-disclosure");
+      if (details) details.open = false;
+      const loginUser = $("#login-username");
+      if (loginUser) loginUser.value = username;
+      const remaining = Number(res?.remainingCodes ?? 0);
+      toast(`Password reset complete. ${remaining} recovery code(s) remaining. Please sign in.`);
+    } catch (error) {
+      if (errEl) errEl.textContent = error.message || "Recovery failed.";
+    }
+  });
+
+  const genForm = $("#recovery-generate-form");
+  genForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const errEl = $("#recovery-generate-error");
+    if (errEl) errEl.textContent = "";
+    const fd = new FormData(form);
+    const currentPassword = String(fd.get("currentPassword") || "");
+    try {
+      const res = await api("/api/auth/recovery-codes", {
+        method: "POST",
+        body: JSON.stringify({ currentPassword })
+      });
+      form.reset();
+      const box = $("#recovery-codes-box");
+      const pre = $("#recovery-codes-list");
+      const codes = Array.isArray(res?.recovery?.codes) ? res.recovery.codes : (Array.isArray(res?.codes) ? res.codes : []);
+      if (pre) pre.textContent = codes.join("\n");
+      if (box) box.hidden = codes.length === 0;
+      await loadRecoveryStatus();
+      toast("Generated 8 single-use recovery codes. Store them offline now.");
+    } catch (error) {
+      if (errEl) errEl.textContent = error.message || "Could not generate recovery codes.";
+    }
+  });
+
+  $("#recovery-copy-btn")?.addEventListener("click", async () => {
+    const text = $("#recovery-codes-list")?.textContent || "";
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("Recovery codes copied to clipboard");
+    } catch {
+      toast("Select and copy the codes manually");
+    }
+  });
+}
+
+async function loadRecoveryStatus() {
+  const statusEl = $("#recovery-status-text");
+  if (!statusEl) return;
+  try {
+    const res = await api("/api/auth/recovery-status");
+    const count = Number(res?.recovery?.remaining ?? res?.remainingCodes ?? 0);
+    statusEl.textContent = count > 0
+      ? `${count} single-use recovery code${count === 1 ? "" : "s"} active`
+      : "No recovery codes generated yet — recommended for standalone installs.";
+  } catch (error) {
+    statusEl.textContent = error.message || "Recovery status unavailable.";
+  }
+}
+
+async function loadStorageStatus() {
+  const host = $("#storage-status-grid");
+  if (!host) return;
+  try {
+    const res = await api("/api/core/storage/status");
+    host.replaceChildren();
+    const st = res?.storage || {};
+    const sizeKb = Number.isFinite(st.dbSizeBytes) ? `${(st.dbSizeBytes / 1024).toFixed(1)} KB` : "—";
+    const cards = [
+      { label: "Backend", value: String(st.backend || "sqlite").toUpperCase() },
+      { label: "Journal mode", value: String(st.journalMode || "wal").toUpperCase() },
+      { label: "Schema", value: `v${st.schemaVersion ?? 3}` },
+      { label: "Integrity", value: st.integrityOk ? "OK (quick_check)" : "Check needed" },
+      { label: "DB size", value: sizeKb },
+      { label: "Collections", value: String(st.collectionsCount ?? 0) },
+      { label: "FTS5 rows", value: String(st.ftsIndexedRows ?? 0) },
+      { label: "Graph edges", value: String(st.graphEdgesCount ?? 0) }
+    ];
+    for (const card of cards) {
+      const box = document.createElement("div");
+      box.className = "storage-stat-card";
+      const lbl = document.createElement("span");
+      lbl.className = "storage-stat-label";
+      lbl.textContent = card.label;
+      const val = document.createElement("strong");
+      val.className = "storage-stat-value";
+      val.textContent = card.value;
+      box.append(lbl, val);
+      host.appendChild(box);
+    }
+  } catch (error) {
+    host.textContent = error.message || "Storage status unavailable.";
+  }
+}
+
+function initStorageAndAirlock() {
+  $("#storage-migrate-btn")?.addEventListener("click", async () => {
+    const btn = $("#storage-migrate-btn");
+    if (btn) btn.disabled = true;
+    try {
+      const res = await api("/api/core/storage/migrate", { method: "POST", body: "{}" });
+      const migrated = res?.migration?.migratedCollections?.length ?? 0;
+      await loadStorageStatus();
+      toast(migrated > 0
+        ? `Migrated ${migrated} legacy collection(s) and verified SQLite WAL index.`
+        : "SQLite WAL storage and FTS5 index verified.");
+    } catch (error) {
+      toast(error.message || "Storage sync failed");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  $("#airlock-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const out = $("#airlock-preview-output");
+    const fd = new FormData(form);
+    const text = String(fd.get("text") || "").trim();
+    const customTermsRaw = String(fd.get("customTerms") || "");
+    const customTerms = customTermsRaw.split(",").map((s) => s.trim()).filter(Boolean);
+    if (!text) {
+      toast("Enter sample text to preview the Split-Brain Privacy Airlock.");
+      return;
+    }
+    try {
+      const res = await api("/api/core/privacy/airlock/preview", {
+        method: "POST",
+        body: JSON.stringify({ text, customTerms })
+      });
+      const a = res?.airlock || res || {};
+      if (!out) return;
+      out.replaceChildren();
+      out.hidden = false;
+
+      const summary = document.createElement("div");
+      summary.className = "airlock-summary-row";
+      const badge = document.createElement("span");
+      badge.className = "cloud-status-tag";
+      badge.textContent = `${a.redactedCount ?? 0} redaction(s) · ${a.rehydrationVerified ? "Round-trip verified" : "Check"}`;
+      summary.appendChild(badge);
+      if (a.categoryCounts && Object.keys(a.categoryCounts).length) {
+        const cats = document.createElement("span");
+        cats.className = "muted";
+        cats.textContent = Object.entries(a.categoryCounts).map(([k, v]) => `${k}: ${v}`).join(" · ");
+        summary.appendChild(cats);
+      }
+
+      const label = document.createElement("strong");
+      label.className = "airlock-out-label";
+      label.textContent = "Outbound sanitized payload (sent to cloud):";
+      const pre = document.createElement("pre");
+      pre.className = "airlock-out-pre";
+      pre.textContent = a.sanitizedText || "";
+
+      out.append(summary, label, pre);
+    } catch (error) {
+      toast(error.message || "Airlock preview failed");
+    }
+  });
+
+  $("#voice-ambient-refresh-btn")?.addEventListener("click", loadVoiceAndAmbientStatus);
+}
+
+async function loadVoiceAndAmbientStatus() {
+  const host = $("#voice-ambient-status-list");
+  if (!host) return;
+  try {
+    const [voiceRes, ambientRes] = await Promise.all([
+      api("/api/core/voice/status"),
+      api("/api/core/ambient/state")
+    ]);
+    host.replaceChildren();
+    const v = voiceRes?.voice || {};
+    const sttDetail = v.stt?.configured ? `Local Whisper (${v.stt.provider || "configured"})` : "Browser Web Speech API fallback (push-to-talk)";
+    const ttsDetail = v.tts?.configured ? `Local TTS (${v.tts.provider || "configured"})` : "Browser Speech Synthesis fallback (interruptible)";
+    host.appendChild(createItem("Voice Loop Policy", "Push-to-talk only · Hotword listening permanently disabled"));
+    host.appendChild(createItem("Speech-to-Text (STT)", sttDetail));
+    host.appendChild(createItem("Text-to-Speech (TTS)", ttsDetail));
+
+    const bridges = ambientRes?.presence?.bridges || {};
+    host.appendChild(createItem(
+      "Home Assistant Bridge",
+      bridges.homeAssistantConfigured ? "Configured via ALFIE_HA_URL" : "Optional — set ALFIE_HA_URL & ALFIE_HA_TOKEN"
+    ));
+    host.appendChild(createItem(
+      "MQTT / Ambient Webhook",
+      bridges.webhookConfigured ? `Configured (${bridges.mqttTopic || "alfie/presence/state"})` : `Optional — topic ${bridges.mqttTopic || "alfie/presence/state"} via ALFIE_AMBIENT_WEBHOOK_URL`
+    ));
+  } catch (error) {
+    host.textContent = error.message || "Voice & ambient status unavailable.";
+  }
+}
+
+function initHybridSearch() {
+  const form = $("#workspace-search-form");
+  const resultsHost = $("#workspace-search-results");
+  const metaBadge = $("#hybrid-search-meta");
+  if (!form || !resultsHost) return;
+
+  const ENTITY_LABELS = {
+    memory: "Memory",
+    project: "Project",
+    decision: "Decision",
+    idea: "Idea",
+    conversation: "Chat"
+  };
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const q = ($("#workspace-search-input")?.value || "").trim();
+    const mode = $("#workspace-search-mode")?.value || "hybrid";
+    resultsHost.replaceChildren();
+    if (!q) {
+      if (metaBadge) metaBadge.textContent = "Hybrid ready";
+      return;
+    }
+    if (metaBadge) metaBadge.textContent = "Searching…";
+    try {
+      const params = new URLSearchParams({ q, mode, limit: "15" });
+      const res = await api("/api/core/search?" + params.toString());
+      const searchData = res?.search || res || {};
+      const hits = Array.isArray(searchData.results) ? searchData.results : [];
+      if (metaBadge) {
+        const provider = searchData.semanticEngine === "python-worker-v1" ? "Python Worker" : "Local Embeddings";
+        metaBadge.textContent = `${hits.length} hit(s) · ${searchData.mode === "hybrid" ? `Hybrid (${provider})` : "FTS5 Lexical"}`;
+      }
+      if (!hits.length) {
+        const empty = document.createElement("p");
+        empty.className = "muted";
+        empty.textContent = `No workspace records matched "${q}".`;
+        resultsHost.appendChild(empty);
+        return;
+      }
+      for (const hit of hits) {
+        const card = document.createElement("article");
+        card.className = "hybrid-hit-card";
+        const top = document.createElement("div");
+        top.className = "hybrid-hit-top";
+        const badge = document.createElement("span");
+        badge.className = "hybrid-hit-kind";
+        badge.textContent = ENTITY_LABELS[hit.entityType] || hit.entityType;
+        const title = document.createElement("strong");
+        title.className = "hybrid-hit-title";
+        title.textContent = hit.title || hit.docId || hit.entityId || "Record";
+        const score = document.createElement("span");
+        score.className = "hybrid-hit-score";
+        const src = Array.isArray(hit.matchedBy) ? hit.matchedBy.join(" + ") : (Array.isArray(hit.sources) ? hit.sources.join(" + ") : (searchData.mode || "fts5"));
+        const rawScore = Number(hit.rrfScore ?? hit.hybridScore ?? hit.semanticScore ?? 0);
+        score.textContent = `${src} · ${(rawScore * 100).toFixed(1)}`;
+        top.append(badge, title, score);
+
+        const body = document.createElement("p");
+        body.className = "hybrid-hit-snippet muted";
+        body.textContent = String(hit.snippet || hit.body || "").slice(0, 220);
+
+        const actions = document.createElement("div");
+        actions.className = "hybrid-hit-actions";
+        const jumpBtn = document.createElement("button");
+        jumpBtn.type = "button";
+        jumpBtn.className = "secondary-button kg-action-btn";
+        const targetId = hit.docId || hit.entityId || "";
+        if (hit.entityType === "conversation") {
+          jumpBtn.textContent = "Open conversation";
+          jumpBtn.addEventListener("click", () => {
+            setView("chat");
+            openConversation(targetId).catch((e) => toast(e.message));
+          });
+        } else if (hit.entityType === "idea") {
+          jumpBtn.textContent = "Open in Ideas Vault";
+          jumpBtn.addEventListener("click", () => {
+            setView("ideas");
+            const searchEl = $("#idea-search");
+            if (searchEl) {
+              searchEl.value = hit.title || q;
+              renderIdeas?.();
+            }
+          });
+        } else if (hit.entityType === "project" || hit.entityType === "decision") {
+          jumpBtn.textContent = "Inspect Project Dossier";
+          jumpBtn.addEventListener("click", () => {
+            const proj = state.projects.find((p) => p.id === (hit.projectId || targetId));
+            if (proj && typeof openProjectModal === "function") openProjectModal(proj);
+            else toast("Project dossier not found in current list.");
+          });
+        } else {
+          jumpBtn.textContent = "Filter in Garden";
+          jumpBtn.addEventListener("click", () => {
+            const memSearch = $("#memory-search");
+            if (memSearch) {
+              memSearch.value = q;
+              loadMemories().catch(() => {});
+              memSearch.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+          });
+        }
+        actions.appendChild(jumpBtn);
+        card.append(top, body, actions);
+        resultsHost.appendChild(card);
+      }
+    } catch (error) {
+      if (metaBadge) metaBadge.textContent = "Search error";
+      resultsHost.textContent = error.message || "Search unavailable.";
+    }
+  });
+}
+
+async function loadReflections() {
+  const metricsHost = $("#reflection-metrics");
+  const bodyHost = $("#reflection-body");
+  const snapWrap = $("#reflection-snapshots-wrap");
+  const snapList = $("#reflection-snapshots");
+  if (!metricsHost || !bodyHost) return;
+  const period = state.reflectionPeriod || "weekly";
+  try {
+    const res = await api(`/api/core/reflections?period=${encodeURIComponent(period)}`);
+    const ref = res?.reflection;
+    metricsHost.replaceChildren();
+    bodyHost.replaceChildren();
+
+    if (ref?.metrics) {
+      const m = ref.metrics;
+      const pills = [
+        { label: "Active projects", value: m.activeProjects ?? 0 },
+        { label: "Recent memories", value: m.recentMemories ?? 0 },
+        { label: "Open ideas", value: m.openIdeas ?? 0 },
+        { label: "Open blockers", value: m.openBlockers ?? 0 },
+        { label: "Learning topics", value: m.learningTopics ?? 0 },
+        { label: "Active watchers", value: m.activeWatchers ?? 0 }
+      ];
+      for (const pill of pills) {
+        const el = document.createElement("div");
+        el.className = "storage-stat-card";
+        const l = document.createElement("span");
+        l.className = "storage-stat-label";
+        l.textContent = pill.label;
+        const v = document.createElement("strong");
+        v.className = "storage-stat-value";
+        v.textContent = String(pill.value);
+        el.append(l, v);
+        metricsHost.appendChild(el);
+      }
+    }
+
+    if (Array.isArray(ref?.highlights) && ref.highlights.length) {
+      const ul = document.createElement("ul");
+      ul.className = "reflection-list";
+      for (const item of ref.highlights) {
+        const li = document.createElement("li");
+        li.textContent = item;
+        ul.appendChild(li);
+      }
+      bodyHost.appendChild(ul);
+    } else {
+      const summaryP = document.createElement("p");
+      summaryP.className = "reflection-summary-text";
+      summaryP.textContent = "No activity recorded yet in this window.";
+      bodyHost.appendChild(summaryP);
+    }
+
+    if (Array.isArray(ref?.openBlockers) && ref.openBlockers.length) {
+      const h = document.createElement("h4");
+      h.className = "watchers-subhead";
+      h.textContent = "Open blockers";
+      const ul = document.createElement("ul");
+      ul.className = "reflection-list";
+      for (const b of ref.openBlockers.slice(0, 6)) {
+        const li = document.createElement("li");
+        li.textContent = `${b.project}: ${b.blocker || b.text || ""}`;
+        ul.appendChild(li);
+      }
+      bodyHost.append(h, ul);
+    }
+
+    const snapshots = Array.isArray(res?.snapshots) ? res.snapshots : [];
+    if (snapWrap && snapList) {
+      snapList.replaceChildren();
+      snapWrap.hidden = snapshots.length === 0;
+      for (const snap of snapshots.slice(0, 5)) {
+        const when = snap.generatedAt ? new Date(snap.generatedAt).toLocaleString() : "";
+        const summary = Array.isArray(snap.highlights) && snap.highlights.length
+          ? snap.highlights.join(" · ")
+          : (snap.summary || "Local continuity snapshot");
+        snapList.appendChild(createItem(
+          `${String(snap.period || "weekly").toUpperCase()} snapshot · ${when}`,
+          summary
+        ));
+      }
+    }
+  } catch (error) {
+    bodyHost.textContent = error.message || "Reflections unavailable.";
+  }
+}
+
+function initReflectionsAndVirtualRoom() {
+  state.reflectionPeriod = "weekly";
+  $("#reflection-period-tabs")?.addEventListener("click", (event) => {
+    const btn = event.target.closest("button[data-reflection-period]");
+    if (!btn) return;
+    state.reflectionPeriod = btn.dataset.reflectionPeriod || "weekly";
+    $("#reflection-period-tabs").querySelectorAll("button[data-reflection-period]").forEach((tab) => {
+      const active = tab === btn;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", String(active));
+    });
+    loadReflections();
+  });
+
+  $("#reflection-save-btn")?.addEventListener("click", async () => {
+    const btn = $("#reflection-save-btn");
+    if (btn) btn.disabled = true;
+    try {
+      await api("/api/core/reflections/snapshot", {
+        method: "POST",
+        body: JSON.stringify({ period: state.reflectionPeriod || "weekly" })
+      });
+      await loadReflections();
+      toast("Local reflection snapshot saved to SQLite WAL");
+    } catch (error) {
+      toast(error.message || "Could not save snapshot");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  $("#virtual-room-details")?.addEventListener("toggle", (event) => {
+    if (event.currentTarget.open) {
+      loadVirtualRoom();
+    }
+  });
+  $("#virtual-room-refresh-btn")?.addEventListener("click", loadVirtualRoom);
+  $("#ambient-push-btn")?.addEventListener("click", async () => {
+    const btn = $("#ambient-push-btn");
+    const feedback = $("#ambient-bridge-feedback");
+    if (btn) btn.disabled = true;
+    try {
+      const res = await api("/api/core/ambient/push", { method: "POST", body: "{}" });
+      const bridge = res?.bridge || {};
+      const dispatched = Array.isArray(bridge.dispatched) ? bridge.dispatched.length : 0;
+      const errCount = Array.isArray(bridge.errors) ? bridge.errors.length : 0;
+      const haState = bridge.homeAssistantPayload?.state || "calm";
+      const mqttTopic = bridge.mqttPayload?.topic || "alfie/presence/state";
+      if (feedback) {
+        feedback.textContent = dispatched > 0
+          ? `Dispatched to ${dispatched} bridge target(s) · HA state: ${haState} · MQTT topic: ${mqttTopic}`
+          : `Payload ready (HA state: ${haState}, MQTT topic: ${mqttTopic})${errCount ? ` · ${errCount} error(s)` : " · configure ALFIE_HA_URL or ALFIE_AMBIENT_WEBHOOK_URL to transmit"}`;
+      }
+      toast("Ambient bridge state evaluated");
+    } catch (error) {
+      if (feedback) feedback.textContent = error.message || "Bridge push failed.";
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+}
+
+async function loadVirtualRoom() {
+  const canvas = $("#virtual-room-canvas");
+  const statusLine = $("#ambient-status-line");
+  if (!canvas) return;
+  try {
+    const res = await api("/api/core/ambient/state");
+    const presence = res?.presence;
+    if (statusLine && presence?.soul?.statusLine) {
+      statusLine.textContent = `${presence.soul.statusLine} · Time: ${presence.environment?.timeLabel || "local"}`;
+    }
+    window.AlfieVirtualRoom?.renderVirtualRoomSvg(canvas, presence, {
+      onNavigate: (view) => setView(view)
+    });
+  } catch (error) {
+    canvas.textContent = error.message || "Virtual room state unavailable.";
+  }
+}
+
+async function loadWorkshop() {
+  const host = $("#workshop-job-list");
+  if (!host) return;
+  try {
+    const res = await api("/api/core/jobs");
+    host.replaceChildren();
+    const jobs = Array.isArray(res?.jobs) ? res.jobs : [];
+    if (!jobs.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "No specialist jobs yet. Delegate a Researcher, Auditor, Planner, or Developer task above.";
+      host.appendChild(empty);
+      return;
+    }
+    for (const job of jobs.slice(0, 12)) {
+      const card = document.createElement("article");
+      card.className = "workshop-job-card";
+
+      const head = document.createElement("div");
+      head.className = "workshop-job-head";
+      const titleWrap = document.createElement("div");
+      const title = document.createElement("strong");
+      const roleLabel = job.role || job.roleId || "specialist";
+      title.textContent = job.title || roleLabel;
+      const meta = document.createElement("p");
+      meta.className = "muted workshop-job-meta";
+      const ceiling = Array.isArray(job.capabilityCeiling) ? job.capabilityCeiling : (Array.isArray(job.effectiveScopes) ? job.effectiveScopes : []);
+      const scopesText = ceiling.length ? ceiling.join(", ") : "context-only (read)";
+      const stepSuffix = Number.isFinite(job.stepsCompleted) && job.budget?.maxSteps
+        ? ` · Steps: ${job.stepsCompleted}/${job.budget.maxSteps}`
+        : "";
+      meta.textContent = `Role: ${roleLabel}${stepSuffix} · Ceiling: ${scopesText}`;
+      titleWrap.append(title, meta);
+
+      const badges = document.createElement("div");
+      badges.className = "workshop-job-badges";
+      const statusPill = document.createElement("span");
+      statusPill.className = `cloud-status-tag workshop-status-${job.status || "queued"}`;
+      statusPill.textContent = String(job.status || "queued").replace(/_/g, " ");
+      badges.appendChild(statusPill);
+      if (job.tainted) {
+        const taintPill = document.createElement("span");
+        taintPill.className = "cloud-status-tag is-missing";
+        taintPill.textContent = `Tainted (${job.lowestTrustTouched || "external"})`;
+        badges.appendChild(taintPill);
+      }
+      if (job.status === "queued" || job.status === "running" || job.status === "awaiting_approval") {
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "secondary-button kg-action-btn";
+        cancelBtn.textContent = "Cancel";
+        cancelBtn.addEventListener("click", async () => {
+          await api(`/api/core/jobs/${encodeURIComponent(job.id)}/cancel`, { method: "POST", body: "{}" });
+          await loadWorkshop();
+          toast("Job cancelled");
+        });
+        badges.appendChild(cancelBtn);
+      }
+      head.append(titleWrap, badges);
+      card.appendChild(head);
+
+      const artifact = job.artifact || job.output || null;
+      if (artifact?.summary) {
+        const sum = document.createElement("p");
+        sum.className = "workshop-job-summary";
+        sum.textContent = artifact.summary;
+        card.appendChild(sum);
+      }
+      if (Array.isArray(artifact?.findings) && artifact.findings.length) {
+        const ul = document.createElement("ul");
+        ul.className = "reflection-list";
+        for (const f of artifact.findings.slice(0, 5)) {
+          const li = document.createElement("li");
+          li.textContent = f;
+          ul.appendChild(li);
+        }
+        card.appendChild(ul);
+      }
+      if (Array.isArray(artifact?.recommendations) && artifact.recommendations.length) {
+        const rec = document.createElement("p");
+        rec.className = "muted workshop-job-rec";
+        rec.textContent = "Next: " + artifact.recommendations.slice(0, 2).join(" · ");
+        card.appendChild(rec);
+      }
+      host.appendChild(card);
+    }
+  } catch (error) {
+    host.textContent = error.message || "Workshop jobs unavailable.";
+  }
+}
+
+async function loadIntegrations() {
+  const host = $("#integrations-grid");
+  if (!host) return;
+  try {
+    const res = await api("/api/core/integrations/status");
+    host.replaceChildren();
+    const list = Array.isArray(res?.integrations) ? res.integrations : [];
+    for (const item of list) {
+      const card = document.createElement("article");
+      card.className = "integration-card";
+      const head = document.createElement("div");
+      head.className = "integration-card-head";
+      const title = document.createElement("strong");
+      title.textContent = item.name || item.id;
+      const badge = document.createElement("span");
+      badge.className = "cloud-status-tag" + (item.configured ? "" : " is-missing");
+      badge.textContent = item.configured ? "Ready" : "Configure via env";
+      head.append(title, badge);
+
+      const desc = document.createElement("p");
+      desc.className = "muted integration-card-desc";
+      desc.textContent = item.description || "";
+
+      const tools = document.createElement("p");
+      tools.className = "integration-card-tools";
+      tools.textContent = "Tools: " + (Array.isArray(item.tools) ? item.tools.join(", ") : "—");
+
+      const scopes = document.createElement("p");
+      scopes.className = "muted integration-card-scopes";
+      scopes.textContent = "Scopes: " + (Array.isArray(item.scopes) ? item.scopes.join(", ") : "—");
+
+      card.append(head, desc, tools, scopes);
+      host.appendChild(card);
+    }
+  } catch (error) {
+    host.textContent = error.message || "Integration status unavailable.";
+  }
+}
+
+function initWorkshopAndIntegrations() {
+  $("#workshop-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const fd = new FormData(form);
+    const roleId = String(fd.get("roleId") || "researcher");
+    const projectId = String(fd.get("projectId") || "").trim() || null;
+    const objective = String(fd.get("objective") || "").trim();
+    if (!objective) return;
+    try {
+      const res = await api("/api/core/workshop/delegate", {
+        method: "POST",
+        body: JSON.stringify({ roleId, projectId, objective })
+      });
+      form.reset();
+      await loadWorkshop();
+      toast(`Delegated ${res?.role?.name || roleId} job — ${res?.job?.status || "completed"}`);
+    } catch (error) {
+      toast(error.message || "Workshop delegation failed");
+    }
+  });
+  $("#refresh-workshop")?.addEventListener("click", loadWorkshop);
+  $("#refresh-integrations")?.addEventListener("click", loadIntegrations);
+}
+
+// ── Phase 6.1: Sovereign Encrypted Vault ──
+let lastExportedVaultArchive = null;
+
+function downloadTextBlob(filename, content, mimeType = "application/json") {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function initPhase6Vault() {
+  const fileInput = $("#vault-file-input");
+  const jsonInput = $("#vault-archive-json");
+  fileInput?.addEventListener("change", async () => {
+    const file = fileInput.files?.[0];
+    if (!file || !jsonInput) return;
+    try {
+      jsonInput.value = await file.text();
+      toast(`Loaded ${file.name} for verification`);
+    } catch {
+      toast("Could not read selected vault file.");
+    }
+  });
+
+  $("#vault-export-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const statusEl = $("#vault-export-status");
+    const fd = new FormData(form);
+    const passphrase = String(fd.get("passphrase") || "");
+    try {
+      if (statusEl) statusEl.textContent = "Encrypting workspace with AES-256-GCM + scrypt…";
+      const res = await api("/api/core/vault/export", {
+        method: "POST",
+        body: JSON.stringify({ passphrase })
+      });
+      lastExportedVaultArchive = res.archive;
+      const serialized = JSON.stringify(res.archive, null, 2);
+      const stamp = new Date().toISOString().slice(0, 10);
+      downloadTextBlob(`alfie-vault-${stamp}.alfie-vault.json`, serialized, "application/json");
+      if (jsonInput && !jsonInput.value.trim()) {
+        jsonInput.value = serialized;
+      }
+      if (statusEl) {
+        const s = res.summary || {};
+        statusEl.textContent = `Encrypted ${s.collectionCount ?? 0} collection(s) (${((s.encryptedBytes || 0) / 1024).toFixed(1)} KB · sha256: ${String(s.manifestSha256 || "").slice(0, 12)}…)`;
+      }
+      form.reset();
+      toast("Encrypted sovereign vault exported");
+    } catch (error) {
+      if (statusEl) statusEl.textContent = error.message || "Vault export failed.";
+      toast(error.message || "Vault export failed");
+    }
+  });
+
+  function readArchiveInput() {
+    const raw = ($("#vault-archive-json")?.value || "").trim();
+    if (!raw) throw new Error("Load or paste an .alfie-vault.json archive first.");
+    try {
+      return JSON.parse(raw);
+    } catch {
+      throw new Error("Vault archive text is not valid JSON.");
+    }
+  }
+
+  $("#vault-verify-btn")?.addEventListener("click", async () => {
+    const statusEl = $("#vault-restore-status");
+    const passphrase = $("#vault-restore-passphrase")?.value || "";
+    try {
+      const archive = readArchiveInput();
+      if (statusEl) statusEl.textContent = "Verifying AES-256-GCM tag and SHA-256 manifest…";
+      const res = await api("/api/core/vault/verify", {
+        method: "POST",
+        body: JSON.stringify({ archive, passphrase })
+      });
+      const v = res.verification || {};
+      const countSummary = Object.entries(v.counts || {}).map(([k, n]) => `${k.replace(".json", "")}: ${n}`).join(" · ");
+      if (statusEl) {
+        statusEl.textContent = `Verified valid (${v.collectionCount ?? 0} collections · ${countSummary || "empty"} · sha256: ${String(v.manifestSha256 || "").slice(0, 12)}…)`;
+      }
+      toast("Vault archive integrity verified");
+    } catch (error) {
+      if (statusEl) statusEl.textContent = error.message || "Verification failed.";
+      toast(error.message || "Vault verification failed");
+    }
+  });
+
+  $("#vault-restore-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const statusEl = $("#vault-restore-status");
+    const passphrase = $("#vault-restore-passphrase")?.value || "";
+    const mode = $("#vault-restore-mode")?.value === "replace" ? "replace" : "merge";
+    try {
+      const archive = readArchiveInput();
+      if (statusEl) statusEl.textContent = `Restoring vault (${mode} mode)…`;
+      const res = await api("/api/core/vault/restore", {
+        method: "POST",
+        body: JSON.stringify({ archive, passphrase, mode })
+      });
+      const r = res.restored || {};
+      if (statusEl) {
+        statusEl.textContent = `Restored ${r.restoredCollections?.length ?? 0} collection(s) in ${r.mode || mode} mode.`;
+      }
+      form.reset();
+      await Promise.all([loadStorageStatus(), loadDiagnosticsAudit(), loadProjects()]);
+      toast(`Vault restored (${r.mode || mode} mode)`);
+    } catch (error) {
+      if (statusEl) statusEl.textContent = error.message || "Vault restore failed.";
+      toast(error.message || "Vault restore failed");
+    }
+  });
+}
+
+// ── Phase 6.2: Deterministic Workspace Self-Audit Diagnostics ──
+async function loadDiagnosticsAudit() {
+  const host = $("#diagnostics-checks-list");
+  const badge = $("#diagnostics-score-badge");
+  if (!host) return;
+  try {
+    const res = await api("/api/core/diagnostics/audit");
+    const audit = res?.audit || {};
+    host.replaceChildren();
+    if (badge) {
+      badge.textContent = `Score ${audit.score ?? 100}/100 · Grade ${audit.grade || "A"}`;
+      badge.className = "cloud-status-tag" + ((audit.score ?? 100) < 80 ? " is-missing" : "");
+    }
+    const checks = Array.isArray(audit.checks) ? audit.checks : [];
+    for (const check of checks) {
+      const card = document.createElement("article");
+      card.className = `diagnostic-check-card is-${check.status || "pass"}`;
+      const head = document.createElement("div");
+      head.className = "integration-card-head";
+      const title = document.createElement("strong");
+      title.textContent = check.title || check.id;
+      const statusTag = document.createElement("span");
+      statusTag.className = "cloud-status-tag" + (check.status === "pass" ? "" : " is-missing");
+      statusTag.textContent = String(check.status || "pass").toUpperCase();
+      head.append(title, statusTag);
+
+      const detail = document.createElement("p");
+      detail.className = "muted integration-card-desc";
+      detail.textContent = `${check.category || "System"} · ${check.detail || ""}`;
+
+      card.append(head, detail);
+      host.appendChild(card);
+    }
+  } catch (error) {
+    if (badge) badge.textContent = "Audit error";
+    host.textContent = error.message || "Workspace diagnostics unavailable.";
+  }
+}
+
+function initPhase6Diagnostics() {
+  $("#diagnostics-refresh-btn")?.addEventListener("click", loadDiagnosticsAudit);
+  document.querySelectorAll("[data-remediate-action]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const action = btn.dataset.remediateAction;
+      if (!action) return;
+      btn.disabled = true;
+      try {
+        const res = await api("/api/core/diagnostics/remediate", {
+          method: "POST",
+          body: JSON.stringify({ action })
+        });
+        await Promise.all([loadDiagnosticsAudit(), loadStorageStatus()]);
+        toast(res?.remediation?.detail || "Maintenance action completed");
+      } catch (error) {
+        toast(error.message || "Remediation failed");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+// ── Phase 6.3: Scoped Peer Client Tokens ──
+async function loadPeerTokens() {
+  const host = $("#peer-tokens-list");
+  if (!host) return;
+  try {
+    const res = await api("/api/core/clients/tokens");
+    const tokens = Array.isArray(res?.tokens) ? res.tokens : [];
+    host.replaceChildren();
+    if (!tokens.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "No peer client tokens minted yet. Create one above to connect bin/alfie-cli.mjs or quick-capture shortcuts.";
+      host.appendChild(empty);
+      return;
+    }
+    for (const tok of tokens) {
+      const card = document.createElement("article");
+      card.className = "workshop-job-card";
+      const head = document.createElement("div");
+      head.className = "workshop-job-head";
+      const left = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = tok.name || tok.prefix;
+      const meta = document.createElement("p");
+      meta.className = "muted workshop-job-meta";
+      const lastUsed = tok.lastUsedAt ? `Last used: ${new Date(tok.lastUsedAt).toLocaleString()}` : "Never used";
+      const exp = tok.expiresAt ? ` · Expires: ${new Date(tok.expiresAt).toLocaleDateString()}` : "";
+      meta.textContent = `${tok.prefix} · Scopes: ${(tok.scopes || []).join(", ")} · ${lastUsed}${exp}`;
+      left.append(title, meta);
+
+      const right = document.createElement("div");
+      right.className = "workshop-job-badges";
+      const badge = document.createElement("span");
+      badge.className = "cloud-status-tag" + (tok.revokedAt ? " is-missing" : "");
+      badge.textContent = tok.revokedAt ? "Revoked" : "Active";
+      right.appendChild(badge);
+      if (!tok.revokedAt) {
+        const revokeBtn = document.createElement("button");
+        revokeBtn.type = "button";
+        revokeBtn.className = "secondary-button kg-action-btn";
+        revokeBtn.textContent = "Revoke";
+        revokeBtn.addEventListener("click", async () => {
+          await api(`/api/core/clients/tokens/${encodeURIComponent(tok.id)}`, { method: "DELETE" });
+          await loadPeerTokens();
+          toast(`Revoked peer token "${tok.name}"`);
+        });
+        right.appendChild(revokeBtn);
+      }
+      head.append(left, right);
+      card.appendChild(head);
+      host.appendChild(card);
+    }
+  } catch (error) {
+    host.textContent = error.message || "Peer client tokens unavailable.";
+  }
+}
+
+function initPhase6PeerTokens() {
+  let latestPeerToken = "";
+  $("#peer-token-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const fd = new FormData(form);
+    const name = String(fd.get("name") || "").trim();
+    const expiresInDays = Number(fd.get("expiresInDays") || 90);
+    const scopes = fd.getAll("scopes").map((s) => String(s));
+    if (!name) return;
+    try {
+      const res = await api("/api/core/clients/tokens", {
+        method: "POST",
+        body: JSON.stringify({ name, scopes, expiresInDays })
+      });
+      latestPeerToken = res?.token || "";
+      const box = $("#peer-token-reveal-box");
+      const pre = $("#peer-token-reveal-pre");
+      if (box && pre && latestPeerToken) {
+        const origin = window.location.origin;
+        pre.textContent = [
+          `Token: ${latestPeerToken}`,
+          "",
+          "# Quick-capture CLI example:",
+          `ALFIE_URL=${origin} ALFIE_TOKEN="${latestPeerToken}" node bin/alfie-cli.mjs status`
+        ].join("\n");
+        box.hidden = false;
+      }
+      form.reset();
+      await loadPeerTokens();
+      toast(`Minted peer token "${res?.record?.name || name}"`);
+    } catch (error) {
+      toast(error.message || "Could not mint peer token");
+    }
+  });
+  $("#peer-token-copy-btn")?.addEventListener("click", async () => {
+    if (!latestPeerToken) return;
+    try {
+      await navigator.clipboard.writeText(latestPeerToken);
+      toast("Peer token copied to clipboard");
+    } catch {
+      toast("Select and copy the token from the box.");
+    }
+  });
+  $("#refresh-peer-tokens")?.addEventListener("click", loadPeerTokens);
+}
+
+// ── Phase 6.4: Deterministic Playbooks ──
+async function loadPlaybooks() {
+  const host = $("#playbooks-list");
+  if (!host) return;
+  try {
+    const res = await api("/api/core/playbooks");
+    const list = Array.isArray(res?.playbooks) ? res.playbooks : [];
+    host.replaceChildren();
+    if (!list.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "No deterministic playbooks configured yet. Create a safe rule above to automate reviews, reflections, or idea capture.";
+      host.appendChild(empty);
+      return;
+    }
+    for (const pb of list) {
+      const card = document.createElement("article");
+      card.className = "workshop-job-card";
+      const head = document.createElement("div");
+      head.className = "workshop-job-head";
+      const left = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = pb.name;
+      const meta = document.createElement("p");
+      meta.className = "muted workshop-job-meta";
+      meta.textContent = `Trigger: ${pb.trigger.replace(/_/g, " ")} · Action: ${pb.action.replace(/_/g, " ")} · Runs: ${pb.runCount ?? 0}`;
+      left.append(title, meta);
+
+      const badges = document.createElement("div");
+      badges.className = "workshop-job-badges";
+      const statusTag = document.createElement("span");
+      statusTag.className = "cloud-status-tag" + (pb.enabled ? "" : " is-missing");
+      statusTag.textContent = pb.enabled ? "Enabled" : "Paused";
+      badges.appendChild(statusTag);
+
+      const previewBtn = document.createElement("button");
+      previewBtn.type = "button";
+      previewBtn.className = "secondary-button kg-action-btn";
+      previewBtn.textContent = "Dry-run";
+      previewBtn.addEventListener("click", async () => {
+        const out = await api(`/api/core/playbooks/${encodeURIComponent(pb.id)}/run`, {
+          method: "POST",
+          body: JSON.stringify({ dryRun: true })
+        });
+        const fb = $("#playbook-preview-feedback");
+        if (fb) fb.textContent = `Dry-run (${pb.name}): ${out?.preview?.summary || "Safe deterministic action."}`;
+        toast("Dry-run preview ready");
+      });
+
+      const runBtn = document.createElement("button");
+      runBtn.type = "button";
+      runBtn.className = "secondary-button kg-action-btn";
+      runBtn.textContent = "Run now";
+      runBtn.addEventListener("click", async () => {
+        runBtn.disabled = true;
+        try {
+          const out = await api(`/api/core/playbooks/${encodeURIComponent(pb.id)}/run`, {
+            method: "POST",
+            body: JSON.stringify({ dryRun: false })
+          });
+          const fb = $("#playbook-preview-feedback");
+          if (fb) fb.textContent = `Executed (${pb.name}): ${out?.outcomeSummary || "Completed."}`;
+          await Promise.all([loadPlaybooks(), loadWorkshop()]);
+          toast(`Playbook "${pb.name}" executed`);
+        } finally {
+          runBtn.disabled = false;
+        }
+      });
+
+      const toggleBtn = document.createElement("button");
+      toggleBtn.type = "button";
+      toggleBtn.className = "secondary-button kg-action-btn";
+      toggleBtn.textContent = pb.enabled ? "Pause" : "Enable";
+      toggleBtn.addEventListener("click", async () => {
+        await api(`/api/core/playbooks/${encodeURIComponent(pb.id)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ enabled: !pb.enabled })
+        });
+        await loadPlaybooks();
+      });
+
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "secondary-button kg-action-btn";
+      delBtn.textContent = "Delete";
+      delBtn.addEventListener("click", async () => {
+        await api(`/api/core/playbooks/${encodeURIComponent(pb.id)}`, { method: "DELETE" });
+        await loadPlaybooks();
+        toast(`Deleted playbook "${pb.name}"`);
+      });
+
+      badges.append(previewBtn, runBtn, toggleBtn, delBtn);
+      head.append(left, badges);
+      card.appendChild(head);
+
+      if (pb.lastOutcome) {
+        const outP = document.createElement("p");
+        outP.className = "workshop-job-summary";
+        outP.textContent = `Last outcome: ${pb.lastOutcome}`;
+        card.appendChild(outP);
+      }
+      host.appendChild(card);
+    }
+  } catch (error) {
+    host.textContent = error.message || "Playbooks unavailable.";
+  }
+}
+
+function initPhase6Playbooks() {
+  $("#playbook-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const fd = new FormData(form);
+    const name = String(fd.get("name") || "").trim();
+    const trigger = String(fd.get("trigger") || "manual_run");
+    const action = String(fd.get("action") || "delegate_workshop");
+    const roleId = String(fd.get("roleId") || "auditor");
+    const objective = String(fd.get("objective") || "").trim();
+    if (!name) return;
+    const config = action === "delegate_workshop"
+      ? { roleId, objective: objective || `Review workspace via ${name}` }
+      : action === "generate_reflection"
+        ? { period: "weekly" }
+        : action === "park_idea"
+          ? { title: objective || name, notes: "Captured by deterministic Alfie Playbook" }
+          : { summary: objective || `Calm digest recorded by ${name}` };
+    try {
+      await api("/api/core/playbooks", {
+        method: "POST",
+        body: JSON.stringify({ name, trigger, action, config, enabled: true })
+      });
+      form.reset();
+      await loadPlaybooks();
+      toast(`Created playbook "${name}"`);
+    } catch (error) {
+      toast(error.message || "Could not create playbook");
+    }
+  });
+  $("#refresh-playbooks")?.addEventListener("click", loadPlaybooks);
+}
+
+// ── Phase 6.5: Chronological Continuity Timeline & Markdown Digest ──
+async function loadTimeline() {
+  const host = $("#timeline-list");
+  if (!host) return;
+  const kind = state.timelineKind || "all";
+  try {
+    const res = await api(`/api/core/timeline?kind=${encodeURIComponent(kind)}&limit=30`);
+    const tl = res?.timeline || {};
+    const events = Array.isArray(tl.events) ? tl.events : [];
+    host.replaceChildren();
+    if (!events.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "No continuity events recorded for this filter yet.";
+      host.appendChild(empty);
+      return;
+    }
+    for (const ev of events) {
+      const row = document.createElement("article");
+      row.className = "timeline-row";
+      const top = document.createElement("div");
+      top.className = "hybrid-hit-top";
+      const kindBadge = document.createElement("span");
+      kindBadge.className = "hybrid-hit-kind";
+      kindBadge.textContent = ev.kind || "event";
+      const title = document.createElement("strong");
+      title.className = "hybrid-hit-title";
+      title.textContent = ev.title || "Workspace event";
+      const meta = document.createElement("span");
+      meta.className = "hybrid-hit-score";
+      const when = ev.at ? new Date(ev.at).toLocaleString() : "";
+      meta.textContent = [ev.trust, when].filter(Boolean).join(" · ");
+      top.append(kindBadge, title, meta);
+
+      const detail = document.createElement("p");
+      detail.className = "hybrid-hit-snippet muted";
+      detail.textContent = ev.detail || "";
+
+      row.append(top, detail);
+      host.appendChild(row);
+    }
+  } catch (error) {
+    host.textContent = error.message || "Timeline unavailable.";
+  }
+}
+
+function initPhase6Timeline() {
+  state.timelineKind = "all";
+  let lastDigest = null;
+
+  $("#timeline-kind-tabs")?.addEventListener("click", (event) => {
+    const btn = event.target.closest("button[data-timeline-kind]");
+    if (!btn) return;
+    state.timelineKind = btn.dataset.timelineKind || "all";
+    $("#timeline-kind-tabs").querySelectorAll("button[data-timeline-kind]").forEach((tab) => {
+      const active = tab === btn;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", String(active));
+    });
+    loadTimeline();
+  });
+
+  $("#timeline-refresh-btn")?.addEventListener("click", loadTimeline);
+
+  $("#markdown-digest-btn")?.addEventListener("click", async () => {
+    const btn = $("#markdown-digest-btn");
+    if (btn) btn.disabled = true;
+    try {
+      const res = await api("/api/core/export/markdown");
+      lastDigest = res?.digest || null;
+      const box = $("#markdown-digest-box");
+      const pre = $("#markdown-digest-pre");
+      const meta = $("#markdown-digest-meta");
+      if (box && pre && lastDigest) {
+        if (meta) meta.textContent = `${lastDigest.filename} (${((lastDigest.byteLength || 0) / 1024).toFixed(1)} KB)`;
+        pre.textContent = lastDigest.markdown || "";
+        box.hidden = false;
+      }
+      toast("Portable Markdown digest generated");
+    } catch (error) {
+      toast(error.message || "Markdown export failed");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  $("#markdown-digest-copy-btn")?.addEventListener("click", async () => {
+    if (!lastDigest?.markdown) return;
+    try {
+      await navigator.clipboard.writeText(lastDigest.markdown);
+      toast("Markdown digest copied");
+    } catch {
+      toast("Copy failed — use Download .md instead.");
+    }
+  });
+
+  $("#markdown-digest-download-btn")?.addEventListener("click", () => {
+    if (!lastDigest?.markdown) return;
+    downloadTextBlob(lastDigest.filename || "alfie-knowledge-digest.md", lastDigest.markdown, "text/markdown");
+    toast("Downloaded Markdown digest");
+  });
+}
+
 initWorkingModeSelector();
 initIdeasVault();
 initWatchers();
 initWorkflowProfile();
 initCapsules();
+initKnowledgeGraph();
+initVoiceLoopTts();
+initAccountRecovery();
+initStorageAndAirlock();
+initHybridSearch();
+initReflectionsAndVirtualRoom();
+initWorkshopAndIntegrations();
+initPhase6Vault();
+initPhase6Diagnostics();
+initPhase6PeerTokens();
+initPhase6Playbooks();
+initPhase6Timeline();
 initialise();

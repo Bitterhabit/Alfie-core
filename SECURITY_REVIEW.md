@@ -22,11 +22,25 @@ This document summarizes the security controls enforced across the standalone Al
 6. **Static-shell-only service worker**
    - `interface/public/sw.js` caches static UI assets only and never caches or fabricates `/api/*` responses.
 
-## Forward-Looking Threat Model (Phases 2–4)
+## Core Security & Reliability Hardening (`src/`)
 
-Before enabling proactive watchers, external connectors, or background sub-agents, enforce these tracked controls:
+1. **DNS-validated & connection-pinned HTTP watchers (`src/watchers/engine.mjs`)**
+   - `http_probe` resolves target hostnames across all IPv4 and IPv6 records and fails closed if DNS fails, returns zero addresses, or if **any** resolved address is loopback, private (RFC 1918), CGNAT, link-local, metadata, multicast, unspecified, IPv4-mapped/transition IPv6, or outside IANA Global Unicast (`2000::/3`).
+   - Connections use native Node `http.request`/`https.request` with a pinned custom `lookup` callback returning only the already-validated `{ address, family }` — preventing DNS rebinding between validation and connect — while preserving `Host`, HTTPS SNI (`servername`), strict certificate/hostname verification (`rejectUnauthorized: true`), `agent: false`, strict 3xx redirect rejection, request timeouts, and bounded response draining (`64 KiB`).
+2. **Accurate 4-state Action Receipt verification (`src/agent/toolDispatcher.mjs`, `src/agent/pendingActionStore.mjs`)**
+   - Tools without a `verifyResult` hook default to `verified: false` (`verificationState: "unverified"`) with explicit copy stating execution succeeded without independent verification.
+   - `verified: true` is recorded only when `verifyResult` runs and explicitly returns `{ verified: true }`, cleanly distinguishing `execution_failed`, `unverified`, `verification_failed`, and `verified`.
+3. **Approval integrity via deterministic tool definition fingerprinting (`src/agent/toolDispatcher.mjs`, `src/agent/pendingActionStore.mjs`)**
+   - Pending approvals persist a SHA-256 `toolFingerprint` over execution- and security-relevant tool metadata (`id`, `scope`, `risk`, `trust`, `network`, `externalAction`, `untrustedOutput`, `requiresApproval`, `approvalWhenUntrusted`, guard/verifier presence, and canonical `inputSchema`) while excluding cosmetic fields (`name`, `description`, `tags`).
+   - Approval execution recomputes and compares the fingerprint and rejects mismatches with HTTP `409 STALE_APPROVAL` plus an audit log entry (`tool.approval_stale`).
+4. **Per-project capability lease isolation (`src/permissions/store.mjs`)**
+   - Capability leases are keyed by composite `(scope, projectId)` identity so global, Project A, and Project B grants coexist without silently clobbering one another.
+   - Legacy `scopes`-only files migrate cleanly without widening modern project-scoped leases; `revoke(userId, scope)` revokes all grants for that scope while `revoke(userId, scope, { projectId })` revokes only the targeted project (or global when `projectId: null`).
+5. **Strict watcher input validation & IANA timezone-aware quiet hours (`src/watchers/store.mjs`, `src/watchers/engine.mjs`)**
+   - `enabled` and `quietHours.enabled` require strict JS booleans (rejecting `"false"`, `"true"`, `0`, `1`, `null`).
+   - Quiet hours validate and persist canonical IANA timezone identifiers (defaulting explicitly to `"UTC"` for new and legacy records without guessing the host OS timezone) and evaluate wall-clock local time via native `Intl.DateTimeFormat`, handling DST transitions and overnight windows while keeping `urgent` alerts unblocked.
 
-1. **Persistent trust & taint provenance (`docs/adr/ADR-003-persistent-taint-provenance.md`)** — External payloads stored in memories, ideas, watcher events, or sub-agent artifacts must carry durable `trust: "external_untrusted"` metadata so indirect prompt injection cannot be laundered across turns.
-2. **Connector SSRF & secret isolation (`docs/adr/ADR-002-deterministic-watchers-attention-budget.md`)** — Pull watchers and external connectors must reuse strict URL validation, private/metadata IP blocking, and server-side credential isolation completely inaccessible to LLM prompts.
-3. **Capability leases & turn provenance** — Time- and task-bounded permission scopes plus per-turn context provenance inspection ensure standing privileges stay minimal and privacy redactions remain auditable.
+## Forward-Looking Threat Model (Phase 4+)
 
+1. **Persistent trust & taint provenance (`docs/adr/ADR-003-persistent-taint-provenance.md`)** — External payloads stored in memories, ideas, watcher events, or sub-agent artifacts carry durable `trust: "external_untrusted"` metadata so indirect prompt injection cannot be laundered across turns.
+2. **Async job & multi-agent isolation (`docs/adr/ADR-004-async-job-engine-and-subagents.md`)** — Future background workers and specialist sub-agents must inherit per-role capability ceilings, token/time budgets, and persistent taint tracking.

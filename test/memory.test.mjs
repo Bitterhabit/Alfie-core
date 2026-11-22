@@ -49,7 +49,10 @@ test("isolates memories by user and rejects empty memory text", async () => {
 test("stores memory files with restrictive permissions", async () => {
   await temporaryStore(async (store) => {
     await store.create("user-1", { text: "Private" });
-    const stat = await fs.stat(store.fileFor("user-1"));
+    const legacyFile = store.fileFor("user-1");
+    const sqliteFile = path.join(path.dirname(legacyFile), "alfie.sqlite");
+    const persistedFile = await fs.stat(sqliteFile).then(() => sqliteFile).catch(() => legacyFile);
+    const stat = await fs.stat(persistedFile);
     assert.equal(stat.mode & 0o777, 0o600);
   });
 });

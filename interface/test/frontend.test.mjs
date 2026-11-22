@@ -78,7 +78,7 @@ test("login screen removes hardcoded default credentials, updates asset version,
   assert.doesNotMatch(html, /alfie123/);
   assert.match(html, /id="setup-form"/);
 
-  assert.match(sw, /alfie-core-v5/);
+  assert.match(sw, /alfie-core-v6/);
   assert.doesNotMatch(sw, /offline-mode-token/);
   assert.match(sw, /url\.pathname\.startsWith\("\/api\/"\)/);
 
@@ -351,3 +351,130 @@ test("workspace includes Simulation & Action Receipts, Learning Companion & Work
   assert.match(app, /\/api\/core\/capsules/);
   assert.match(app, /\/api\/core\/tools\/receipts/);
 });
+
+test("workspace includes Personal Knowledge Graph Explorer, Multi-Lease capability controls, and Watcher Quiet Hours IANA timezone UI", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+  const sw = await fs.readFile(new URL("sw.js", root), "utf8");
+
+  assert.match(html, /src="\/knowledge-graph\.mjs\?v=alfie-workspace-0\.10\.0"/);
+  assert.match(html, /id="garden-graph-surface"/);
+  assert.match(html, /id="kg-kind-tabs"/);
+  assert.match(html, /id="kg-canvas-wrap"/);
+  assert.match(html, /id="kg-inspector"/);
+  assert.match(html, /id="watcher-quiet-enabled"/);
+  assert.match(html, /id="watcher-quiet-timezone"/);
+  assert.match(sw, /\/knowledge-graph\.mjs\?v=alfie-workspace-0\.10\.0/);
+
+  assert.match(css, /\.scope-lease-list/);
+  assert.match(css, /\.watcher-quiet-row/);
+  assert.match(css, /\.kg-surface/);
+  assert.match(css, /\.kg-workspace/);
+
+  assert.match(app, /initKnowledgeGraph/);
+  assert.match(app, /loadKnowledgeGraph/);
+  assert.match(app, /\/api\/core\/graph/);
+  assert.match(app, /syncWatcherQuietControls/);
+  assert.match(app, /scope-lease-row/);
+});
+
+test("workspace includes 100% Roadmap UI: SQLite WAL Storage, Account Recovery, Hybrid Search, Reflections, Optional Virtual Room, Workshop, Integrations, Airlock Preview, and Voice Loop TTS", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+  const sw = await fs.readFile(new URL("sw.js", root), "utf8");
+
+  assert.match(html, /src="\/virtual-room\.mjs\?v=alfie-workspace-0\.10\.0"/);
+  assert.match(sw, /\/virtual-room\.mjs\?v=alfie-workspace-0\.10\.0/);
+
+  for (const id of [
+    "recovery-disclosure",
+    "recovery-form",
+    "voice-tts-toggle",
+    "voice-tts-stop",
+    "hybrid-search-surface",
+    "workspace-search-form",
+    "reflections-surface",
+    "reflection-save-btn",
+    "virtual-room-details",
+    "virtual-room-canvas",
+    "ambient-push-btn",
+    "workshop-surface",
+    "workshop-form",
+    "integrations-surface",
+    "integrations-grid",
+    "airlock-form",
+    "settings-storage-surface",
+    "storage-migrate-btn",
+    "settings-voice-ambient-surface",
+    "settings-recovery-surface",
+    "recovery-generate-form"
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`), `Expected HTML id="${id}"`);
+  }
+
+  assert.match(css, /\.hybrid-search-surface/);
+  assert.match(css, /\.virtual-room-details/);
+  assert.match(css, /\.workshop-job-card/);
+  assert.match(css, /\.integrations-grid/);
+  assert.match(css, /\.airlock-preview-block/);
+  assert.match(css, /\.storage-status-grid/);
+
+  assert.match(app, /initVoiceLoopTts/);
+  assert.match(app, /initAccountRecovery/);
+  assert.match(app, /initStorageAndAirlock/);
+  assert.match(app, /initHybridSearch/);
+  assert.match(app, /initReflectionsAndVirtualRoom/);
+  assert.match(app, /initWorkshopAndIntegrations/);
+  assert.match(app, /\/api\/core\/storage\/status/);
+  assert.match(app, /\/api\/core\/privacy\/airlock\/preview/);
+  assert.match(app, /\/api\/core\/workshop\/delegate/);
+  assert.match(app, /\/api\/core\/reflections/);
+  assert.match(app, /\/api\/core\/ambient\/state/);
+});
+
+test("Phase 6 UI surfaces (Encrypted Vault, Self-Audit Diagnostics, Peer Client Tokens, Deterministic Playbooks, Continuity Timeline & Markdown Digest) are wired", async () => {
+  const html = await fs.readFile(new URL("../public/index.html", import.meta.url), "utf8");
+  const css = await fs.readFile(new URL("../public/styles.css", import.meta.url), "utf8");
+  const app = await fs.readFile(new URL("../public/app.js", import.meta.url), "utf8");
+
+  for (const id of [
+    "timeline-surface",
+    "timeline-kind-tabs",
+    "markdown-digest-btn",
+    "playbooks-surface",
+    "playbook-form",
+    "peer-tokens-surface",
+    "peer-token-form",
+    "settings-diagnostics-surface",
+    "diagnostics-score-badge",
+    "settings-vault-surface",
+    "vault-export-form",
+    "vault-restore-form",
+    "vault-verify-btn"
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`), `Expected Phase 6 HTML id="${id}"`);
+  }
+
+  assert.match(css, /\.timeline-surface/);
+  assert.match(css, /\.playbooks-surface/);
+  assert.match(css, /\.peer-tokens-surface/);
+  assert.match(css, /\.diagnostics-checks-grid/);
+  assert.match(css, /\.vault-split-grid/);
+
+  assert.match(app, /initPhase6Vault/);
+  assert.match(app, /initPhase6Diagnostics/);
+  assert.match(app, /initPhase6PeerTokens/);
+  assert.match(app, /initPhase6Playbooks/);
+  assert.match(app, /initPhase6Timeline/);
+  assert.match(app, /\/api\/core\/vault\/export/);
+  assert.match(app, /\/api\/core\/diagnostics\/audit/);
+  assert.match(app, /\/api\/core\/clients\/tokens/);
+  assert.match(app, /\/api\/core\/playbooks/);
+  assert.match(app, /\/api\/core\/timeline/);
+  assert.match(app, /\/api\/core\/export\/markdown/);
+});
+
+
+

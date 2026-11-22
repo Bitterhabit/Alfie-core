@@ -29,9 +29,25 @@ import { VramMonitor } from "./system/vramMonitor.mjs";
 import { CloudAgentStore } from "./providers/cloudAgentStore.mjs";
 import { CloudAgentAdapters } from "./providers/cloudAdapters.mjs";
 import { filterGrantedScopes, summarizePrivacy } from "./privacy/policy.mjs";
+import { buildUserKnowledgeGraph } from "./graph/builder.mjs";
+import { getUserStorageStatus, migrateUserStorageToSqlite, resolveStorageBackend } from "./storage/sqliteStore.mjs";
+import { hybridSearchWorkspace } from "./retrieval/hybrid.mjs";
+import { registerModularConnectorTools, getModularIntegrationsStatus } from "./integrations/modularConnectors.mjs";
+import { AsyncJobStore, AsyncJobEngine } from "./jobs/engine.mjs";
+import { listSpecialistRoles, runWorkshopDelegation } from "./agents/workshop.mjs";
+import { sanitizeForCloud, rehydrateFromCloud } from "./privacy/broker.mjs";
+import { getVoiceStatus, transcribeAudio, synthesizeSpeech } from "./voice/service.mjs";
+import { buildContinuityReflection, ReflectionStore } from "./reflections/generator.mjs";
+import { deriveAmbientPresence, dispatchAmbientBridge } from "./ambient/bridge.mjs";
+import { exportEncryptedVault, verifyEncryptedVault, restoreEncryptedVault } from "./vault/backup.mjs";
+import { runWorkspaceSelfAudit, applySafeRemediation } from "./diagnostics/selfAudit.mjs";
+import { PeerTokenStore, PEER_TOKEN_SCOPES } from "./clients/tokenStore.mjs";
+import { PlaybookStore, PLAYBOOK_TRIGGERS, PLAYBOOK_ACTIONS, runPlaybook } from "./playbooks/store.mjs";
+import { buildContinuityTimeline, exportMarkdownDigest } from "./timeline/builder.mjs";
 
 const SERVICE_VERSION = "0.3.0";
 const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_VAULT_BODY_BYTES = 8 * 1024 * 1024;
 
 
 async function resolveIdentity(identityAuth, identityLinkStore, headers, request) {
@@ -83,12 +99,12 @@ function isAuthorised(req, expectedToken) {
   return Boolean(match && tokenMatches(match[1], expectedToken));
 }
 
-async function readJsonBody(req) {
+async function readJsonBody(req, maxBytes = MAX_BODY_BYTES) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw Object.assign(new Error("Request body is too large."), { status: 413 });
+    if (size > maxBytes) throw Object.assign(new Error("Request body is too large."), { status: 413 });
     chunks.push(chunk);
   }
   if (!size) return {};
@@ -183,12 +199,21 @@ export function createAlfieCoreServer({
   imageGenerator = new ImageGenerator(),
   cloudAgentStore = new CloudAgentStore(),
   cloudAdapters = new CloudAgentAdapters(),
+  jobStore = new AsyncJobStore({ dataDirectory: memoryStore.dataDirectory }),
+  reflectionStore = new ReflectionStore({ dataDirectory: memoryStore.dataDirectory }),
+  peerTokenStore = new PeerTokenStore({ dataDirectory: memoryStore.dataDirectory }),
+  playbookStore = new PlaybookStore({ dataDirectory: memoryStore.dataDirectory }),
   assetsDirectory = process.env.ALFIE_ASSETS_DIR || path.resolve(process.cwd(), "assets")
 } = {}) {
   const providers = normaliseConfig(providerConfig);
   registerPetrioHarnessTools(toolRegistry, petrioHarnessClient);
   registerMemoryTools(toolRegistry, memoryStore);
   registerImageTools(toolRegistry, imageGenerator);
+  registerModularConnectorTools(toolRegistry, {
+    dataDirectory: memoryStore.dataDirectory || projectStore.dataDirectory || process.env.ALFIE_CORE_DATA_DIR || "/data",
+    petrioHarnessClient
+  });
+  const jobEngine = new AsyncJobEngine({ jobStore, vramMonitor, auditStore });
   const toolDispatcher = new ToolDispatcher({ registry: toolRegistry, permissionStore, pendingActionStore, auditStore, assetsDirectory });
   const agentLoop = new AgentLoop({ providerRegistry, providerConfig: providers, toolRegistry, dispatcher: toolDispatcher, contextAssembler, memoryStore, projectStore, watcherStore, profileStore, imageGenerator, cloudAgentStore, cloudAdapters, assetsDirectory });
 
@@ -283,9 +308,34 @@ export function createAlfieCoreServer({
       return json(res, 200, {
         service: "alfie-core",
         version: SERVICE_VERSION,
+        storageBackend: resolveStorageBackend(),
         identityProviders: identityAuth.providerIds || [identityAuth.providerId].filter(Boolean),
-        implemented: ["multi-client-signed-identity", "cross-client-account-linking", "service-authentication", "health", "readiness", "provider-registry", "provider-health", "model-selection", "cloud-coding-agents", "cloud-privacy-controls", "adaptive-working-modes", "living-project-dossiers", "ideas-vault", "typed-memory-v2", "persistent-trust-provenance", "capability-leases", "deterministic-watcher-framework", "attention-budget-router", "dry-run-simulation-receipts", "workflow-learning-profile", "context-capsules", "turn-provenance", "bounded-agent-loop", "intent-based-context-assembly", "strict-json-schema-tool-validation", "read-draft-write-risk-tiers", "persistent-pending-actions", "explicit-approve-reject", "untrusted-data-envelopes", "tool-call-deduplication", "four-step-turn-budget", "30-second-wall-clock-budget", "tool-output-truncation", "signed-identity-provider-contract", "conversation-persistence", "conversation-snapshot-migration", "projects", "context-handoff", "vram-monitoring", "memory-crud", "memory-provenance", "ranked-memory-retrieval", "untrusted-memory-context", "memory-search-tool", "memory-read-tool", "approval-gated-memory-create", "approval-gated-memory-update", "approval-gated-memory-forget", "per-user-action-audit-log", "scoped-tool-registry", "permission-grants", "dashboard-approval-ui", "dashboard-permission-management"],
-        planned: ["sqlite-wal-storage-migration", "mail-tool-adapter", "calendar-journal-write-adapters", "standalone-account-recovery", "multi-user-administration"]
+        implemented: [
+          "multi-client-signed-identity", "cross-client-account-linking", "service-authentication",
+          "health", "readiness", "provider-registry", "provider-health", "model-selection",
+          "cloud-coding-agents", "cloud-privacy-controls", "split-brain-privacy-broker",
+          "adaptive-working-modes", "living-project-dossiers", "ideas-vault",
+          "typed-memory-v2", "persistent-trust-provenance", "capability-leases",
+          "deterministic-watcher-framework", "attention-budget-router", "dry-run-simulation-receipts",
+          "workflow-learning-profile", "context-capsules", "knowledge-graph",
+          "sqlite-wal-storage", "fts5-workspace-search", "hybrid-semantic-retrieval",
+          "modular-integration-suite", "async-job-engine", "bounded-multi-agent-workshop",
+          "local-hybrid-voice-loop", "life-continuity-reflections", "ambient-hardware-bridges",
+          "optional-virtual-room", "sovereign-encrypted-vault", "workspace-self-audit-diagnostics",
+          "scoped-peer-client-tokens", "peer-quick-capture-api", "deterministic-playbooks",
+          "continuity-timeline", "portable-markdown-digest", "turn-provenance", "bounded-agent-loop",
+          "intent-based-context-assembly", "strict-json-schema-tool-validation",
+          "read-draft-write-risk-tiers", "persistent-pending-actions", "explicit-approve-reject",
+          "untrusted-data-envelopes", "tool-call-deduplication", "four-step-turn-budget",
+          "30-second-wall-clock-budget", "tool-output-truncation", "signed-identity-provider-contract",
+          "conversation-persistence", "conversation-snapshot-migration", "projects", "context-handoff",
+          "vram-monitoring", "memory-crud", "memory-provenance", "ranked-memory-retrieval",
+          "untrusted-memory-context", "memory-search-tool", "memory-read-tool",
+          "approval-gated-memory-create", "approval-gated-memory-update", "approval-gated-memory-forget",
+          "per-user-action-audit-log", "scoped-tool-registry", "permission-grants",
+          "dashboard-approval-ui", "dashboard-permission-management"
+        ],
+        planned: []
       });
     }
 
@@ -362,7 +412,10 @@ export function createAlfieCoreServer({
         }
         if (isPermissionsCollection && req.method === "DELETE") {
           const body = await readJsonBody(req);
-          await permissionStore.revoke(identity.userId, body.scope);
+          const revokeOptions = Object.prototype.hasOwnProperty.call(body, "projectId")
+            ? { projectId: body.projectId }
+            : {};
+          await permissionStore.revoke(identity.userId, body.scope, revokeOptions);
           const next = typeof permissionStore.listDetailed === "function"
             ? await permissionStore.listDetailed(identity.userId)
             : { scopes: await permissionStore.list(identity.userId), leases: [] };
@@ -768,6 +821,560 @@ export function createAlfieCoreServer({
           error: error.message || "Context capsule operation failed.",
           ...(error.code ? { code: error.code } : {})
         });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    if (url.pathname === "/v1/graph") {
+      if (req.method !== "GET") return json(res, 405, { error: "Method not allowed." });
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      try {
+        const graph = await buildUserKnowledgeGraph(
+          identity.userId,
+          { projectStore, memoryStore, ideaStore, watcherStore, capsuleStore, profileStore },
+          {
+            projectId: url.searchParams.get("projectId") || "",
+            kind: url.searchParams.get("kind") || "",
+            query: url.searchParams.get("q") || "",
+            focusNodeId: url.searchParams.get("focusNodeId") || "",
+            hops: url.searchParams.get("hops") || 2
+          }
+        );
+        return json(res, 200, { graph });
+      } catch (error) {
+        return json(res, error.status || 500, {
+          error: error.message || "Knowledge graph unavailable.",
+          ...(error.code ? { code: error.code } : {})
+        });
+      }
+    }
+
+    if (url.pathname === "/v1/storage/status" || url.pathname === "/v1/storage/migrate") {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      const storageDataDir = memoryStore.dataDirectory || projectStore.dataDirectory || process.env.ALFIE_CORE_DATA_DIR || "/data";
+      try {
+        if (url.pathname === "/v1/storage/status" && req.method === "GET") {
+          const storage = await getUserStorageStatus(storageDataDir, identity.userId);
+          return json(res, 200, { storage });
+        }
+        if (url.pathname === "/v1/storage/migrate" && req.method === "POST") {
+          const migration = await migrateUserStorageToSqlite(storageDataDir, identity.userId);
+          await auditStore.record(identity.userId, {
+            event: "storage.migrate",
+            actor: "user",
+            risk: "low",
+            status: "completed",
+            detail: `SQLite WAL sync complete: ${migration.migratedCollections.length} migrated, ${migration.ftsIndexedRows} FTS5 rows indexed.`
+          });
+          const storage = await getUserStorageStatus(storageDataDir, identity.userId);
+          return json(res, 200, { ok: true, migration, storage });
+        }
+      } catch (error) {
+        return json(res, error.status || 500, {
+          error: error.message || "Storage operation failed.",
+          ...(error.code ? { code: error.code } : {})
+        });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    if (url.pathname === "/v1/search") {
+      if (req.method !== "GET") return json(res, 405, { error: "Method not allowed." });
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      const storageDataDir = memoryStore.dataDirectory || projectStore.dataDirectory || process.env.ALFIE_CORE_DATA_DIR || "/data";
+      try {
+        const search = await hybridSearchWorkspace(storageDataDir, identity.userId, {
+          q: url.searchParams.get("q") || "",
+          collection: url.searchParams.get("collection") || "",
+          entityType: url.searchParams.get("entityType") || "",
+          mode: url.searchParams.get("mode") || "hybrid",
+          limit: url.searchParams.get("limit") || 20
+        });
+        return json(res, 200, { search });
+      } catch (error) {
+        return json(res, error.status || 500, {
+          error: error.message || "Workspace search failed.",
+          ...(error.code ? { code: error.code } : {})
+        });
+      }
+    }
+
+    if (url.pathname === "/v1/integrations/status") {
+      if (req.method !== "GET") return json(res, 405, { error: "Method not allowed." });
+      try { await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      return json(res, 200, { integrations: getModularIntegrationsStatus({ petrioHarnessClient }) });
+    }
+
+    const jobMatch = /^\/v1\/jobs\/([a-f0-9-]{36})$/.exec(url.pathname);
+    const jobCancelMatch = /^\/v1\/jobs\/([a-f0-9-]{36})\/cancel$/.exec(url.pathname);
+    if (url.pathname === "/v1/jobs" || jobMatch || jobCancelMatch) {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      try {
+        if (url.pathname === "/v1/jobs" && req.method === "GET") {
+          const jobs = await jobStore.list(identity.userId, {
+            status: url.searchParams.get("status") || "",
+            limit: url.searchParams.get("limit") || 40
+          });
+          return json(res, 200, { jobs });
+        }
+        if (url.pathname === "/v1/jobs" && req.method === "POST") {
+          const body = await readJsonBody(req);
+          const created = await jobStore.create(identity.userId, body);
+          return json(res, 201, { job: created });
+        }
+        if (jobMatch && req.method === "GET") {
+          return json(res, 200, { job: await jobStore.get(identity.userId, jobMatch[1]) });
+        }
+        if (jobCancelMatch && req.method === "POST") {
+          const body = await readJsonBody(req);
+          const cancelled = await jobEngine.cancel(identity.userId, jobCancelMatch[1], body.reason || "Cancelled by user");
+          return json(res, 200, { job: cancelled });
+        }
+      } catch (error) {
+        return json(res, error.status || 500, { error: error.message || "Job operation failed.", ...(error.code ? { code: error.code } : {}) });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    if (url.pathname === "/v1/workshop/roles" || url.pathname === "/v1/workshop/delegate") {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      try {
+        if (url.pathname === "/v1/workshop/roles" && req.method === "GET") {
+          return json(res, 200, { roles: listSpecialistRoles() });
+        }
+        if (url.pathname === "/v1/workshop/delegate" && req.method === "POST") {
+          const body = await readJsonBody(req);
+          const storageDataDir = memoryStore.dataDirectory || projectStore.dataDirectory || process.env.ALFIE_CORE_DATA_DIR || "/data";
+          const job = await runWorkshopDelegation({
+            userId: identity.userId,
+            roleId: body.role || body.roleId,
+            objective: body.objective,
+            projectId: body.projectId || null,
+            stores: { projectStore, memoryStore, ideaStore, watcherStore, capsuleStore, profileStore, permissionStore },
+            jobEngine,
+            dataDirectory: storageDataDir
+          });
+          return json(res, 201, { job });
+        }
+      } catch (error) {
+        return json(res, error.status || 500, { error: error.message || "Workshop delegation failed.", ...(error.code ? { code: error.code } : {}) });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    if (url.pathname === "/v1/privacy/airlock/preview") {
+      if (req.method !== "POST") return json(res, 405, { error: "Method not allowed." });
+      try { await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      try {
+        const body = await readJsonBody(req);
+        const sanitized = sanitizeForCloud(body.text || "", { customTerms: body.customTerms || [] });
+        const rehydratedSample = rehydrateFromCloud(sanitized.sanitizedText, sanitized.tokenMap);
+        return json(res, 200, {
+          airlock: {
+            sanitizedText: sanitized.sanitizedText,
+            redactedCount: sanitized.redactedCount,
+            categoryCounts: sanitized.categoryCounts,
+            redactions: sanitized.redactions,
+            rehydrationVerified: rehydratedSample === String(body.text || "")
+          }
+        });
+      } catch (error) {
+        return json(res, error.status || 400, { error: error.message || "Airlock preview failed." });
+      }
+    }
+
+    if (url.pathname === "/v1/voice/status" || url.pathname === "/v1/voice/transcribe" || url.pathname === "/v1/voice/synthesize") {
+      try { await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      try {
+        if (url.pathname === "/v1/voice/status" && req.method === "GET") {
+          return json(res, 200, { voice: getVoiceStatus() });
+        }
+        if (url.pathname === "/v1/voice/transcribe" && req.method === "POST") {
+          const body = await readJsonBody(req);
+          return json(res, 200, await transcribeAudio(body));
+        }
+        if (url.pathname === "/v1/voice/synthesize" && req.method === "POST") {
+          const body = await readJsonBody(req);
+          return json(res, 200, await synthesizeSpeech(body));
+        }
+      } catch (error) {
+        return json(res, error.status || 500, { error: error.message || "Voice operation failed.", ...(error.code ? { code: error.code } : {}) });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    if (url.pathname === "/v1/reflections" || url.pathname === "/v1/reflections/snapshot") {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      try {
+        const [projects, memories, ideas, watchers, watcherEvents, profile] = await Promise.all([
+          projectStore.list(identity.userId),
+          memoryStore.list(identity.userId, { limit: 200 }),
+          ideaStore.list(identity.userId),
+          watcherStore.list(identity.userId),
+          watcherStore.listEvents(identity.userId, { limit: 50 }),
+          profileStore.get(identity.userId)
+        ]);
+        if (url.pathname === "/v1/reflections" && req.method === "GET") {
+          const period = url.searchParams.get("period") || "weekly";
+          const reflection = buildContinuityReflection({ projects, memories, ideas, watchers, watcherEvents, profile }, { period });
+          const snapshots = await reflectionStore.list(identity.userId, { limit: 12 });
+          return json(res, 200, { reflection, snapshots });
+        }
+        if (url.pathname === "/v1/reflections/snapshot" && req.method === "POST") {
+          const body = await readJsonBody(req);
+          const reflection = buildContinuityReflection({ projects, memories, ideas, watchers, watcherEvents, profile }, { period: body.period || "weekly" });
+          const saved = await reflectionStore.saveSnapshot(identity.userId, reflection);
+          return json(res, 201, { snapshot: saved });
+        }
+      } catch (error) {
+        return json(res, error.status || 500, { error: error.message || "Reflection generation failed." });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    if (url.pathname === "/v1/ambient/state" || url.pathname === "/v1/ambient/push") {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      try {
+        const [projects, memories, ideas, watchers, watcherEvents, capsuleState, profile, pendingApprovals, activeJobs, vram] = await Promise.all([
+          projectStore.list(identity.userId),
+          memoryStore.list(identity.userId, { limit: 200 }),
+          ideaStore.list(identity.userId),
+          watcherStore.list(identity.userId),
+          watcherStore.listEvents(identity.userId, { limit: 40 }),
+          capsuleStore.list(identity.userId),
+          profileStore.get(identity.userId),
+          pendingActionStore.list(identity.userId),
+          jobStore.list(identity.userId, { status: "running", limit: 20 }),
+          vramMonitor.inspect({ endpoints: providers.endpoints }).catch(() => null)
+        ]);
+        const presence = deriveAmbientPresence({
+          projects,
+          memories,
+          ideas,
+          watchers,
+          watcherEvents,
+          capsules: capsuleState.capsules,
+          activeCapsuleId: capsuleState.activeCapsuleId,
+          profile,
+          vram,
+          pendingApprovals,
+          activeJobs
+        });
+        if (url.pathname === "/v1/ambient/state" && req.method === "GET") {
+          return json(res, 200, { presence });
+        }
+        if (url.pathname === "/v1/ambient/push" && req.method === "POST") {
+          const bridgeResult = await dispatchAmbientBridge(presence);
+          return json(res, 200, { presence, bridge: bridgeResult });
+        }
+      } catch (error) {
+        return json(res, error.status || 500, { error: error.message || "Ambient state unavailable." });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    // --- Phase 6.1: Sovereign Encrypted Vault Backup, Verify & Restore ---
+    if (url.pathname === "/v1/vault/export" || url.pathname === "/v1/vault/verify" || url.pathname === "/v1/vault/restore") {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      const vaultDataDir = memoryStore.dataDirectory || projectStore.dataDirectory || process.env.ALFIE_CORE_DATA_DIR || "/data";
+      try {
+        if (url.pathname === "/v1/vault/export" && req.method === "POST") {
+          const body = await readJsonBody(req);
+          const exported = await exportEncryptedVault({
+            dataDirectory: vaultDataDir,
+            userId: identity.userId,
+            passphrase: body.passphrase
+          });
+          await auditStore.record(identity.userId, {
+            event: "vault.exported",
+            actor: "user",
+            risk: "medium",
+            status: "completed",
+            detail: `Exported AES-256-GCM sovereign vault (${exported.summary.collectionCount} collections, sha256=${exported.summary.manifestSha256.slice(0, 12)}…).`
+          });
+          return json(res, 200, exported);
+        }
+        if (url.pathname === "/v1/vault/verify" && req.method === "POST") {
+          const body = await readJsonBody(req, MAX_VAULT_BODY_BYTES);
+          const verification = verifyEncryptedVault({
+            archive: body.archive,
+            userId: identity.userId,
+            passphrase: body.passphrase
+          });
+          return json(res, 200, { verification });
+        }
+        if (url.pathname === "/v1/vault/restore" && req.method === "POST") {
+          const body = await readJsonBody(req, MAX_VAULT_BODY_BYTES);
+          const restored = await restoreEncryptedVault({
+            dataDirectory: vaultDataDir,
+            userId: identity.userId,
+            archive: body.archive,
+            passphrase: body.passphrase,
+            mode: body.mode === "replace" ? "replace" : "merge"
+          });
+          await auditStore.record(identity.userId, {
+            event: "vault.restored",
+            actor: "user",
+            risk: "high",
+            status: "completed",
+            detail: `Restored encrypted vault (${restored.mode} mode, ${restored.restoredCollections.length} collections).`
+          });
+          return json(res, 200, { restored });
+        }
+      } catch (error) {
+        return json(res, error.status || 500, { error: error.message || "Vault operation failed.", ...(error.code ? { code: error.code } : {}) });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    // --- Phase 6.2: Deterministic Workspace Self-Audit & Safe Remediations ---
+    if (url.pathname === "/v1/diagnostics/audit" || url.pathname === "/v1/diagnostics/remediate") {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      const diagDataDir = memoryStore.dataDirectory || projectStore.dataDirectory || process.env.ALFIE_CORE_DATA_DIR || "/data";
+      const allStores = {
+        projectStore,
+        memoryStore,
+        ideaStore,
+        watcherStore,
+        permissionStore,
+        pendingActionStore,
+        jobStore,
+        playbookStore
+      };
+      try {
+        if (url.pathname === "/v1/diagnostics/audit" && req.method === "GET") {
+          const audit = await runWorkspaceSelfAudit({ userId: identity.userId, dataDirectory: diagDataDir, stores: allStores });
+          return json(res, 200, { audit });
+        }
+        if (url.pathname === "/v1/diagnostics/remediate" && req.method === "POST") {
+          const body = await readJsonBody(req);
+          const remediation = await applySafeRemediation({
+            userId: identity.userId,
+            dataDirectory: diagDataDir,
+            stores: allStores,
+            action: body.action
+          });
+          await auditStore.record(identity.userId, {
+            event: "diagnostics.remediated",
+            actor: "user",
+            risk: "low",
+            status: "completed",
+            detail: remediation.detail
+          });
+          const audit = await runWorkspaceSelfAudit({ userId: identity.userId, dataDirectory: diagDataDir, stores: allStores });
+          return json(res, 200, { remediation, audit });
+        }
+      } catch (error) {
+        return json(res, error.status || 500, { error: error.message || "Workspace diagnostics failed.", ...(error.code ? { code: error.code } : {}) });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    // --- Phase 6.3: Scoped Peer Client Tokens & Quick-Capture API ---
+    if (url.pathname === "/v1/clients/tokens" || /^\/v1\/clients\/tokens\/[a-f0-9-]{36}$/i.test(url.pathname)) {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      try {
+        if (url.pathname === "/v1/clients/tokens" && req.method === "GET") {
+          const tokens = await peerTokenStore.list(identity.userId);
+          return json(res, 200, { tokens, availableScopes: PEER_TOKEN_SCOPES });
+        }
+        if (url.pathname === "/v1/clients/tokens" && req.method === "POST") {
+          const body = await readJsonBody(req);
+          const minted = await peerTokenStore.create(identity.userId, body);
+          await auditStore.record(identity.userId, {
+            event: "peer_token.created",
+            actor: "user",
+            risk: "medium",
+            status: "completed",
+            detail: `Minted peer client token "${minted.record.name}" [${minted.record.scopes.join(", ")}].`
+          });
+          return json(res, 201, minted);
+        }
+        const tokenMatch = /^\/v1\/clients\/tokens\/([a-f0-9-]{36})$/i.exec(url.pathname);
+        if (tokenMatch && req.method === "DELETE") {
+          const revoked = await peerTokenStore.revoke(identity.userId, tokenMatch[1]);
+          await auditStore.record(identity.userId, {
+            event: "peer_token.revoked",
+            actor: "user",
+            risk: "low",
+            status: "completed",
+            detail: `Revoked peer client token "${revoked.name}".`
+          });
+          return json(res, 200, { token: revoked });
+        }
+      } catch (error) {
+        return json(res, error.status || 500, { error: error.message || "Peer token request failed." });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    if (url.pathname === "/v1/peer/status" || url.pathname === "/v1/peer/capture" || url.pathname === "/v1/peer/search") {
+      const peerHeader = String(req.headers["x-alfie-peer-token"] || "").trim();
+      const requiredScope = url.pathname === "/v1/peer/capture"
+        ? "capture:write"
+        : (url.pathname === "/v1/peer/search" ? "search:read" : "status:read");
+      let peerAuth;
+      try {
+        peerAuth = await peerTokenStore.authenticate(peerHeader, requiredScope);
+      } catch (error) {
+        return json(res, error.status || 403, { error: error.message, ...(error.code ? { code: error.code } : {}) });
+      }
+      if (!peerAuth) {
+        return json(res, 401, { error: "Valid, unrevoked Alfie Peer Token required." });
+      }
+      const peerDataDir = memoryStore.dataDirectory || projectStore.dataDirectory || process.env.ALFIE_CORE_DATA_DIR || "/data";
+      try {
+        if (url.pathname === "/v1/peer/status" && req.method === "GET") {
+          const [projects, ideas, memories] = await Promise.all([
+            projectStore.list(peerAuth.userId),
+            ideaStore.list(peerAuth.userId),
+            memoryStore.list(peerAuth.userId, { limit: 200 })
+          ]);
+          return json(res, 200, {
+            status: "ok",
+            client: { name: peerAuth.name, scopes: peerAuth.scopes },
+            counts: { projects: projects.length, ideas: ideas.length, memories: memories.length }
+          });
+        }
+        if (url.pathname === "/v1/peer/capture" && req.method === "POST") {
+          const body = await readJsonBody(req);
+          const kind = body.kind === "memory" ? "memory" : "idea";
+          const text = String(body.text || body.title || "").trim();
+          if (!text) return json(res, 400, { error: "text is required for quick capture." });
+          if (kind === "memory") {
+            const memory = await memoryStore.create(peerAuth.userId, {
+              kind: body.memoryKind || "note",
+              text,
+              trust: "user_authored",
+              source: `peer:${peerAuth.name}`
+            });
+            return json(res, 201, { captured: "memory", memory });
+          }
+          const idea = await ideaStore.create(peerAuth.userId, {
+            title: text.slice(0, 140),
+            notes: body.notes || `Captured via Peer CLI (${peerAuth.name})`,
+            priority: body.priority || "medium",
+            projectId: body.projectId || ""
+          });
+          return json(res, 201, { captured: "idea", idea });
+        }
+        if (url.pathname === "/v1/peer/search" && req.method === "GET") {
+          const q = url.searchParams.get("q") || "";
+          const limit = Math.max(1, Math.min(25, Number(url.searchParams.get("limit") || 10)));
+          const search = await hybridSearchWorkspace(peerDataDir, peerAuth.userId, { q, limit, mode: "hybrid" });
+          return json(res, 200, { search });
+        }
+      } catch (error) {
+        return json(res, error.status || 500, { error: error.message || "Peer endpoint failed." });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    // --- Phase 6.4: Deterministic Automation Playbooks ---
+    if (url.pathname === "/v1/playbooks" || /^\/v1\/playbooks\/[a-f0-9-]{36}(\/run)?$/i.test(url.pathname)) {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      const pbDataDir = memoryStore.dataDirectory || projectStore.dataDirectory || process.env.ALFIE_CORE_DATA_DIR || "/data";
+      try {
+        if (url.pathname === "/v1/playbooks" && req.method === "GET") {
+          const playbooks = await playbookStore.list(identity.userId);
+          return json(res, 200, { playbooks, triggers: PLAYBOOK_TRIGGERS, actions: PLAYBOOK_ACTIONS });
+        }
+        if (url.pathname === "/v1/playbooks" && req.method === "POST") {
+          const body = await readJsonBody(req);
+          const playbook = await playbookStore.create(identity.userId, body);
+          return json(res, 201, { playbook });
+        }
+        const runMatch = /^\/v1\/playbooks\/([a-f0-9-]{36})\/run$/i.exec(url.pathname);
+        if (runMatch && req.method === "POST") {
+          const body = await readJsonBody(req);
+          const result = await runPlaybook({
+            userId: identity.userId,
+            playbookId: runMatch[1],
+            dryRun: body.dryRun === true,
+            stores: {
+              playbookStore,
+              projectStore,
+              memoryStore,
+              ideaStore,
+              watcherStore,
+              capsuleStore,
+              profileStore,
+              permissionStore,
+              reflectionStore,
+              auditStore
+            },
+            jobEngine,
+            dataDirectory: pbDataDir
+          });
+          return json(res, 200, result);
+        }
+        const pbMatch = /^\/v1\/playbooks\/([a-f0-9-]{36})$/i.exec(url.pathname);
+        if (pbMatch && req.method === "PATCH") {
+          const body = await readJsonBody(req);
+          const playbook = await playbookStore.update(identity.userId, pbMatch[1], body);
+          return json(res, 200, { playbook });
+        }
+        if (pbMatch && req.method === "DELETE") {
+          return json(res, 200, await playbookStore.delete(identity.userId, pbMatch[1]));
+        }
+      } catch (error) {
+        return json(res, error.status || 500, { error: error.message || "Playbook request failed." });
+      }
+      return json(res, 405, { error: "Method not allowed." });
+    }
+
+    // --- Phase 6.5: Chronological Continuity Timeline & Portable Markdown Digest ---
+    if (url.pathname === "/v1/timeline" || url.pathname === "/v1/export/markdown") {
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+      const exportStores = { projectStore, memoryStore, ideaStore, jobStore, reflectionStore, profileStore };
+      try {
+        if (url.pathname === "/v1/timeline" && req.method === "GET") {
+          const timeline = await buildContinuityTimeline({
+            userId: identity.userId,
+            stores: exportStores,
+            projectId: url.searchParams.get("projectId") || "",
+            kind: url.searchParams.get("kind") || "all",
+            limit: Number(url.searchParams.get("limit") || 40)
+          });
+          return json(res, 200, { timeline });
+        }
+        if (url.pathname === "/v1/export/markdown" && req.method === "GET") {
+          const digest = await exportMarkdownDigest({
+            userId: identity.userId,
+            stores: exportStores,
+            projectId: url.searchParams.get("projectId") || ""
+          });
+          return json(res, 200, { digest });
+        }
+      } catch (error) {
+        return json(res, error.status || 500, { error: error.message || "Timeline/export failed." });
       }
       return json(res, 405, { error: "Method not allowed." });
     }

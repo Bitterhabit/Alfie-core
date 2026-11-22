@@ -1,6 +1,6 @@
 // Alfie Service Worker — Static Shell Cache Only
 // Never caches or synthesizes authenticated /api/* responses.
-const CACHE_NAME = "alfie-core-v5";
+const CACHE_NAME = "alfie-core-v6";
 const STATIC_ASSETS = [
   "/",
   "/index.html",
@@ -8,6 +8,8 @@ const STATIC_ASSETS = [
   "/markdown-export.mjs?v=alfie-workspace-0.10.0",
   "/shortcuts.mjs?v=alfie-workspace-0.10.0",
   "/voice-waveform.mjs?v=alfie-workspace-0.10.0",
+  "/knowledge-graph.mjs?v=alfie-workspace-0.10.0",
+  "/virtual-room.mjs?v=alfie-workspace-0.10.0",
   "/app.js?v=alfie-workspace-0.10.0",
   "/manifest.webmanifest",
   "/icon.svg",

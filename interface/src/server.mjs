@@ -249,6 +249,30 @@ export function createAlfieInterfaceServer({
       return json(res, 200, { status: "ok", service: "alfie-interface" });
     }
 
+    // --- Phase 6.3: Peer Client Bearer Token Quick-Capture & Search Proxy ---
+    if (url.pathname === "/api/peer/status" || url.pathname === "/api/peer/capture" || url.pathname === "/api/peer/search") {
+      const authHeader = String(req.headers.authorization || "");
+      const peerToken = authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
+      if (!peerToken) {
+        return json(res, 401, { error: "Authorization: Bearer <alf_token> header is required." });
+      }
+      try {
+        if (method === "GET" && url.pathname === "/api/peer/status") {
+          return json(res, 200, await coreClient.callPeerEndpoint(peerToken, "/v1/peer/status"));
+        }
+        if (method === "POST" && url.pathname === "/api/peer/capture") {
+          const body = await readJson(req);
+          return json(res, 201, await coreClient.callPeerEndpoint(peerToken, "/v1/peer/capture", { method: "POST", body }));
+        }
+        if (method === "GET" && url.pathname === "/api/peer/search") {
+          return json(res, 200, await coreClient.callPeerEndpoint(peerToken, "/v1/peer/search", { query: url.searchParams.toString() }));
+        }
+        return json(res, 405, { error: "Method not allowed." });
+      } catch (error) {
+        return json(res, error.status || 500, { error: error.message || "Peer API failed.", ...(error.code ? { code: error.code } : {}) });
+      }
+    }
+
     if (url.pathname.startsWith("/api/")) {
       try {
         if (method === "POST" && url.pathname === "/api/telemetry/vram") {
@@ -328,6 +352,49 @@ export function createAlfieInterfaceServer({
           const result = await authStore.changePassword(session.user.id, body.currentPassword, body.newPassword);
           clearSessionCookie(res, cookieSecure);
           return json(res, 200, result);
+        }
+
+        if (method === "POST" && url.pathname === "/api/auth/recover") {
+          if (!originAllowed(req, { publicOrigin, cookieSecure, trustProxyHeaders, allowLocalHttpOrigin })) {
+            return json(res, 403, { error: "Request origin was not accepted." });
+          }
+          const ip = clientIp(req);
+          for (const [key, value] of loginAttempts) {
+            if (value.resetAt <= now()) loginAttempts.delete(key);
+          }
+          while (loginAttempts.size >= 5000) loginAttempts.delete(loginAttempts.keys().next().value);
+          const current = loginAttempts.get(ip);
+          if (current && current.resetAt > now() && current.count >= 5) {
+            return json(res, 429, { error: "Too many recovery attempts. Wait ten minutes before trying again." });
+          }
+          const body = await readJson(req);
+          try {
+            const result = await authStore.recoverWithCode(body.username, body.recoveryCode, body.newPassword);
+            loginAttempts.delete(ip);
+            clearSessionCookie(res, cookieSecure);
+            return json(res, 200, result);
+          } catch (error) {
+            const attempt = current && current.resetAt > now()
+              ? current
+              : { count: 0, resetAt: now() + 10 * 60 * 1000 };
+            attempt.count += 1;
+            loginAttempts.set(ip, attempt);
+            throw error;
+          }
+        }
+
+        if (method === "GET" && url.pathname === "/api/auth/recovery-status") {
+          const session = await requireSession(req, res);
+          if (!session) return;
+          return json(res, 200, { recovery: await authStore.getRecoveryStatus(session.user.id) });
+        }
+
+        if (method === "POST" && url.pathname === "/api/auth/recovery-codes") {
+          const session = await requireSession(req, res);
+          if (!session) return;
+          requireCsrf(req, session);
+          const body = await readJson(req);
+          return json(res, 201, { recovery: await authStore.generateRecoveryCodes(session.user.id, body.currentPassword) });
         }
 
         if (method === "POST" && url.pathname === "/api/auth/logout") {
@@ -494,6 +561,128 @@ export function createAlfieInterfaceServer({
           requireCsrf(req, session);
           return json(res, 200, await coreClient.deleteCapsule(userId, capsuleMatch[1]));
         }
+        if (method === "GET" && url.pathname === "/api/core/graph") {
+          return json(res, 200, await coreClient.getKnowledgeGraph(userId, url.searchParams.toString()));
+        }
+        if (method === "GET" && url.pathname === "/api/core/storage/status") {
+          return json(res, 200, await coreClient.getStorageStatus(userId));
+        }
+        if (method === "POST" && url.pathname === "/api/core/storage/migrate") {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.migrateStorage(userId));
+        }
+        if (method === "GET" && url.pathname === "/api/core/search") {
+          return json(res, 200, await coreClient.searchWorkspace(userId, url.searchParams.toString()));
+        }
+        if (method === "GET" && url.pathname === "/api/core/integrations/status") {
+          return json(res, 200, await coreClient.getIntegrationsStatus(userId));
+        }
+        if (method === "GET" && url.pathname === "/api/core/jobs") {
+          return json(res, 200, await coreClient.listJobs(userId, url.searchParams.toString()));
+        }
+        if (method === "POST" && url.pathname === "/api/core/jobs") {
+          requireCsrf(req, session);
+          return json(res, 201, await coreClient.createJob(userId, await readJson(req)));
+        }
+        const jobCancelMatch = /^\/api\/core\/jobs\/([a-f0-9-]{36})\/cancel$/.exec(url.pathname);
+        if (method === "POST" && jobCancelMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.cancelJob(userId, jobCancelMatch[1], await readJson(req)));
+        }
+        if (method === "GET" && url.pathname === "/api/core/workshop/roles") {
+          return json(res, 200, await coreClient.listWorkshopRoles(userId));
+        }
+        if (method === "POST" && url.pathname === "/api/core/workshop/delegate") {
+          requireCsrf(req, session);
+          return json(res, 201, await coreClient.delegateWorkshopTask(userId, await readJson(req)));
+        }
+        if (method === "POST" && url.pathname === "/api/core/privacy/airlock/preview") {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.previewPrivacyAirlock(userId, await readJson(req)));
+        }
+        if (method === "GET" && url.pathname === "/api/core/voice/status") {
+          return json(res, 200, await coreClient.getVoiceStatus(userId));
+        }
+        if (method === "POST" && url.pathname === "/api/core/voice/transcribe") {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.transcribeVoice(userId, await readJson(req)));
+        }
+        if (method === "POST" && url.pathname === "/api/core/voice/synthesize") {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.synthesizeVoice(userId, await readJson(req)));
+        }
+        if (method === "GET" && url.pathname === "/api/core/reflections") {
+          return json(res, 200, await coreClient.getReflections(userId, url.searchParams.toString()));
+        }
+        if (method === "POST" && url.pathname === "/api/core/reflections/snapshot") {
+          requireCsrf(req, session);
+          return json(res, 201, await coreClient.saveReflectionSnapshot(userId, await readJson(req)));
+        }
+        if (method === "GET" && url.pathname === "/api/core/ambient/state") {
+          return json(res, 200, await coreClient.getAmbientState(userId));
+        }
+        if (method === "POST" && url.pathname === "/api/core/ambient/push") {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.pushAmbientBridge(userId));
+        }
+        if (method === "POST" && url.pathname === "/api/core/vault/export") {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.exportVault(userId, await readJson(req)));
+        }
+        if (method === "POST" && url.pathname === "/api/core/vault/verify") {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.verifyVault(userId, await readJson(req, 8 * 1024 * 1024)));
+        }
+        if (method === "POST" && url.pathname === "/api/core/vault/restore") {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.restoreVault(userId, await readJson(req, 8 * 1024 * 1024)));
+        }
+        if (method === "GET" && url.pathname === "/api/core/diagnostics/audit") {
+          return json(res, 200, await coreClient.getDiagnosticsAudit(userId));
+        }
+        if (method === "POST" && url.pathname === "/api/core/diagnostics/remediate") {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.remediateDiagnostics(userId, await readJson(req)));
+        }
+        if (method === "GET" && url.pathname === "/api/core/clients/tokens") {
+          return json(res, 200, await coreClient.listPeerTokens(userId));
+        }
+        if (method === "POST" && url.pathname === "/api/core/clients/tokens") {
+          requireCsrf(req, session);
+          return json(res, 201, await coreClient.createPeerToken(userId, await readJson(req)));
+        }
+        const peerTokenMatch = /^\/api\/core\/clients\/tokens\/([a-f0-9-]{36})$/i.exec(url.pathname);
+        if (method === "DELETE" && peerTokenMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.revokePeerToken(userId, peerTokenMatch[1]));
+        }
+        if (method === "GET" && url.pathname === "/api/core/playbooks") {
+          return json(res, 200, await coreClient.listPlaybooks(userId));
+        }
+        if (method === "POST" && url.pathname === "/api/core/playbooks") {
+          requireCsrf(req, session);
+          return json(res, 201, await coreClient.createPlaybook(userId, await readJson(req)));
+        }
+        const playbookRunMatch = /^\/api\/core\/playbooks\/([a-f0-9-]{36})\/run$/i.exec(url.pathname);
+        if (method === "POST" && playbookRunMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.runPlaybook(userId, playbookRunMatch[1], await readJson(req)));
+        }
+        const playbookMatch = /^\/api\/core\/playbooks\/([a-f0-9-]{36})$/i.exec(url.pathname);
+        if (method === "PATCH" && playbookMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.updatePlaybook(userId, playbookMatch[1], await readJson(req)));
+        }
+        if (method === "DELETE" && playbookMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.deletePlaybook(userId, playbookMatch[1]));
+        }
+        if (method === "GET" && url.pathname === "/api/core/timeline") {
+          return json(res, 200, await coreClient.getTimeline(userId, url.searchParams.toString()));
+        }
+        if (method === "GET" && url.pathname === "/api/core/export/markdown") {
+          return json(res, 200, await coreClient.exportMarkdownDigest(userId, url.searchParams.toString()));
+        }
         if (method === "GET" && url.pathname === "/api/core/system/vram") {
           return json(res, 200, await coreClient.getVramStatus(userId));
         }
@@ -642,6 +831,8 @@ export function createAlfieInterfaceServer({
       "markdown-export.mjs": "text/javascript; charset=utf-8",
       "shortcuts.mjs": "text/javascript; charset=utf-8",
       "voice-waveform.mjs": "text/javascript; charset=utf-8",
+      "knowledge-graph.mjs": "text/javascript; charset=utf-8",
+      "virtual-room.mjs": "text/javascript; charset=utf-8",
       "styles.css": "text/css; charset=utf-8",
       "sw.js": "application/javascript; charset=utf-8",
       "manifest.webmanifest": "application/manifest+json; charset=utf-8",

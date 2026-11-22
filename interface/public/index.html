@@ -19,6 +19,8 @@
   <script type="module" src="/markdown-export.mjs?v=alfie-workspace-0.10.0"></script>
   <script type="module" src="/shortcuts.mjs?v=alfie-workspace-0.10.0"></script>
   <script type="module" src="/voice-waveform.mjs?v=alfie-workspace-0.10.0"></script>
+  <script type="module" src="/knowledge-graph.mjs?v=alfie-workspace-0.10.0"></script>
+  <script type="module" src="/virtual-room.mjs?v=alfie-workspace-0.10.0"></script>
   <script src="/app.js?v=alfie-workspace-0.10.0" defer></script>
 </head>
 <body>
@@ -134,6 +136,25 @@
             <span class="login-submit-arrow" aria-hidden="true">→</span>
           </button>
         </form>
+
+        <details id="recovery-disclosure" class="login-recovery-disclosure">
+          <summary>Lost your password? Recover with a one-time code</summary>
+          <form id="recovery-form" class="login-form login-recovery-form">
+            <div class="login-field">
+              <label for="recovery-username">Username</label>
+              <input id="recovery-username" name="username" autocomplete="username" placeholder="Your username" required minlength="3" maxlength="32">
+            </div>
+            <div class="login-field">
+              <label for="recovery-code">One-time recovery code</label>
+              <input id="recovery-code" name="recoveryCode" autocomplete="one-time-code" placeholder="XXXXX-XXXXX" required minlength="8" maxlength="32">
+            </div>
+            <div class="login-field">
+              <label for="recovery-new-password">New password (16+ characters)</label>
+              <input id="recovery-new-password" name="newPassword" type="password" autocomplete="new-password" placeholder="At least 16 characters" required minlength="16" maxlength="256">
+            </div>
+            <button class="secondary-button login-recovery-submit" type="submit">Reset password with recovery code</button>
+          </form>
+        </details>
 
         <p id="login-error" class="error-message login-error" role="alert"></p>
         <p id="setup-message" class="setup-message" hidden>First-run setup: create your private administrator account above, or set ALFIE_UI_BOOTSTRAP_USERNAME and ALFIE_UI_BOOTSTRAP_PASSWORD in the server environment.</p>
@@ -436,6 +457,10 @@
               <label class="mode-control agent-control" for="agent-provider">Agent<select id="agent-provider" name="agentProvider" aria-label="Select AI agent"><option value="local">Alfie Local</option><option value="gemini" disabled>Gemini (off)</option><option value="openai" disabled>ChatGPT (off)</option></select></label>
               <label class="mode-control" for="model-mode">Mode<select id="model-mode" name="mode"><option value="auto">Auto</option><option value="light">Light</option><option value="standard">Standard</option><option value="work">Work</option></select></label>
               <div class="composer-action-group">
+                <button id="voice-tts-toggle" class="voice-tts-btn" type="button" aria-label="Toggle spoken replies" aria-pressed="false" title="Read Alfie's replies aloud (push-to-talk voice loop)">
+                  <span aria-hidden="true">🔊</span>
+                </button>
+                <button id="voice-tts-stop" class="voice-tts-stop-btn" type="button" aria-label="Stop speaking" title="Interrupt spoken reply" hidden>■</button>
                 <button id="voice-input-btn" class="voice-button" type="button" aria-label="Start voice input" aria-pressed="false" title="Voice-to-text input">
                   <svg class="voice-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
@@ -519,6 +544,26 @@
         <div class="view-intro"><p class="eyebrow">MEMORY & CONTEXT</p><h2>The Garden</h2><p class="muted">Memories stay yours. See where each one came from, update it or let it go.</p></div>
         <div id="garden-offline-banner" class="offline-banner" hidden><span class="offline-dot"></span><span>Offline mode — viewing cached Garden memories</span></div>
 
+        <section class="surface hybrid-search-surface" id="hybrid-search-surface" aria-labelledby="hybrid-search-heading">
+          <div class="hybrid-search-head">
+            <div>
+              <p class="eyebrow">SQLITE FTS5 + SEMANTIC RETRIEVAL</p>
+              <h3 id="hybrid-search-heading">Hybrid Workspace Search</h3>
+              <p class="muted">Cross-entity search fusing exact SQLite FTS5 lexical matches with local semantic similarity across Memories, Projects, Decisions, Ideas, and Conversations.</p>
+            </div>
+            <span id="hybrid-search-meta" class="cloud-status-tag">Hybrid ready</span>
+          </div>
+          <form id="workspace-search-form" class="hybrid-search-form">
+            <input id="workspace-search-input" name="q" type="search" placeholder="Search across memories, projects, decisions, ideas, and chats…" aria-label="Hybrid workspace search">
+            <select id="workspace-search-mode" name="mode" aria-label="Retrieval mode">
+              <option value="hybrid" selected>Hybrid (FTS5 + Semantic)</option>
+              <option value="lexical">Exact Lexical (FTS5)</option>
+            </select>
+            <button class="primary-button" type="submit">Search</button>
+          </form>
+          <div id="workspace-search-results" class="hybrid-search-results" aria-live="polite"></div>
+        </section>
+
         <section class="surface garden-chart-surface" id="garden-analytics" aria-label="Memory importance distribution">
           <div class="garden-chart-header">
             <div>
@@ -538,6 +583,74 @@
           <div id="chart-filter-banner" class="chart-filter-banner" hidden>
             <span class="filter-pill-label">Filtered by importance score: <strong id="filter-score-badge">10</strong></span>
             <button type="button" id="clear-score-filter" class="clear-filter-btn" aria-label="Clear importance filter">Clear filter ✕</button>
+          </div>
+        </section>
+
+        <section class="surface kg-surface" id="garden-graph-surface" aria-labelledby="garden-graph-heading">
+          <div class="kg-header">
+            <div>
+              <p class="eyebrow">KNOWLEDGE GRAPH</p>
+              <h3 id="garden-graph-heading">Connected Personal Context Map</h3>
+              <p class="muted">Deterministic cross-entity map linking Projects, Decisions, Memories, Ideas, Hashtags, Capsules, Watchers, and Learning Topics.</p>
+            </div>
+            <div class="kg-stats-strip" aria-label="Knowledge graph summary">
+              <div class="kg-stat"><span class="kg-stat-label">Nodes</span><strong id="kg-stat-nodes">0</strong></div>
+              <div class="kg-stat"><span class="kg-stat-label">Links</span><strong id="kg-stat-edges">0</strong></div>
+              <div class="kg-stat"><span class="kg-stat-label">Projects</span><strong id="kg-stat-projects">0</strong></div>
+              <div class="kg-stat" id="kg-stat-untrusted-wrap" hidden><span class="kg-stat-label">External</span><strong id="kg-stat-untrusted">0</strong></div>
+            </div>
+          </div>
+
+          <div class="kg-toolbar">
+            <div id="kg-kind-tabs" class="segmented-tabs compact-tabs" role="tablist" aria-label="Filter knowledge graph by node type">
+              <button type="button" class="segmented-tab active" data-kg-kind="all" role="tab" aria-selected="true">All</button>
+              <button type="button" class="segmented-tab" data-kg-kind="project" role="tab" aria-selected="false">Projects</button>
+              <button type="button" class="segmented-tab" data-kg-kind="decision" role="tab" aria-selected="false">Decisions</button>
+              <button type="button" class="segmented-tab" data-kg-kind="memory" role="tab" aria-selected="false">Memories</button>
+              <button type="button" class="segmented-tab" data-kg-kind="idea" role="tab" aria-selected="false">Ideas</button>
+              <button type="button" class="segmented-tab" data-kg-kind="tag" role="tab" aria-selected="false">Tags</button>
+              <button type="button" class="segmented-tab" data-kg-kind="capsule" role="tab" aria-selected="false">Capsules</button>
+              <button type="button" class="segmented-tab" data-kg-kind="watcher" role="tab" aria-selected="false">Watchers</button>
+              <button type="button" class="segmented-tab" data-kg-kind="topic" role="tab" aria-selected="false">Topics</button>
+            </div>
+            <div class="kg-controls-row">
+              <select id="kg-project-filter" class="idea-project-filter" aria-label="Scope knowledge graph to a project">
+                <option value="">All projects</option>
+              </select>
+              <input id="kg-search" type="search" placeholder="Search nodes &amp; connections…" aria-label="Search knowledge graph">
+              <div class="kg-zoom-group" role="group" aria-label="Graph zoom controls">
+                <button type="button" id="kg-zoom-out" class="secondary-button kg-zoom-btn" aria-label="Zoom out graph">−</button>
+                <button type="button" id="kg-zoom-reset" class="secondary-button kg-zoom-btn" aria-label="Reset graph zoom">Fit</button>
+                <button type="button" id="kg-zoom-in" class="secondary-button kg-zoom-btn" aria-label="Zoom in graph">＋</button>
+              </div>
+              <button type="button" id="kg-refresh-btn" class="secondary-button">Refresh</button>
+            </div>
+          </div>
+
+          <div class="kg-workspace">
+            <div id="kg-canvas-wrap" class="kg-canvas-wrap" data-testid="knowledge-graph-canvas"></div>
+            <aside id="kg-inspector" class="kg-inspector" aria-label="Selected knowledge graph node details">
+              <p class="eyebrow">INSPECTOR</p>
+              <h4 id="kg-inspector-title">Select a node</h4>
+              <p id="kg-inspector-meta" class="muted kg-inspector-meta">Click any node on the map to inspect its provenance and connected neighbors.</p>
+              <p id="kg-inspector-summary" class="kg-inspector-summary" hidden></p>
+              <div id="kg-inspector-actions" class="kg-inspector-actions" hidden></div>
+              <div id="kg-inspector-neighbors-wrap" class="kg-inspector-neighbors-wrap" hidden>
+                <span class="kg-neighbors-heading">Connected neighbors</span>
+                <div id="kg-inspector-neighbors" class="kg-inspector-neighbors"></div>
+              </div>
+            </aside>
+          </div>
+
+          <div class="kg-legend" aria-label="Knowledge graph legend">
+            <span><i class="kg-dot kg-dot-project" aria-hidden="true"></i>Project</span>
+            <span><i class="kg-dot kg-dot-decision" aria-hidden="true"></i>Decision</span>
+            <span><i class="kg-dot kg-dot-memory" aria-hidden="true"></i>Memory</span>
+            <span><i class="kg-dot kg-dot-idea" aria-hidden="true"></i>Idea</span>
+            <span><i class="kg-dot kg-dot-tag" aria-hidden="true"></i>#Tag</span>
+            <span><i class="kg-dot kg-dot-capsule" aria-hidden="true"></i>Capsule</span>
+            <span><i class="kg-dot kg-dot-watcher" aria-hidden="true"></i>Watcher</span>
+            <span><i class="kg-dot kg-dot-topic" aria-hidden="true"></i>Topic</span>
           </div>
         </section>
 
@@ -586,6 +699,83 @@
           </div>
           <button class="primary-button" type="submit">Save to Garden</button>
         </form>
+
+        <section class="surface reflections-surface" id="reflections-surface" aria-labelledby="reflections-heading">
+          <div class="watchers-header">
+            <div>
+              <p class="eyebrow">LIFE CONTINUITY · LOCAL ONLY</p>
+              <h3 id="reflections-heading">Periodic Reflections</h3>
+              <p class="muted">Deterministic local-only review of recent momentum, decisions, blockers, and learning growth — never sent to external cloud providers.</p>
+            </div>
+            <div class="reflections-controls">
+              <div id="reflection-period-tabs" class="segmented-tabs compact-tabs" role="tablist" aria-label="Reflection window">
+                <button type="button" class="segmented-tab active" data-reflection-period="weekly" role="tab" aria-selected="true">Weekly</button>
+                <button type="button" class="segmented-tab" data-reflection-period="monthly" role="tab" aria-selected="false">Monthly</button>
+              </div>
+              <button id="reflection-save-btn" class="primary-button" type="button">Save Snapshot</button>
+            </div>
+          </div>
+          <div id="reflection-metrics" class="reflection-metrics-strip"></div>
+          <div id="reflection-body" class="reflection-body"></div>
+          <div id="reflection-snapshots-wrap" class="reflection-snapshots-wrap" hidden>
+            <h4 class="watchers-subhead">Saved reflection snapshots</h4>
+            <div id="reflection-snapshots" class="item-list"></div>
+          </div>
+        </section>
+
+        <section class="surface virtual-room-surface" id="virtual-room-surface" aria-labelledby="virtual-room-heading">
+          <details id="virtual-room-details" class="virtual-room-details">
+            <summary id="virtual-room-heading">
+              <span class="vroom-summary-title"><strong>Optional Virtual Room — Alfie's Study</strong><small class="muted">Strictly opt-in ambient diorama driven by Core state (never gates workspace tools)</small></span>
+              <span class="cloud-status-tag">Opt-in</span>
+            </summary>
+            <div class="virtual-room-body">
+              <div class="virtual-room-toolbar">
+                <span id="ambient-status-line" class="muted">Open to render Alfie's live study presence.</span>
+                <div class="virtual-room-actions">
+                  <button id="virtual-room-refresh-btn" class="secondary-button" type="button">Refresh Study</button>
+                  <button id="ambient-push-btn" class="secondary-button" type="button">Push to Ambient Bridge</button>
+                </div>
+              </div>
+              <div id="virtual-room-canvas" class="virtual-room-canvas"></div>
+              <p id="ambient-bridge-feedback" class="muted virtual-room-feedback" role="status" aria-live="polite"></p>
+            </div>
+          </details>
+        </section>
+
+        <section class="surface timeline-surface" id="timeline-surface" aria-labelledby="timeline-heading">
+          <div class="watchers-header">
+            <div>
+              <p class="eyebrow">PHASE 6 · CONTINUITY &amp; PORTABILITY</p>
+              <h3 id="timeline-heading">Continuity Timeline &amp; Portable Digest</h3>
+              <p class="muted">Chronological workspace ledger across Projects, Decisions, Memories, Ideas, Workshop Jobs, and Reflections — with one-click Markdown export.</p>
+            </div>
+            <div class="timeline-head-actions">
+              <button id="timeline-refresh-btn" class="secondary-button" type="button">Refresh</button>
+              <button id="markdown-digest-btn" class="primary-button" type="button">Export Markdown Digest</button>
+            </div>
+          </div>
+          <div id="timeline-kind-tabs" class="segmented-tabs compact-tabs timeline-tabs-wrap" role="tablist" aria-label="Filter timeline by entity kind">
+            <button type="button" class="segmented-tab active" data-timeline-kind="all" role="tab" aria-selected="true">All</button>
+            <button type="button" class="segmented-tab" data-timeline-kind="project" role="tab" aria-selected="false">Projects</button>
+            <button type="button" class="segmented-tab" data-timeline-kind="decision" role="tab" aria-selected="false">Decisions</button>
+            <button type="button" class="segmented-tab" data-timeline-kind="memory" role="tab" aria-selected="false">Memories</button>
+            <button type="button" class="segmented-tab" data-timeline-kind="idea" role="tab" aria-selected="false">Ideas</button>
+            <button type="button" class="segmented-tab" data-timeline-kind="job" role="tab" aria-selected="false">Jobs</button>
+            <button type="button" class="segmented-tab" data-timeline-kind="reflection" role="tab" aria-selected="false">Reflections</button>
+          </div>
+          <div id="markdown-digest-box" class="recovery-codes-box" hidden>
+            <div class="recovery-codes-head">
+              <strong id="markdown-digest-meta">Portable Markdown Digest ready</strong>
+              <div class="timeline-head-actions">
+                <button id="markdown-digest-copy-btn" class="secondary-button" type="button">Copy Markdown</button>
+                <button id="markdown-digest-download-btn" class="secondary-button" type="button">Download .md</button>
+              </div>
+            </div>
+            <pre id="markdown-digest-pre" class="recovery-codes-pre"></pre>
+          </div>
+          <div id="timeline-list" class="timeline-list" aria-live="polite"></div>
+        </section>
       </section>
 
       <section id="view-tools" class="view" hidden>
@@ -736,8 +926,39 @@
               </label>
             </div>
             <div id="watcher-config-fields" class="watcher-config-fields"></div>
+            <div class="watcher-quiet-row" aria-label="Quiet hours schedule">
+              <label class="watcher-quiet-toggle">
+                <input id="watcher-quiet-enabled" name="quietEnabled" type="checkbox">
+                <span>Quiet hours (downgrade Notify → Digest)</span>
+              </label>
+              <label class="watcher-quiet-time">Start
+                <input id="watcher-quiet-start" name="quietStart" type="time" value="22:00" disabled>
+              </label>
+              <label class="watcher-quiet-time">End
+                <input id="watcher-quiet-end" name="quietEnd" type="time" value="07:00" disabled>
+              </label>
+              <label class="watcher-quiet-tz">Timezone (IANA)
+                <select id="watcher-quiet-timezone" name="quietTimezone" disabled>
+                  <option value="UTC" selected>UTC</option>
+                  <option value="Europe/London">Europe/London</option>
+                  <option value="Europe/Berlin">Europe/Berlin</option>
+                  <option value="Europe/Paris">Europe/Paris</option>
+                  <option value="America/New_York">America/New_York</option>
+                  <option value="America/Chicago">America/Chicago</option>
+                  <option value="America/Denver">America/Denver</option>
+                  <option value="America/Los_Angeles">America/Los_Angeles</option>
+                  <option value="Asia/Tokyo">Asia/Tokyo</option>
+                  <option value="Asia/Singapore">Asia/Singapore</option>
+                  <option value="Australia/Sydney">Australia/Sydney</option>
+                  <option value="__custom__">Custom IANA…</option>
+                </select>
+              </label>
+              <label id="watcher-quiet-custom-tz-wrap" class="watcher-quiet-custom-tz" hidden>Custom IANA
+                <input id="watcher-quiet-custom-tz" name="quietCustomTimezone" maxlength="64" placeholder="e.g. Pacific/Auckland">
+              </label>
+            </div>
             <div class="watcher-form-footer">
-              <span class="muted watcher-form-note">External probes block loopback, private, and cloud metadata addresses and stamp readings as external untrusted data.</span>
+              <span class="muted watcher-form-note">External probes validate DNS &amp; pin public IPs only, and stamp readings as external untrusted data.</span>
               <button class="primary-button" type="submit">Add watcher</button>
             </div>
           </form>
@@ -761,6 +982,141 @@
               <div id="watcher-event-list" class="item-list"></div>
             </div>
           </div>
+        </section>
+
+        <section class="surface workshop-surface" id="workshop-surface" aria-labelledby="workshop-heading">
+          <div class="watchers-header">
+            <div>
+              <p class="eyebrow">BOUNDED SUB-AGENTS &amp; ASYNC JOBS</p>
+              <h3 id="workshop-heading">Multi-Agent Workshop</h3>
+              <p class="muted">Delegate focused specialist jobs under a strict capability ceiling (never wider than your granted leases) with full taint tracking and audit trails.</p>
+            </div>
+            <button id="refresh-workshop" class="secondary-button" type="button">Refresh</button>
+          </div>
+          <form id="workshop-form" class="watcher-form" aria-label="Delegate specialist job">
+            <div class="workshop-form-row">
+              <label>Specialist role
+                <select id="workshop-role-select" name="roleId">
+                  <option value="researcher" selected>Researcher (read-only synthesis)</option>
+                  <option value="auditor">Auditor (security &amp; governance review)</option>
+                  <option value="planner">Planner (milestones &amp; next actions)</option>
+                  <option value="developer">Developer (code &amp; notes drafting)</option>
+                </select>
+              </label>
+              <label>Project scope
+                <select id="workshop-project-select" name="projectId">
+                  <option value="">All projects</option>
+                </select>
+              </label>
+              <label class="workshop-objective-field">Objective
+                <input id="workshop-objective-input" name="objective" maxlength="400" placeholder="e.g. Synthesize blockers and security risks across active projects" required>
+              </label>
+            </div>
+            <div class="watcher-form-footer">
+              <span class="muted watcher-form-note">Sub-agents run deterministically inside your granted scope intersection and log checkpoints to SQLite WAL.</span>
+              <button class="primary-button" type="submit">Delegate job</button>
+            </div>
+          </form>
+          <div id="workshop-job-list" class="item-list" aria-live="polite"></div>
+        </section>
+
+        <section class="surface integrations-surface" id="integrations-surface" aria-labelledby="integrations-heading">
+          <div class="watchers-header">
+            <div>
+              <p class="eyebrow">CONNECTOR ECOSYSTEM</p>
+              <h3 id="integrations-heading">Modular Integration Suite</h3>
+              <p class="muted">Schema-validated, scope-gated connectors for local notes, Petrio drafts, GitHub, and Proxmox homelab metrics — all using dry-run previews and action receipts.</p>
+            </div>
+            <button id="refresh-integrations" class="secondary-button" type="button">Refresh</button>
+          </div>
+          <div id="integrations-grid" class="integrations-grid" aria-live="polite"></div>
+        </section>
+
+        <section class="surface playbooks-surface" id="playbooks-surface" aria-labelledby="playbooks-heading">
+          <div class="watchers-header">
+            <div>
+              <p class="eyebrow">PHASE 6 · DETERMINISTIC AUTOMATION</p>
+              <h3 id="playbooks-heading">Deterministic Playbooks</h3>
+              <p class="muted">Zero-shell, zero-autonomous-write automation rules that delegate bounded specialists, snapshot reflections, or park ideas with dry-run previews.</p>
+            </div>
+            <button id="refresh-playbooks" class="secondary-button" type="button">Refresh</button>
+          </div>
+          <form id="playbook-form" class="watcher-form">
+            <div class="playbook-form-row">
+              <label>Playbook name
+                <input name="name" type="text" maxlength="100" placeholder="e.g. Weekly governance sweep" required>
+              </label>
+              <label>Trigger
+                <select name="trigger" aria-label="Playbook trigger">
+                  <option value="manual_run">Manual run</option>
+                  <option value="weekly_cadence">Weekly cadence</option>
+                  <option value="watcher_alert">Watcher alert</option>
+                  <option value="project_stalled">Project stalled</option>
+                </select>
+              </label>
+              <label>Safe action
+                <select id="playbook-action-select" name="action" aria-label="Playbook safe action">
+                  <option value="delegate_workshop">Delegate specialist job</option>
+                  <option value="generate_reflection">Save continuity reflection</option>
+                  <option value="park_idea">Park follow-up idea</option>
+                  <option value="emit_attention_digest">Log calm digest note</option>
+                </select>
+              </label>
+              <label>Specialist / Period
+                <select name="roleId" aria-label="Playbook specialist role">
+                  <option value="auditor">Auditor</option>
+                  <option value="researcher">Researcher</option>
+                  <option value="planner">Planner</option>
+                  <option value="developer">Developer</option>
+                </select>
+              </label>
+            </div>
+            <div class="playbook-form-subrow">
+              <label>Objective / Title
+                <input name="objective" type="text" maxlength="320" placeholder="e.g. Review active leases, watchers, and project blockers">
+              </label>
+              <button class="primary-button" type="submit">Create playbook</button>
+            </div>
+          </form>
+          <p id="playbook-preview-feedback" class="muted virtual-room-feedback" role="status" aria-live="polite"></p>
+          <div id="playbooks-list" class="item-list" aria-live="polite"></div>
+        </section>
+
+        <section class="surface peer-tokens-surface" id="peer-tokens-surface" aria-labelledby="peer-tokens-heading">
+          <div class="watchers-header">
+            <div>
+              <p class="eyebrow">PHASE 6 · PEER CLIENTS &amp; QUICK-CAPTURE CLI</p>
+              <h3 id="peer-tokens-heading">Scoped Peer Client Tokens</h3>
+              <p class="muted">Mint narrow, revocable tokens (stored strictly as SHA-256 hashes) for the standalone CLI (<code>bin/alfie-cli.mjs</code>) or companion capture scripts.</p>
+            </div>
+            <button id="refresh-peer-tokens" class="secondary-button" type="button">Refresh</button>
+          </div>
+          <form id="peer-token-form" class="watcher-form">
+            <div class="peer-token-form-row">
+              <label>Client label
+                <input name="name" type="text" maxlength="80" placeholder="e.g. Laptop CLI or Phone Shortcut" required>
+              </label>
+              <label>Expires in (days)
+                <input name="expiresInDays" type="number" min="1" max="365" value="90" aria-label="Token expiry in days">
+              </label>
+              <button class="primary-button" type="submit">Mint peer token</button>
+            </div>
+            <fieldset class="peer-scopes-fieldset">
+              <legend class="muted">Token scopes (least privilege)</legend>
+              <label class="peer-scope-check"><input type="checkbox" name="scopes" value="capture:write" checked> capture:write</label>
+              <label class="peer-scope-check"><input type="checkbox" name="scopes" value="status:read" checked> status:read</label>
+              <label class="peer-scope-check"><input type="checkbox" name="scopes" value="search:read"> search:read</label>
+              <label class="peer-scope-check"><input type="checkbox" name="scopes" value="projects:read"> projects:read</label>
+            </fieldset>
+          </form>
+          <div id="peer-token-reveal-box" class="recovery-codes-box" hidden>
+            <div class="recovery-codes-head">
+              <strong>Copy this peer token now — it will never be shown again</strong>
+              <button id="peer-token-copy-btn" class="secondary-button" type="button">Copy token</button>
+            </div>
+            <pre id="peer-token-reveal-pre" class="recovery-codes-pre"></pre>
+          </div>
+          <div id="peer-tokens-list" class="item-list" aria-live="polite"></div>
         </section>
 
         <section class="surface activity-surface"><h3>Recent activity</h3><div id="audit-list" class="item-list"></div></section>
@@ -1059,6 +1415,131 @@
             </div>
             <div id="cloud-agents-list" class="cloud-agents-grid" aria-live="polite">
               <p class="muted">Loading cloud coding agent settings…</p>
+            </div>
+            <div class="airlock-preview-block">
+              <div class="airlock-preview-head">
+                <div>
+                  <h4>Split-Brain Privacy Broker — Airlock Preview</h4>
+                  <p class="muted">Test how Alfie strips secrets, emails, local IPs, private hosts, and custom terms before cloud routing and rehydrates them locally.</p>
+                </div>
+                <span id="airlock-status-pill" class="cloud-status-tag">Reversible airlock</span>
+              </div>
+              <form id="airlock-form" class="airlock-form">
+                <label>Sample prompt to inspect
+                  <textarea id="airlock-sample-input" name="text" rows="2" maxlength="4000" placeholder="e.g. Email alice@private.org from 192.168.1.40 using token sk-test-1234567890abcdef"></textarea>
+                </label>
+                <div class="airlock-form-row">
+                  <label>Custom private terms (comma-separated, optional)
+                    <input id="airlock-terms-input" name="customTerms" maxlength="300" placeholder="e.g. Project Helios, my-nas-host">
+                  </label>
+                  <button class="secondary-button airlock-submit-btn" type="submit">Preview Airlock</button>
+                </div>
+              </form>
+              <div id="airlock-preview-output" class="airlock-preview-output" hidden></div>
+            </div>
+          </section>
+          <section class="surface surface-span-2" id="settings-storage-surface" aria-labelledby="settings-storage-heading">
+            <div class="shortcuts-section-header">
+              <div>
+                <p class="eyebrow">ADR-001 EMBEDDED DATABASE</p>
+                <h3 id="settings-storage-heading">Storage Engine &amp; Search Index (SQLite WAL)</h3>
+                <p class="muted">Per-user isolated SQLite WAL database with FTS5 full-text indexing, schema migrations, and lossless JSON rollback compatibility.</p>
+              </div>
+              <button id="storage-migrate-btn" class="secondary-button" type="button">Sync &amp; Verify Index</button>
+            </div>
+            <div id="storage-status-grid" class="storage-status-grid" aria-live="polite"></div>
+          </section>
+          <section class="surface surface-span-2" id="settings-voice-ambient-surface" aria-labelledby="settings-voice-ambient-heading">
+            <div class="shortcuts-section-header">
+              <div>
+                <p class="eyebrow">VOICE LOOP &amp; AMBIENT BRIDGES</p>
+                <h3 id="settings-voice-ambient-heading">Local Voice Loop &amp; Ambient Hardware</h3>
+                <p class="muted">Push-to-talk only (hotword listening permanently disabled) with optional local Whisper/TTS endpoints and Home Assistant / MQTT presence bridges.</p>
+              </div>
+              <button id="voice-ambient-refresh-btn" class="secondary-button" type="button">Refresh status</button>
+            </div>
+            <div id="voice-ambient-status-list" class="item-list" aria-live="polite"></div>
+          </section>
+          <section class="surface" id="settings-recovery-surface" aria-labelledby="settings-recovery-heading">
+            <h3 id="settings-recovery-heading">Standalone Account Recovery</h3>
+            <p class="muted">Generate 8 single-use hashed recovery codes so you can regain access without resetting the server if you forget your password.</p>
+            <p id="recovery-status-text" class="settings-value">Checking recovery codes…</p>
+            <form id="recovery-generate-form" class="stack">
+              <label>Confirm current password
+                <input id="recovery-current-password" name="currentPassword" type="password" autocomplete="current-password" minlength="6" maxlength="256" required>
+              </label>
+              <button class="secondary-button" type="submit">Generate 8 recovery codes</button>
+              <p id="recovery-generate-error" class="error-message" role="alert"></p>
+            </form>
+            <div id="recovery-codes-box" class="recovery-codes-box" hidden>
+              <div class="recovery-codes-head">
+                <strong>Save these codes now — shown only once</strong>
+                <button id="recovery-copy-btn" class="secondary-button" type="button">Copy all</button>
+              </div>
+              <pre id="recovery-codes-list" class="recovery-codes-pre"></pre>
+            </div>
+          </section>
+          <section class="surface surface-span-2" id="settings-diagnostics-surface" aria-labelledby="settings-diagnostics-heading">
+            <div class="watchers-header">
+              <div>
+                <p class="eyebrow">PHASE 6 · WORKSPACE INTEGRITY &amp; GOVERNANCE</p>
+                <h3 id="settings-diagnostics-heading">Deterministic Self-Audit Diagnostics</h3>
+                <p class="muted">Zero-LLM health sweep verifying SQLite WAL integrity, capability lease hygiene, memory TTLs, approval freshness, and dossier readiness.</p>
+              </div>
+              <div class="diagnostics-head-actions">
+                <span id="diagnostics-score-badge" class="cloud-status-tag">Checking…</span>
+                <button id="diagnostics-refresh-btn" class="secondary-button" type="button">Run self-audit</button>
+              </div>
+            </div>
+            <div id="diagnostics-checks-list" class="diagnostics-checks-grid" aria-live="polite"></div>
+            <div class="diagnostics-remediate-bar">
+              <button type="button" class="secondary-button" data-remediate-action="reindex_fts5">Rebuild FTS5 index</button>
+              <button type="button" class="secondary-button" data-remediate-action="prune_expired_leases">Prune expired leases</button>
+              <button type="button" class="secondary-button" data-remediate-action="prune_expired_memories">Archive expired memories</button>
+            </div>
+          </section>
+          <section class="surface surface-span-2" id="settings-vault-surface" aria-labelledby="settings-vault-heading">
+            <div class="watchers-header">
+              <div>
+                <p class="eyebrow">PHASE 6 · SOVEREIGN PORTABILITY</p>
+                <h3 id="settings-vault-heading">Sovereign Encrypted Vault (AES-256-GCM)</h3>
+                <p class="muted">Export your entire per-user workspace into a passphrase-encrypted portable archive with scrypt KDF and SHA-256 manifest verification, or verify and restore an archive.</p>
+              </div>
+            </div>
+            <div class="vault-split-grid">
+              <form id="vault-export-form" class="stack vault-pane">
+                <h4>Export encrypted vault</h4>
+                <label>Vault passphrase (12+ characters)
+                  <input id="vault-export-passphrase" name="passphrase" type="password" minlength="12" maxlength="512" autocomplete="new-password" placeholder="Enter a strong backup passphrase" required>
+                </label>
+                <button class="primary-button" type="submit">Export &amp; download .alfie-vault.json</button>
+                <p id="vault-export-status" class="muted virtual-room-feedback" role="status" aria-live="polite"></p>
+              </form>
+              <form id="vault-restore-form" class="stack vault-pane">
+                <h4>Verify or restore archive</h4>
+                <label>Load .alfie-vault.json file
+                  <input id="vault-file-input" type="file" accept=".json,application/json">
+                </label>
+                <label>Or paste archive JSON
+                  <textarea id="vault-archive-json" name="archiveJson" rows="3" placeholder='{"format":"alfie-sovereign-vault",...}'></textarea>
+                </label>
+                <div class="vault-restore-row">
+                  <label>Vault passphrase
+                    <input id="vault-restore-passphrase" name="passphrase" type="password" minlength="12" maxlength="512" autocomplete="off" placeholder="Backup passphrase" required>
+                  </label>
+                  <label>Restore mode
+                    <select id="vault-restore-mode" name="mode" aria-label="Vault restore mode">
+                      <option value="merge">Merge (keep newer local items)</option>
+                      <option value="replace">Replace (exact archive snapshot)</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="timeline-head-actions">
+                  <button id="vault-verify-btn" class="secondary-button" type="button">Verify integrity</button>
+                  <button class="secondary-button" type="submit">Restore vault</button>
+                </div>
+                <p id="vault-restore-status" class="muted virtual-room-feedback" role="status" aria-live="polite"></p>
+              </form>
             </div>
           </section>
           <section class="surface"><h3>Account connection</h3><div id="account-status" class="settings-value">Checking…</div></section>

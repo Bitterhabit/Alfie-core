@@ -1,7 +1,7 @@
 # ADR-001: Embedded SQLite (WAL Mode) Storage Migration
 
-- **Status:** Proposed
-- **Target Phase:** Phase 1 -> Phase 2 Transition
+- **Status:** Accepted & Shipped (`src/storage/sqliteStore.mjs`, Node 22 built-in `node:sqlite` + FTS5)
+- **Target Phase:** Phase 1 -> Phase 2 Transition (Complete)
 
 ## Context
 

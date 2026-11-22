@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { safeUserKey, userDataFile, UserMutex, atomicWriteJson } from "../storage/userJsonStore.mjs";
+import { safeUserKey, userDataFile, UserMutex, readUserJsonDocument, writeUserJsonDocument } from "../storage/userJsonStore.mjs";
 
 export class PendingActionStore {
   constructor({ dataDirectory = process.env.ALFIE_CORE_DATA_DIR || "/data", now = () => Date.now() } = {}) {
@@ -19,19 +19,15 @@ export class PendingActionStore {
   }
 
   async load(userId) {
-    try {
-      const store = JSON.parse(await fs.readFile(this.fileFor(userId), "utf8"));
-      if (store.schemaVersion !== 1 || store.ownerId !== userId || !Array.isArray(store.actions)) throw new Error("Pending action store failed integrity validation.");
-      if (!Array.isArray(store.receipts)) store.receipts = [];
-      return store;
-    } catch (error) {
-      if (error.code === "ENOENT") return { schemaVersion: 1, ownerId: userId, actions: [], receipts: [] };
-      throw error;
-    }
+    const store = await readUserJsonDocument(this.dataDirectory, userId, "pending-actions.json");
+    if (!store) return { schemaVersion: 1, ownerId: userId, actions: [], receipts: [] };
+    if (store.schemaVersion !== 1 || store.ownerId !== userId || !Array.isArray(store.actions)) throw new Error("Pending action store failed integrity validation.");
+    if (!Array.isArray(store.receipts)) store.receipts = [];
+    return store;
   }
 
   async save(userId, store) {
-    await atomicWriteJson(this.fileFor(userId), store, { pretty: false });
+    await writeUserJsonDocument(this.dataDirectory, userId, "pending-actions.json", store, { pretty: false });
   }
 
   async create(userId, action, ttlMs = 5 * 60 * 1000) {
@@ -42,6 +38,7 @@ export class PendingActionStore {
       const pending = {
         id: randomUUID(), ownerId: userId, toolId: action.toolId, risk: action.risk || "write",
         arguments: action.arguments, argumentsHash: action.argumentsHash,
+        toolFingerprint: typeof action.toolFingerprint === "string" && action.toolFingerprint ? action.toolFingerprint : null,
         preview: String(action.preview || "").slice(0, 500),
         simulation: action.simulation && typeof action.simulation === "object" ? action.simulation : null,
         projectId: typeof action.projectId === "string" && action.projectId ? action.projectId : null,
@@ -88,17 +85,24 @@ export class PendingActionStore {
   async recordReceipt(userId, receipt = {}) {
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
+      const status = receipt.status === "failed" ? "failed" : "completed";
+      const validStates = new Set(["verified", "unverified", "verification_failed", "execution_failed"]);
+      const fallbackState = status === "failed"
+        ? "execution_failed"
+        : (receipt.verified === true ? "verified" : "unverified");
+      const verificationState = validStates.has(receipt.verificationState) ? receipt.verificationState : fallbackState;
       const entry = {
         id: randomUUID(),
         actionId: String(receipt.actionId || "").slice(0, 64),
         toolId: String(receipt.toolId || "").slice(0, 80),
         toolName: String(receipt.toolName || receipt.toolId || "").slice(0, 100),
         riskLevel: ["low", "medium", "high"].includes(receipt.riskLevel) ? receipt.riskLevel : "medium",
-        status: receipt.status === "failed" ? "failed" : "completed",
+        status,
         summary: String(receipt.summary || "").slice(0, 300),
         affectedResource: String(receipt.affectedResource || "").slice(0, 160),
         rollbackPlan: String(receipt.rollbackPlan || "").slice(0, 260),
-        verified: Boolean(receipt.verified),
+        verified: verificationState === "verified",
+        verificationState,
         verificationDetail: String(receipt.verificationDetail || "").slice(0, 260),
         executedAt: new Date(this.now()).toISOString()
       };
