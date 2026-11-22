@@ -10,10 +10,34 @@ function words(value) {
   return new Set(String(value || "").toLowerCase().match(/[a-z0-9_]+/g) || []);
 }
 
+const INTENT_STOP_WORDS = new Set([
+  "a", "an", "the", "to", "my", "me", "you", "your", "is", "are", "on", "in", "for", "of",
+  "and", "or", "please", "can", "could", "would", "what", "whats", "when", "where", "how",
+  "do", "does", "did", "today", "tomorrow", "this", "that", "with", "from", "about", "show",
+  "tell", "get", "find", "look", "up", "check", "have", "has", "had", "i", "we", "our", "next"
+]);
+
+// Explicit intent families improve natural-language recall without widening permissions.
+const INTENT_FAMILIES = [
+  new Set(["calendar", "schedule", "scheduled", "agenda", "appointment", "appointments", "meeting", "meetings", "event", "events"]),
+  new Set(["mail", "email", "emails", "inbox", "correspondence"]),
+  new Set(["memory", "memories", "remember", "recall", "garden", "saved"]),
+  new Set(["project", "projects", "roadmap", "milestone", "milestones", "task", "tasks", "goal", "goals"]),
+  new Set(["status", "health", "uptime", "system", "server", "servers", "homelab"])
+];
+
 function scoreTool(intentWords, tool) {
-  const searchable = words([tool.id, tool.name, tool.description, ...(tool.tags || [])].join(" "));
+  const primary = words([tool.id, tool.name, tool.scope, ...(tool.tags || [])].join(" "));
+  const description = words(tool.description);
   let score = 0;
-  for (const word of intentWords) if (searchable.has(word)) score += 1;
+  for (const word of intentWords) {
+    if (primary.has(word)) score += 3;
+    else if (description.has(word)) score += 1;
+  }
+  for (const family of INTENT_FAMILIES) {
+    if (![...family].some((word) => intentWords.has(word))) continue;
+    if ([...family].some((word) => primary.has(word) || description.has(word))) score += 3;
+  }
   return score;
 }
 
@@ -25,7 +49,7 @@ export class ContextAssembler {
   }
 
   selectTools(userText, registry, grantedScopes = [], { maxTools = 6 } = {}) {
-    const intentWords = words(userText);
+    const intentWords = new Set([...words(userText)].filter((word) => !INTENT_STOP_WORDS.has(word)));
     const tools = registry.list(grantedScopes).filter((tool) => tool.permitted);
     const ranked = tools.map((tool) => ({ tool, score: scoreTool(intentWords, tool) }))
       .sort((a, b) => b.score - a.score || a.tool.id.localeCompare(b.tool.id));

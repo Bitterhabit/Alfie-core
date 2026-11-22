@@ -167,3 +167,52 @@ test("emits tool_start progress events with dynamic tool action descriptions", a
   assert.equal(progressEvents[0].isExternal, true);
 });
 
+
+test("AgentLoop fails closed when the configured model provider is unavailable", async () => {
+  let imageGenerationCalls = 0;
+  let resetCalls = 0;
+  const loop = new AgentLoop({
+    providerRegistry: {
+      complete: async () => { throw new Error("No configured provider is available."); }
+    },
+    providerConfig: { endpoints: [] },
+    toolRegistry: new ToolRegistry(),
+    dispatcher: {
+      permissionStore: { list: async () => [] },
+      resetTurn() { resetCalls += 1; },
+      dispatch: async () => ({ status: "completed" })
+    },
+    contextAssembler: new ContextAssembler(),
+    imageGenerator: {
+      generate: async () => {
+        imageGenerationCalls += 1;
+        throw new Error("Image generation must only happen through registered tools.");
+      }
+    }
+  });
+
+  const result = await loop.run({
+    userId: "provider-down-user",
+    messages: [{ role: "user", content: "Hello Alfie, create an image for me." }]
+  });
+
+  assert.equal(result.status, "provider_unavailable");
+  assert.match(result.message, /haven't generated a response or taken any action/i);
+  assert.equal(imageGenerationCalls, 0);
+  assert.equal(resetCalls, 1);
+});
+
+test("tool selection understands calendar, mail and memory language without widening permissions", () => {
+  const registry = new ToolRegistry();
+  registry.register({ id: "calendar.read", trust: "internal", network: false, externalAction: false, name: "Calendar events", description: "Read calendar events", scope: "calendar:read", risk: "read", tags: ["calendar"], handler: async () => [] });
+  registry.register({ id: "mail.read", trust: "internal", network: false, externalAction: false, name: "Search mail", description: "Search email messages", scope: "mail:read", risk: "read", tags: ["mail"], handler: async () => [] });
+  registry.register({ id: "memory.search", trust: "internal", network: false, externalAction: false, name: "Search Garden memories", description: "Find saved memories", scope: "memory:read", risk: "read", tags: ["memory", "garden"], handler: async () => [] });
+  const assembler = new ContextAssembler();
+  const scopes = ["calendar:read", "mail:read", "memory:read"];
+
+  assert.deepEqual(assembler.selectTools("What meetings do I have scheduled next week?", registry, scopes).map((tool) => tool.id), ["calendar.read"]);
+  assert.deepEqual(assembler.selectTools("Look through my inbox for the latest email", registry, scopes).map((tool) => tool.id), ["mail.read"]);
+  assert.deepEqual(assembler.selectTools("Recall what I saved in my Garden about Petrio", registry, scopes).map((tool) => tool.id), ["memory.search"]);
+  assert.deepEqual(assembler.selectTools("What's the weather tomorrow?", registry, scopes), []);
+  assert.deepEqual(assembler.selectTools("What meetings do I have next week?", registry, ["mail:read"]), []);
+});
