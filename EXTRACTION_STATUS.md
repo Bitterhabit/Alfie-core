@@ -1,51 +1,69 @@
-# Alfie Core extraction status
+# Alfie Core status and 1.0 readiness
 
-Last reviewed: 4 November 2026
-Repository: Bitterhabit/Alfie-core (main)
-Source extraction commit: 65cdacd
-Current package: @alfie/core 0.3.0
+Last reviewed: 22 November 2026  
+Repository: Bitterhabit/Alfie-core  
+Current main commit: c83ea0bdd504acb8bfd1cafa0ee98b7c561d9b33  
+Current package versions: `@alfie/core 0.3.0`, `alfie-interface 0.1.0`
 
-## Completed in the extraction branch
+## Current state
 
-- Independent Node.js Core service extracted into its own GitHub repository, with its own Dockerfile, Compose project, environment template and persistent named volume.
-- No published host port; the service is intended to be reached by trusted backends on a private Docker network.
-- Non-root container, read-only root filesystem, dropped capabilities, restricted temporary filesystem and a health check.
-- Provider-neutral signed identity contract with simultaneous Petrio and standalone-interface identity providers using different secrets.
-- Cross-client account linking: Petrio issues short-lived single-use codes; the standalone interface can consume them to map its local account to the same canonical Core user ID. Alternatively, the interface can provision an independent canonical Core identity without Petrio. Both paths are isolated by canonical user ID.
-- Legacy Petrio identity headers remain compatible.
-- Reusable server-side Node.js client SDK for the standalone interface and other trusted clients.
-- Standalone interface with first-run single-admin bootstrap, password login, secure sessions, CSRF protection, password rotation with global session revocation, independent Core workspace provisioning, and an optional one-time Petrio account-link choice.
-- Responsive chat workspace with recent conversation history, automatic conversation titles, mobile history controls, safe Markdown rendering and confirmed conversation deletion.
-- Chat composer supports Auto, Light, Standard and Work routing modes; the selected mode is sent to the Core agent loop.
-- Pending tool actions are surfaced inside the chat response with a direct handoff to the detailed Tools & access approval view.
-- Standalone interface styling aligned to Petrio's purple pixel theme, with crisp square components, square status nodes and themed scrollbars.
-- Garden UI with provenance labels, searchable memories, create/edit/forget actions and importance controls.
-- Tools & access UI with one permission control per scope, pending-action approvals/rejections and recent audit history.
-- Settings view for account-link status, model-provider health and Core capability status.
-- Interface/Core end-to-end test proving the linked interface accesses the same canonical conversation and Garden records as Petrio.
-- Login hardening: asynchronous scrypt password verification, constant-work unknown-user handling, bounded attempt tracking and explicit trusted-proxy configuration.
-- Core-owned conversation, memory, permission, pending-action and audit persistence.
-- One-time import paths for existing Petrio conversation and memory data.
-- Revision-aware conversation snapshot writes and stale-snapshot merge/retry in the current Petrio chat client. Legacy conversation import now merges server-side and browser-localStorage history into existing Core history without overwriting it, tracks each source separately per user, and rejects oversized or malformed snapshots instead of truncating them.
-- Version-bound memory write approvals, duplicate detection and audit history.
-- Python specialist-service boundary documented; Python workers are not part of the authoritative Core.
-- Backup and restore procedures documented for both Core data and standalone interface account volumes.
-- GitHub Actions validates the standalone Compose project, runs the full Node.js test suite and builds the Core image. Latest verified run: 124 tests passed, 0 failed; standalone Compose validation, both image builds, live Core/interface health checks and backup/restore verification of both persistent volumes succeeded. The suite now includes an end-to-end test that bootstraps the standalone interface, links it to Petrio identity, and reads/writes the shared conversation and Garden data. Run: https://github.com/Bitterhabit/Alfie-core/actions/runs/41848779970.
+Alfie Core is an independent Node.js service with a separate standalone web interface. Phases 1–6 in `docs/ROADMAP.md` describe the implemented capability set. The main branch includes the security and reliability hardening merged through PR #7.
 
-## Remaining release gates
+The service boundary remains deliberate:
 
-1. **Separate Git repository:** complete. The independent repository is Bitterhabit/Alfie-core. The extracted folder has been removed from the Petrio extraction branch; Petrio now retains only the client adapter and optional network overlay.
-2. **Canonical identity and account linking:** Core-side linking is implemented and tested. Petrio can issue a one-time link code, and the standalone identity can consume it. The interface can alternatively provision its own isolated canonical Core identity without Petrio. The standalone interface has first-run bootstrap, password login, hashed opaque sessions, CSRF protection and idle/absolute expiry. Linking a previously provisioned standalone workspace to Petrio requires a future explicit migration; account recovery and multi-user administration also remain future work.
-3. **Runtime validation:** CI now runs the full Node test suite (124 passing), validates the standalone Compose project, builds both images and starts both containers to verify Core readiness and interface health. Actual deployment on the Petrio host, ingress configuration and end-to-end use with the configured model endpoint remain to be exercised. CI now rehearses backup/restore for both volumes using disposable data.
-4. **Migration rehearsal:** test a full Petrio conversation and memory import into a fresh Core volume, verify counts/provenance/relationships, test rollback and confirm Petrio's source data remains intact.
-5. **Operational validation & storage boundary:** test backup and restore, permissions, volume ownership, restart behaviour and single-instance storage assumptions. Gate #5 is also the planned handoff point to embedded SQLite in WAL mode (`docs/adr/ADR-001-sqlite-wal-storage.md`) prior to Phase 3 watcher histories and cross-entity knowledge graph queries.
-6. **Petrio network adapter:** connect Petrio to the independent Core private Docker network and verify read-only adapters before enabling the feature flag.
-7. **Account lifecycle:** password change is implemented with current-password verification and global session revocation. Recovery and multi-user administration remain future decisions. Keep browser clients away from service and identity secrets.
+- Core owns canonical identity, memory, projects, ideas, permissions, tool dispatch, approvals, audit history, watchers, jobs, vault backup/restore and continuity data.
+- The standalone Interface authenticates browser users and calls Core from its backend. Browser code does not receive Core service or identity secrets.
+- Models propose structured actions; the harness validates and executes registered tools. There is no arbitrary shell, `eval`, or `exec` path.
+- Petrio is an optional client/integration, not a runtime dependency. Petrio-specific write integrations remain deferred until the Petrio side is ready.
+
+## Merged hardening
+
+The following changes are already on `main`:
+
+- **PR #3 — Security hardening:** approval fingerprints, watcher input/timezone validation, safe local-note writes, recovery-code checks and other baseline controls.
+- **PR #4 — Provider DNS pinning:** validated addresses are pinned for provider requests; redirects are rejected.
+- **PR #5 — Fail-closed model/tool behaviour:** no scripted assistant fallback or image-generation bypass when a model provider is unavailable.
+- **PR #6 — Job cancellation isolation:** user-scoped cancellation and protection against late results overwriting terminal states.
+- **PR #7 — Vault restore semantics:** replace mode clears collections absent from the archive; merge mode preserves local-only/newer data.
+
+## Additional 1.0 hardening awaiting review
+
+These pull requests are source changes only. They have not been merged or deployed. Check their current GitHub status before merging.
+
+| PR | Change | Latest validation known at review |
+|---|---|---|
+| [#8](https://github.com/Bitterhabit/Alfie-core/pull/8) | Serialize watcher checks, metric ingestion, edits and deletion per watcher | CI passed, including regression tests for check/edit/delete races |
+| [#9](https://github.com/Bitterhabit/Alfie-core/pull/9) | Transactional vault restore; SQLite batch rollback and JSON fallback compensation | Full tests passed; Docker smoke test was still running |
+| [#10](https://github.com/Bitterhabit/Alfie-core/pull/10) | Reserve authentication attempts before password/recovery verification to close a concurrent rate-limit bypass | CI passed |
+| [#11](https://github.com/Bitterhabit/Alfie-core/pull/11) | Expired peer tokens no longer consume active capacity; malformed expiry values fail closed | Full tests and image builds passed; Docker smoke test was still running |
+| [#12](https://github.com/Bitterhabit/Alfie-core/pull/12) | Correct security documentation for replace/merge vault semantics | CI passed |
+| [#13](https://github.com/Bitterhabit/Alfie-core/pull/13) | Use `npm ci` with the committed lockfile in CI and the Core image; syntax-check all application source files | CI passed, including both image builds and container smoke test |
+| [#14](https://github.com/Bitterhabit/Alfie-core/pull/14) | Clarify that the peer CLI targets the Interface proxy; test the peer proxy contract | CI passed |
+| [#15](https://github.com/Bitterhabit/Alfie-core/pull/15) | Stop advertising the unimplemented `projects:read` peer scope | CI passed |
+
+Do not treat a green PR check as proof of a live homelab deployment. The PRs above still need review/merge approval, followed by a fresh green run on the resulting main branch.
+
+## Remaining 1.0 release gates
+
+1. **Review and merge the hardening PRs.** Confirm the current diff and checks for PRs #8–#15. PR #2 (`Stabilise Alfie 0.9.0 release`) is an old draft based on an earlier main commit and is not a release candidate; do not merge it as a shortcut to versioning.
+2. **Prepare a clean 1.0.0 release.** Align the Core package/service version, Interface package version, Compose image tags and lockfile. Add release notes and tag only after the approved hardening changes are on main.
+3. **Deploy to the target homelab.** Pull the approved main commit, rebuild both containers, verify volume ownership/persistence, confirm the Core has no published host port, and verify the Interface is reachable only through the intended trusted ingress.
+4. **Validate ingress and browser security.** Confirm the public origin is HTTPS, secure cookies work, CSRF/origin checks pass, and proxy-header trust is enabled only when the Interface is reachable exclusively through a proxy that overwrites those headers.
+5. **Exercise a real model provider.** Configure the intended local or remote provider and verify health, a normal chat, a longer response, provider-unavailable behaviour and recovery after the provider returns. CI uses test providers; it does not validate the user's actual model endpoint or model performance.
+6. **Run the user-facing acceptance checks.** Verify first-run setup, login, password change/recovery, conversation persistence, memory create/edit/forget and provenance, permission grants, draft/approve/reject flows, job cancellation, watcher checks/quiet hours, peer token creation/revocation, and mobile navigation.
+7. **Rehearse a real-data backup restore.** Export and verify an encrypted vault, restore into a disposable target, confirm replace/merge semantics, and verify the original live volume remains intact. Separately verify backups of the Core and Interface persistent volumes.
+8. **Keep Petrio integration as a separate gate.** The standalone Alfie 1.0 release should work independently. Link to Petrio only when the Petrio adapter and its private network path are ready; do not make Alfie Core depend on an unfinished Petrio deployment.
+
+## Deferred capabilities (not silently counted as 1.0 complete)
+
+- Model download/pull and persistent in-Interface model selection are not implemented yet; configured provider endpoints and installed-model discovery are available.
+- Petrio Mail tools and Calendar/Journal write tools are not enabled; they need their own trust, schema, approval and provenance review.
+- Multi-user administration and migration of an already provisioned standalone workspace into a linked Petrio identity remain separate product decisions.
 
 ## Architecture boundary
 
-- Node.js Core validates signed identity assertions and isolates data by canonical user ID; trusted clients map authenticated accounts to that shared ID. Core owns conversations, memory, permissions, tool dispatch, approvals and audit.
+- Node.js Core validates signed identity assertions and isolates data by canonical user ID; trusted clients map authenticated accounts to that shared ID.
 - Node.js client applications authenticate users and call Core through the server-side SDK.
-- Python workers are optional specialist services called through Node-owned adapters. They do not own memory, permissions, tools or approvals.
-- Petrio is one integration/client, not a runtime dependency of the Core domain.
-- Do not deploy or merge until the release gates above are validated and the user approves.
+- Python workers are optional specialist services behind Node-owned adapters. They do not own memory, permissions, tools or approvals.
+- No arbitrary shell or code execution is permitted inside Core.
+- External/untrusted content cannot silently trigger writes or outbound network actions.
