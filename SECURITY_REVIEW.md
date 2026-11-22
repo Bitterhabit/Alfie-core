@@ -46,6 +46,10 @@ This document summarizes the security controls enforced across the standalone Al
 7. **Constant-work recovery-code checks (`interface/src/auth/store.mjs`)**
    - Recovery performs eight derivations/comparisons without early exit for known and unknown accounts; successful recovery consumes one code and revokes sessions.
 
+
+8. **Explicit confirmation for destructive vault restores (`interface/public/app.js`, `interface/public/index.html`)**
+   - Restore modes are described accurately. `replace` warns which archived collections will overwrite local data and requires confirmation; collections absent from the archive are left unchanged.
+
 ## Forward-Looking Threat Model (Phase 4+)
 
 1. **Persistent trust & taint provenance (`docs/adr/ADR-003-persistent-taint-provenance.md`)** — External payloads stored in memories, ideas, watcher events, or sub-agent artifacts carry durable `trust: "external_untrusted"` metadata so indirect prompt injection cannot be laundered across turns.
