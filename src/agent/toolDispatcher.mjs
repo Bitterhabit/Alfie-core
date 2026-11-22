@@ -15,12 +15,17 @@ function hashCall(toolId, args) {
 
 /**
  * Deterministic SHA-256 fingerprint of execution- and security-relevant tool
- * metadata. Intentionally excludes purely descriptive fields (name, description,
- * tags) so cosmetic copy edits do not invalidate pending approvals.
+ * metadata and implementation identity. Cosmetic copy edits (name, description,
+ * tags) do not invalidate pending approvals. Handler source is included so a
+ * changed implementation invalidates an approval even if the schema is unchanged.
+ * Bump implementationVersion when behavior changes through helper/dependency code
+ * that is not reflected in the handler's own source.
  */
 export function computeToolFingerprint(tool) {
   const payload = {
     id: tool.id,
+    implementationVersion: String(tool.implementationVersion || "1"),
+    handlerSourceHash: createHash("sha256").update(String(tool.handler)).digest("hex"),
     scope: tool.scope,
     risk: tool.risk,
     trust: tool.trust,
