@@ -163,6 +163,59 @@ test("ProviderRegistry disables redirects and redacts secrets from error output"
   assert.equal(redactProviderError(`Leak Bearer ${secret}`, secret).includes(secret), false);
 });
 
+test("ProviderRegistry pins real HTTP requests to the exact DNS answers it validated", async () => {
+  let dnsCalls = 0;
+  let requestCount = 0;
+  const server = http.createServer((req, res) => {
+    requestCount += 1;
+    assert.equal(req.headers.host, `provider-rebind.test:${server.address().port}`);
+    if (req.url === "/api/tags") {
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ models: [{ name: "qwen3:8b" }] }));
+    }
+    if (req.url === "/api/chat") {
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ message: { content: "pinned response" } }));
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+  const registry = new ProviderRegistry({
+    // A second DNS lookup would now resolve to the cloud metadata address.
+    // The request must use the first, already-validated answer instead.
+    dnsLookup: async () => {
+      dnsCalls += 1;
+      return dnsCalls === 1
+        ? [{ address: "127.0.0.1", family: 4 }]
+        : [{ address: "169.254.169.254", family: 4 }];
+    }
+  });
+  const endpoint = {
+    id: "dns-pinned",
+    provider: "ollama",
+    baseUrl: `http://provider-rebind.test:${server.address().port}`,
+    trustedLocal: true,
+    model: "qwen3:8b",
+    apiKey: ""
+  };
+
+  try {
+    const health = await registry.inspect(endpoint);
+    assert.equal(health.online, true);
+    assert.deepEqual(health.models, ["qwen3:8b"]);
+    assert.equal(dnsCalls, 1, "The socket must not perform a second DNS resolution after validation.");
+
+    const chat = await registry.chat(endpoint, [{ role: "user", content: "hello" }]);
+    assert.equal(chat.content, "pinned response");
+    assert.equal(dnsCalls, 2, "Each request gets one fresh validation and uses that result for its socket.");
+    assert.equal(requestCount, 2);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("ProviderStore encrypts API keys at rest, preserves env migration, and handles partial updates", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-provider-store-"));
   const userId = "peter-v1";
