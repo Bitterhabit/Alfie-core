@@ -177,6 +177,71 @@ test("ADR-004 Async Job Engine & Bounded Multi-Agent Workshop enforce capability
   }
 });
 
+test("Async job cancellation remains terminal when an in-flight step completes late", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-job-cancel-race-"));
+  try {
+    const jobStore = new AsyncJobStore({ dataDirectory: dir });
+    const jobEngine = new AsyncJobEngine({ jobStore });
+    const job = await jobStore.create("alice", { title: "Cancelable background work" });
+    let markStarted;
+    let releaseStep;
+    const started = new Promise((resolve) => { markStarted = resolve; });
+    const gate = new Promise((resolve) => { releaseStep = resolve; });
+
+    const execution = jobEngine.execute("alice", job, [{
+      name: "wait for external operation",
+      run: async () => {
+        markStarted();
+        await gate; // Deliberately ignores AbortSignal to exercise the race.
+        return { summary: "Late step result" };
+      }
+    }]);
+
+    await started;
+    const cancelled = await jobEngine.cancel("alice", job.id, "User requested cancellation");
+    assert.equal(cancelled.status, "cancelled");
+    releaseStep();
+
+    const executionResult = await execution;
+    assert.equal(executionResult.status, "cancelled");
+    assert.equal((await jobStore.get("alice", job.id)).status, "cancelled");
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a user cannot abort another user's active job by presenting its job ID", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-job-cancel-owner-"));
+  try {
+    const jobStore = new AsyncJobStore({ dataDirectory: dir });
+    const jobEngine = new AsyncJobEngine({ jobStore });
+    const job = await jobStore.create("alice", { title: "Private background work" });
+    let markStarted;
+    let releaseStep;
+    const started = new Promise((resolve) => { markStarted = resolve; });
+    const gate = new Promise((resolve) => { releaseStep = resolve; });
+
+    const execution = jobEngine.execute("alice", job, [{
+      name: "wait for completion",
+      run: async () => {
+        markStarted();
+        await gate;
+        return { summary: "Completed normally" };
+      }
+    }]);
+
+    await started;
+    await assert.rejects(() => jobEngine.cancel("bob", job.id), (error) => error.status === 404);
+    releaseStep();
+
+    const result = await execution;
+    assert.equal(result.status, "completed");
+    assert.equal((await jobStore.get("alice", job.id)).status, "completed");
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("Split-Brain Privacy Broker redacts private entities and reversibly rehydrates cloud replies locally", () => {
   const prompt = "Debug SSH on 192.168.10.42 (pve-01.proxmox) for peter@example.com using /home/peter/keys and token sk-1234567890abcdefghij for ProjectApollo";
   const out = sanitizeForCloud(prompt, { customTerms: ["ProjectApollo"] });
