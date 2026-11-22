@@ -85,7 +85,7 @@ The value is server-side configuration; API keys are never returned by `GET /v1/
 
 ## API
 
-All `/v1/*` routes require `Authorization: Bearer <ALFIE_CORE_SERVICE_TOKEN>`. All user-scoped chat, conversation, memory, tool and permission routes additionally require a one-time identity signature bound to the exact HTTP method and path.
+All `/v1/*` routes require `Authorization: Bearer <ALFIE_CORE_SERVICE_TOKEN>`. Most user-scoped routes additionally require a one-time identity signature bound to the exact HTTP method and path; `/v1/peer/*` routes instead require a scoped peer token in `X-Alfie-Peer-Token`.
 
 - `GET /v1/status` — implemented/planned capabilities.
 - `GET /v1/whoami` — validates the signed identity and reports provider ID, canonical user ID and whether the interface account is linked.
@@ -123,6 +123,23 @@ All `/v1/*` routes require `Authorization: Bearer <ALFIE_CORE_SERVICE_TOKEN>`. A
 - `POST /v1/tools/approve` — explicitly approve and commit the exact pending action.
 - `POST /v1/tools/reject` — reject a pending action.
 - `POST /v1/tools/execute` — intentionally disabled (`410`); no direct execution path is available.
+
+## Peer quick-capture CLI
+
+Create a scoped peer token in the standalone Interface under **Tools & Access**. The token is shown only when it is created; store it securely and revoke it if it is exposed.
+
+The CLI talks to the **Interface** proxy routes (`/api/peer/*`), not directly to the Core service. Set `ALFIE_URL` to the Interface base URL (for Docker Compose, normally `http://127.0.0.1:8781` when the port is published locally; for the local development runner, `http://127.0.0.1:3000`).
+
+```bash
+export ALFIE_URL=http://127.0.0.1:8781
+export ALFIE_TOKEN='alf_…'
+node bin/alfie-cli.mjs status
+node bin/alfie-cli.mjs capture idea "Explore local backup rotation"
+node bin/alfie-cli.mjs capture memory "Prefer weekly WAL backups"
+node bin/alfie-cli.mjs search "SQLite WAL"
+```
+
+`status` requires `status:read`, `search` requires `search:read`, and both capture commands require `capture:write`. Use HTTPS when connecting over an untrusted network; keep the peer token private.
 
 ## Node.js client SDK
 
