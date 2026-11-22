@@ -72,8 +72,8 @@ test("login screen removes hardcoded default credentials, updates asset version,
   const css = await fs.readFile(new URL("styles.css", root), "utf8");
   const sw = await fs.readFile(new URL("sw.js", root), "utf8");
 
-  assert.match(html, /styles\.css\?v=alfie-workspace-0\.10\.0/);
-  assert.match(html, /app\.js\?v=alfie-workspace-0\.10\.0/);
+  assert.match(html, /styles\.css\?v=alfie-workspace-0\.10\.1/);
+  assert.match(html, /app\.js\?v=alfie-workspace-0\.10\.1/);
   assert.doesNotMatch(html, /value="admin"/);
   assert.doesNotMatch(html, /alfie123/);
   assert.match(html, /id="setup-form"/);
@@ -165,7 +165,7 @@ test("composer includes a Web Speech API microphone button placed next to the Se
   const app = await fs.readFile(new URL("app.js", root), "utf8");
   const metadata = JSON.parse(await fs.readFile(new URL("../../metadata.json", root), "utf8"));
 
-  assert.match(html, /src="\/voice-waveform\.mjs\?v=alfie-workspace-0\.10\.0"/);
+  assert.match(html, /src="\/voice-waveform\.mjs\?v=alfie-workspace-0\.10\.1"/);
   assert.match(html, /class="composer-action-group"[\s\S]*id="voice-input-btn"[\s\S]*class="voice-waveform"[\s\S]*class="voice-bar"[\s\S]*class="send-button"/);
   assert.match(css, /\.composer-action-group/);
   assert.match(css, /\.voice-button/);
@@ -191,7 +191,7 @@ test("workspace wires global keyboard shortcuts, Settings rebinding, and shortcu
   const app = await fs.readFile(new URL("app.js", root), "utf8");
   const sw = await fs.readFile(new URL("sw.js", root), "utf8");
 
-  assert.match(html, /src="\/shortcuts\.mjs\?v=alfie-workspace-0\.10\.0"/);
+  assert.match(html, /src="\/shortcuts\.mjs\?v=alfie-workspace-0\.10\.1"/);
   assert.match(html, /aria-keyshortcuts="Control\+K Meta\+K"/);
   assert.match(html, /aria-keyshortcuts="Control\+Shift\+L Meta\+Shift\+L"/);
   assert.match(html, /id="settings-shortcuts-surface"/);
@@ -208,7 +208,7 @@ test("workspace wires global keyboard shortcuts, Settings rebinding, and shortcu
   assert.match(css, /@keyframes shortcut-prompt-pulse/);
   assert.match(css, /@keyframes shortcut-dot-pulse/);
   assert.match(css, /\.shortcut-recording-dot/);
-  assert.match(sw, /\/shortcuts\.mjs\?v=alfie-workspace-0\.10\.0/);
+  assert.match(sw, /\/shortcuts\.mjs\?v=alfie-workspace-0\.10\.1/);
   assert.match(app, /initGlobalKeyboardShortcuts/);
   assert.match(app, /renderShortcutSettings/);
   assert.match(app, /renderShortcutsHelpModal/);
@@ -226,11 +226,11 @@ test("chat header includes client-side Markdown conversation export button", asy
   const app = await fs.readFile(new URL("app.js", root), "utf8");
   const sw = await fs.readFile(new URL("sw.js", root), "utf8");
 
-  assert.match(html, /src="\/markdown-export\.mjs\?v=alfie-workspace-0\.10\.0"/);
+  assert.match(html, /src="\/markdown-export\.mjs\?v=alfie-workspace-0\.10\.1"/);
   assert.match(html, /id="export-chat-btn"/);
   assert.match(html, /Export \.md/);
   assert.match(css, /\.export-chat-btn/);
-  assert.match(sw, /\/markdown-export\.mjs\?v=alfie-workspace-0\.10\.0/);
+  assert.match(sw, /\/markdown-export\.mjs\?v=alfie-workspace-0\.10\.1/);
   assert.match(app, /exportCurrentConversationMarkdown/);
   assert.match(app, /AlfieMarkdownExport/);
   assert.match(app, /text\/markdown;charset=utf-8/);
@@ -358,14 +358,14 @@ test("workspace includes Personal Knowledge Graph Explorer, Multi-Lease capabili
   const app = await fs.readFile(new URL("app.js", root), "utf8");
   const sw = await fs.readFile(new URL("sw.js", root), "utf8");
 
-  assert.match(html, /src="\/knowledge-graph\.mjs\?v=alfie-workspace-0\.10\.0"/);
+  assert.match(html, /src="\/knowledge-graph\.mjs\?v=alfie-workspace-0\.10\.1"/);
   assert.match(html, /id="garden-graph-surface"/);
   assert.match(html, /id="kg-kind-tabs"/);
   assert.match(html, /id="kg-canvas-wrap"/);
   assert.match(html, /id="kg-inspector"/);
   assert.match(html, /id="watcher-quiet-enabled"/);
   assert.match(html, /id="watcher-quiet-timezone"/);
-  assert.match(sw, /\/knowledge-graph\.mjs\?v=alfie-workspace-0\.10\.0/);
+  assert.match(sw, /\/knowledge-graph\.mjs\?v=alfie-workspace-0\.10\.1/);
 
   assert.match(css, /\.scope-lease-list/);
   assert.match(css, /\.watcher-quiet-row/);
@@ -385,8 +385,8 @@ test("workspace includes 100% Roadmap UI: SQLite WAL Storage, Account Recovery, 
   const app = await fs.readFile(new URL("app.js", root), "utf8");
   const sw = await fs.readFile(new URL("sw.js", root), "utf8");
 
-  assert.match(html, /src="\/virtual-room\.mjs\?v=alfie-workspace-0\.10\.0"/);
-  assert.match(sw, /\/virtual-room\.mjs\?v=alfie-workspace-0\.10\.0/);
+  assert.match(html, /src="\/virtual-room\.mjs\?v=alfie-workspace-0\.10\.1"/);
+  assert.match(sw, /\/virtual-room\.mjs\?v=alfie-workspace-0\.10\.1/);
 
   for (const id of [
     "recovery-disclosure",
