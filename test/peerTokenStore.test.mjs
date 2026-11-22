@@ -39,3 +39,22 @@ test("expired peer tokens no longer consume the active-token limit", async () =>
     await rm(directory, { recursive: true, force: true });
   }
 });
+test("peer tokens with malformed expiry timestamps fail closed", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "alfie-peer-token-invalid-expiry-"));
+  const store = new PeerTokenStore({ dataDirectory: directory });
+
+  try {
+    const minted = await store.create("user-peer-invalid-expiry", {
+      name: "Corrupted expiry client",
+      scopes: ["status:read"],
+      expiresInDays: 30
+    });
+    const document = await store.load("user-peer-invalid-expiry");
+    document.tokens[0].expiresAt = "not-a-valid-date";
+    await store.save("user-peer-invalid-expiry", document);
+
+    assert.equal(await store.authenticate(minted.token, "status:read"), null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
