@@ -170,7 +170,11 @@ export class AsyncJobEngine {
    */
   async execute(userId, job, steps = []) {
     const controller = new AbortController();
-    this.activeControllers.set(job.id, controller);
+    const controllerKey = safeUserKey(userId) + ":" + job.id;
+    if (this.activeControllers.has(controllerKey)) {
+      throw Object.assign(new Error("This job is already being executed."), { status: 409, code: "JOB_ALREADY_RUNNING" });
+    }
+    this.activeControllers.set(controllerKey, controller);
 
     const startedMs = Date.now();
     const maxSteps = job.budget?.maxSteps || 6;
@@ -189,7 +193,7 @@ export class AsyncJobEngine {
               { at: nowIso, step: cur.stepsCompleted, status: "queued", summary: `Deferred due to high GPU VRAM (${Math.round(vram.usagePercent)}%).` }
             ]
           }));
-          this.activeControllers.delete(job.id);
+          this.activeControllers.delete(controllerKey);
           return paused;
         }
       } catch {}
@@ -241,6 +245,13 @@ export class AsyncJobEngine {
           signal: controller.signal
         });
 
+        // A step may finish after cancellation even if it does not honour AbortSignal.
+        // Never let its late result overwrite the persisted cancelled state.
+        if (controller.signal.aborted) {
+          current = await this.jobStore.get(userId, job.id);
+          return current;
+        }
+
         if (stepResult?.awaitingApproval) {
           current = await this.jobStore.update(userId, job.id, (cur, nowIso) => ({
             ...cur,
@@ -291,6 +302,11 @@ export class AsyncJobEngine {
         }));
       }
 
+      if (controller.signal.aborted) {
+        current = await this.jobStore.get(userId, job.id);
+        return current;
+      }
+
       const artifact = {
         summary: cleanString(context.summary || `Completed "${current.title}" across ${current.stepsCompleted} bounded steps.`, 600),
         findings: context.findings.slice(0, 20),
@@ -324,6 +340,10 @@ export class AsyncJobEngine {
       }
       return current;
     } catch (error) {
+      if (controller.signal.aborted) {
+        current = await this.jobStore.get(userId, job.id);
+        return current;
+      }
       current = await this.jobStore.update(userId, job.id, (cur, nowIso) => ({
         ...cur,
         status: "failed",
@@ -337,12 +357,16 @@ export class AsyncJobEngine {
       }));
       return current;
     } finally {
-      this.activeControllers.delete(job.id);
+      this.activeControllers.delete(controllerKey);
     }
   }
 
   async cancel(userId, jobId, reason = "Cancelled by user") {
-    const controller = this.activeControllers.get(jobId);
+    // Confirm ownership before touching an in-memory controller; otherwise a caller
+    // with another user's job ID could abort that user's running work.
+    await this.jobStore.get(userId, jobId);
+    const controllerKey = safeUserKey(userId) + ":" + jobId;
+    const controller = this.activeControllers.get(controllerKey);
     if (controller) controller.abort();
     const cancelled = await this.jobStore.cancel(userId, jobId, reason);
     if (this.auditStore) {
