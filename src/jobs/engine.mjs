@@ -250,7 +250,9 @@ export class AsyncJobEngine {
         }
 
         if (stepResult?.awaitingApproval) {
-          current = await this.jobStore.update(userId, job.id, (cur, nowIso) => ({
+          current = await this.jobStore.update(userId, job.id, (cur, nowIso) => {
+            if (cur.status === "cancelled") return cur;
+            return {
             ...cur,
             status: "awaiting_approval",
             pendingActionId: stepResult.pendingActionId || null,
@@ -267,7 +269,9 @@ export class AsyncJobEngine {
                 summary: cleanString(stepResult.summary || "Paused awaiting user approval.", 240)
               }
             ]
-          }));
+            };
+          });
+          if (controller.signal.aborted || current.status === "cancelled") return current;
           if (this.auditStore) {
             await this.auditStore.record(userId, {
               event: "job.awaiting_approval",
@@ -281,7 +285,9 @@ export class AsyncJobEngine {
           return current;
         }
 
-        current = await this.jobStore.update(userId, job.id, (cur, nowIso) => ({
+        current = await this.jobStore.update(userId, job.id, (cur, nowIso) => {
+          if (cur.status === "cancelled") return cur;
+          return {
           ...cur,
           stepsCompleted: i + 1,
           progress: Math.round(((i + 1) / Math.max(1, boundedSteps.length)) * 100),
@@ -296,7 +302,9 @@ export class AsyncJobEngine {
               summary: cleanString(stepResult?.summary || stepDef.name || `Completed step ${i + 1}`, 240)
             }
           ]
-        }));
+          };
+        });
+        if (controller.signal.aborted || current.status === "cancelled") return current;
       }
 
       if (controller.signal.aborted) {
@@ -313,7 +321,9 @@ export class AsyncJobEngine {
         metadata: context.metadata
       };
 
-      current = await this.jobStore.update(userId, job.id, (cur, nowIso) => ({
+      current = await this.jobStore.update(userId, job.id, (cur, nowIso) => {
+        if (cur.status === "cancelled") return cur;
+        return {
         ...cur,
         status: "completed",
         progress: 100,
@@ -324,7 +334,9 @@ export class AsyncJobEngine {
           ...cur.checkpoints.slice(-24),
           { at: nowIso, step: cur.stepsCompleted, status: "completed", summary: "Job finished and returned structured artifact for Alfie review." }
         ]
-      }));
+        };
+      });
+      if (current.status !== "completed") return current;
 
       if (this.auditStore) {
         await this.auditStore.record(userId, {
