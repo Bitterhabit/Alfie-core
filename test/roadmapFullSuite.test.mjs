@@ -210,6 +210,43 @@ test("Async job cancellation remains terminal when an in-flight step completes l
   }
 });
 
+test("Async job cancellation remains terminal during the VRAM scheduling gate", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-job-cancel-vram-"));
+  try {
+    const jobStore = new AsyncJobStore({ dataDirectory: dir });
+    let markInspecting;
+    let releaseInspection;
+    const inspecting = new Promise((resolve) => { markInspecting = resolve; });
+    const gate = new Promise((resolve) => { releaseInspection = resolve; });
+    const jobEngine = new AsyncJobEngine({
+      jobStore,
+      vramMonitor: {
+        inspect: async () => {
+          markInspecting();
+          await gate;
+          return { warning: true, usagePercent: 96 };
+        }
+      }
+    });
+    const job = await jobStore.create("alice", { title: "VRAM-gated work" });
+    const execution = jobEngine.execute("alice", job, [{
+      name: "must not run",
+      run: async () => { throw new Error("Cancelled job unexpectedly executed."); }
+    }]);
+
+    await inspecting;
+    const cancelled = await jobEngine.cancel("alice", job.id, "Cancelled during scheduling");
+    assert.equal(cancelled.status, "cancelled");
+    releaseInspection();
+
+    const result = await execution;
+    assert.equal(result.status, "cancelled");
+    assert.equal((await jobStore.get("alice", job.id)).status, "cancelled");
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("a user cannot abort another user's active job by presenting its job ID", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-job-cancel-owner-"));
   try {
