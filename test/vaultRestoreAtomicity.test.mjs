@@ -28,12 +28,16 @@ describe("atomic vault restore", () => {
 
   it("restores a verified archive through the batch writer and clears absent replace collections", async () => {
     const dataDirectory = await mkdtemp(path.join(tmpdir(), "alfie-vault-replace-"));
+    const sourceDirectory = await mkdtemp(path.join(tmpdir(), "alfie-vault-source-"));
     try {
+      await writeUserJsonDocuments(sourceDirectory, "alice", [
+        { filename: "memories.json", data: { ownerId: "alice", memories: [{ id: "from-backup" }] } }
+      ], { backend: "sqlite" });
       await writeUserJsonDocuments(dataDirectory, "alice", [
         { filename: "memories.json", data: { ownerId: "alice", memories: [{ id: "old" }] } },
         { filename: "projects.json", data: { ownerId: "alice", projects: [{ id: "stale" }] } }
       ], { backend: "sqlite" });
-      const exported = await exportEncryptedVault({ dataDirectory, userId: "alice", passphrase: PASSPHRASE });
+      const exported = await exportEncryptedVault({ dataDirectory: sourceDirectory, userId: "alice", passphrase: PASSPHRASE });
       await restoreEncryptedVault({
         dataDirectory,
         userId: "alice",
@@ -43,10 +47,11 @@ describe("atomic vault restore", () => {
       });
       const memories = await readUserJsonDocument(dataDirectory, "alice", "memories.json", { backend: "sqlite" });
       const projects = await readUserJsonDocument(dataDirectory, "alice", "projects.json", { backend: "sqlite" });
-      assert.deepEqual(memories.memories, [{ id: "old" }]);
-      assert.deepEqual(projects.projects, [{ id: "stale" }]);
+      assert.deepEqual(memories.memories, [{ id: "from-backup" }]);
+      assert.equal(projects, null);
     } finally {
       await rm(dataDirectory, { recursive: true, force: true });
+      await rm(sourceDirectory, { recursive: true, force: true });
     }
   });
 });
