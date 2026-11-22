@@ -59,6 +59,7 @@ describe("Turn Provenance & Grounded Project Status", () => {
       assert.equal(result.status, "completed");
       assert.match(result.message, /Homelab Upgrade/);
       assert.match(result.message, /Verify UPS shutdown script/);
+      assert.match(result.message, /\*\*Next Recommended Actions:\*\*\n• Verify UPS shutdown script/);
       assert.match(result.message, /Waiting for second NVMe drive/);
       assert.match(result.message, /Use Proxmox Backup Server/);
 
