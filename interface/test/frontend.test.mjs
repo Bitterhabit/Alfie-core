@@ -78,7 +78,7 @@ test("login screen removes hardcoded default credentials, updates asset version,
   assert.doesNotMatch(html, /alfie123/);
   assert.match(html, /id="setup-form"/);
 
-  assert.match(sw, /alfie-core-v6/);
+  assert.match(sw, /alfie-core-v7/);
   assert.doesNotMatch(sw, /offline-mode-token/);
   assert.match(sw, /url\.pathname\.startsWith\("\/api\/"\)/);
 
