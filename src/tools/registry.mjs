@@ -34,7 +34,7 @@ export class ToolRegistry {
 
   register({
     id, name, description, scope, risk = "read", trust, network, externalAction,
-    untrustedOutput = false, approvalPreview = null, approvalGuard = null,
+    implementationVersion = "1", untrustedOutput = false, approvalPreview = null, approvalGuard = null,
     dryRun = null, verifyResult = null, tags = [],
     inputSchema = { type: "object", properties: {}, additionalProperties: false },
     handler
@@ -69,6 +69,7 @@ export class ToolRegistry {
       trust,
       network,
       externalAction,
+      implementationVersion: String(implementationVersion || "1").slice(0, 100),
       untrustedOutput: trust === "external" || Boolean(untrustedOutput),
       approvalPreview: typeof approvalPreview === "function" ? approvalPreview : null,
       approvalGuard: typeof approvalGuard === "function" ? approvalGuard : null,

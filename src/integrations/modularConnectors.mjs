@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { safeUserKey } from "../storage/userJsonStore.mjs";
 
@@ -219,7 +220,32 @@ export function registerModularConnectorTools(
         throw Object.assign(new Error("Note target directory escaped workspace boundary."), { status: 403 });
       }
       const content = String(args.content || "");
-      await fs.writeFile(resolvedTarget, content, { encoding: "utf8", mode: 0o600 });
+      // Reject existing symlinks and use O_NOFOLLOW so the final path component
+      // cannot be swapped to a symlink between validation and open.
+      const existing = await fs.lstat(resolvedTarget).catch((error) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (existing && (existing.isSymbolicLink() || !existing.isFile())) {
+        throw Object.assign(new Error("Note target must be a regular file, not a symlink or directory."), { status: 403 });
+      }
+      let handle;
+      try {
+        handle = await fs.open(
+          resolvedTarget,
+          fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW,
+          0o600
+        );
+        await handle.writeFile(content, "utf8");
+        await handle.chmod(0o600);
+      } catch (error) {
+        if (error.code === "ELOOP") {
+          throw Object.assign(new Error("Symlink note targets are blocked."), { status: 403 });
+        }
+        throw error;
+      } finally {
+        await handle?.close();
+      }
       return { saved: true, name: normalizedName, bytes: Buffer.byteLength(content, "utf8") };
     },
     async verifyResult(args, result, { userId }) {

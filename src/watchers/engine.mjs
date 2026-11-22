@@ -140,8 +140,7 @@ export function isPrivateOrReservedIpv6(ip) {
 
   // Fail closed: allow ONLY IANA Global Unicast (2000::/3), excluding special-purpose sub-ranges
   if ((g0 & 0xe000) !== 0x2000) return true;
-  if (g0 === 0x2001 && g1 === 0x0000) return true; // Teredo (2001::/32)
-  if (g0 === 0x2001 && g1 === 0x0002 && g2 === 0x0000) return true; // Benchmarking (2001:2::/48)
+  if (g0 === 0x2001 && g1 < 0x0200) return true; // IANA protocol/special-purpose assignments (2001::/23), including Teredo and benchmarking
   if (g0 === 0x2001 && (g1 & 0xfff0) === 0x0010) return true; // ORCHID (2001:10::/28)
   if (g0 === 0x2001 && (g1 & 0xfff0) === 0x0020) return true; // ORCHIDv2 (2001:20::/28)
   if (g0 === 0x2001 && g1 === 0x0db8) return true; // Documentation (2001:db8::/32)

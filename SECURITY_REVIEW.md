@@ -25,13 +25,13 @@ This document summarizes the security controls enforced across the standalone Al
 ## Core Security & Reliability Hardening (`src/`)
 
 1. **DNS-validated & connection-pinned HTTP watchers (`src/watchers/engine.mjs`)**
-   - `http_probe` resolves target hostnames across all IPv4 and IPv6 records and fails closed if DNS fails, returns zero addresses, or if **any** resolved address is loopback, private (RFC 1918), CGNAT, link-local, metadata, multicast, unspecified, IPv4-mapped/transition IPv6, or outside IANA Global Unicast (`2000::/3`).
+   - `http_probe` resolves target hostnames across all IPv4 and IPv6 records and fails closed if DNS fails, returns zero addresses, or if **any** resolved address is loopback, private (RFC 1918), CGNAT, link-local, metadata, multicast, unspecified, IPv4-mapped/transition IPv6, IANA special-purpose IPv6 (`2001::/23`), documentation, transition, or outside IANA Global Unicast (`2000::/3`).
    - Connections use native Node `http.request`/`https.request` with a pinned custom `lookup` callback returning only the already-validated `{ address, family }` — preventing DNS rebinding between validation and connect — while preserving `Host`, HTTPS SNI (`servername`), strict certificate/hostname verification (`rejectUnauthorized: true`), `agent: false`, strict 3xx redirect rejection, request timeouts, and bounded response draining (`64 KiB`).
 2. **Accurate 4-state Action Receipt verification (`src/agent/toolDispatcher.mjs`, `src/agent/pendingActionStore.mjs`)**
    - Tools without a `verifyResult` hook default to `verified: false` (`verificationState: "unverified"`) with explicit copy stating execution succeeded without independent verification.
    - `verified: true` is recorded only when `verifyResult` runs and explicitly returns `{ verified: true }`, cleanly distinguishing `execution_failed`, `unverified`, `verification_failed`, and `verified`.
 3. **Approval integrity via deterministic tool definition fingerprinting (`src/agent/toolDispatcher.mjs`, `src/agent/pendingActionStore.mjs`)**
-   - Pending approvals persist a SHA-256 `toolFingerprint` over execution- and security-relevant tool metadata (`id`, `scope`, `risk`, `trust`, `network`, `externalAction`, `untrustedOutput`, `requiresApproval`, `approvalWhenUntrusted`, guard/verifier presence, and canonical `inputSchema`) while excluding cosmetic fields (`name`, `description`, `tags`).
+   - Pending approvals persist a SHA-256 `toolFingerprint` over execution- and security-relevant tool metadata (`id`, `scope`, `risk`, `trust`, `network`, `externalAction`, `untrustedOutput`, `requiresApproval`, `approvalWhenUntrusted`, guard/verifier presence, and canonical `inputSchema`) including a SHA-256 hash of the handler source and explicit `implementationVersion`, while excluding cosmetic fields (`name`, `description`, `tags`).
    - Approval execution recomputes and compares the fingerprint and rejects mismatches with HTTP `409 STALE_APPROVAL` plus an audit log entry (`tool.approval_stale`).
 4. **Per-project capability lease isolation (`src/permissions/store.mjs`)**
    - Capability leases are keyed by composite `(scope, projectId)` identity so global, Project A, and Project B grants coexist without silently clobbering one another.
@@ -39,6 +39,16 @@ This document summarizes the security controls enforced across the standalone Al
 5. **Strict watcher input validation & IANA timezone-aware quiet hours (`src/watchers/store.mjs`, `src/watchers/engine.mjs`)**
    - `enabled` and `quietHours.enabled` require strict JS booleans (rejecting `"false"`, `"true"`, `0`, `1`, `null`).
    - Quiet hours validate and persist canonical IANA timezone identifiers (defaulting explicitly to `"UTC"` for new and legacy records without guessing the host OS timezone) and evaluate wall-clock local time via native `Intl.DateTimeFormat`, handling DST transitions and overnight windows while keeping `urgent` alerts unblocked.
+
+
+6. **Confined local-notes writes (`src/integrations/modularConnectors.mjs`)**
+   - Note writes verify the parent directory remains inside the per-user workspace, reject symlink/non-file targets, open the final target with `O_NOFOLLOW`, and enforce `0600` permissions.
+7. **Constant-work recovery-code checks (`interface/src/auth/store.mjs`)**
+   - Recovery performs eight derivations/comparisons without early exit for known and unknown accounts; successful recovery consumes one code and revokes sessions.
+
+
+8. **Explicit confirmation for destructive vault restores (`interface/public/app.js`, `interface/public/index.html`)**
+   - Restore modes are described accurately. `replace` warns which archived collections will overwrite local data and requires confirmation; collections absent from the archive are left unchanged.
 
 ## Forward-Looking Threat Model (Phase 4+)
 
