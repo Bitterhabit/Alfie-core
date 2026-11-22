@@ -127,3 +127,19 @@ test("bootstrap and password changes enforce the 16-character minimum while lega
   });
 });
 
+
+test("recovery codes are one-time and password recovery revokes sessions", async () => {
+  await withStore(async (store) => {
+    await store.bootstrap("alfie-admin", password);
+    const login = await store.login("alfie-admin", password);
+    const generated = await store.generateRecoveryCodes(login.user.id, password);
+    assert.equal(generated.codes.length, 8);
+    const recovered = await store.recoverWithCode("alfie-admin", generated.codes[0], "a-new-long-password-2026");
+    assert.equal(recovered.recovered, true);
+    assert.equal(recovered.remainingCodes, 7);
+    assert.equal(await store.authenticate(login.token), null);
+    await assert.rejects(store.recoverWithCode("alfie-admin", generated.codes[0], "another-new-password-2026"), { status: 401 });
+    const newLogin = await store.login("alfie-admin", "a-new-long-password-2026");
+    assert.ok(newLogin.token);
+  });
+});
