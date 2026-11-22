@@ -246,17 +246,56 @@ export function verifyEncryptedVault({ archive, userId, passphrase }) {
   };
 }
 
+function recordTimestamp(item) {
+  if (!item || typeof item !== "object") return null;
+  for (const key of ["updatedAt", "lastUpdatedAt", "timestamp", "occurredAt", "capturedAt", "createdAt"]) {
+    const value = Date.parse(String(item[key] || ""));
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
 function mergeArrayById(existingArr = [], incomingArr = []) {
   const byId = new Map();
   for (const item of Array.isArray(existingArr) ? existingArr : []) {
     if (item && typeof item === "object" && item.id) byId.set(item.id, item);
   }
   for (const item of Array.isArray(incomingArr) ? incomingArr : []) {
-    if (item && typeof item === "object" && item.id && !byId.has(item.id)) {
+    if (!item || typeof item !== "object" || !item.id) continue;
+    const existing = byId.get(item.id);
+    if (!existing) {
       byId.set(item.id, item);
+      continue;
     }
+    const localTime = recordTimestamp(existing);
+    const backupTime = recordTimestamp(item);
+    // Ambiguous timestamps retain local data rather than overwrite it.
+    if (backupTime !== null && (localTime === null || backupTime > localTime)) byId.set(item.id, item);
   }
   return Array.from(byId.values());
+}
+
+function mergePermissionLeases(existingArr = [], incomingArr = []) {
+  const key = (lease) => lease && typeof lease === "object"
+    ? `${lease.scope || ""}::${lease.projectId || "*"}`
+    : "";
+  const byKey = new Map();
+  for (const lease of Array.isArray(existingArr) ? existingArr : []) {
+    const id = key(lease);
+    if (id && id !== "::") byKey.set(id, lease);
+  }
+  for (const lease of Array.isArray(incomingArr) ? incomingArr : []) {
+    const id = key(lease);
+    if (!id || id === "::") continue;
+    const existing = byKey.get(id);
+    if (!existing) byKey.set(id, lease);
+    else {
+      const localTime = recordTimestamp(existing);
+      const backupTime = recordTimestamp(lease);
+      if (backupTime !== null && (localTime === null || backupTime > localTime)) byKey.set(id, lease);
+    }
+  }
+  return Array.from(byKey.values());
 }
 
 function mergeCollectionDocument(collection, existing, incoming) {
@@ -282,7 +321,7 @@ function mergeCollectionDocument(collection, existing, incoming) {
     };
   }
   if (collection === "permissions.json") {
-    const mergedLeases = mergeArrayById(existing.leases, incoming.leases);
+    const mergedLeases = mergePermissionLeases(existing.leases, incoming.leases);
     return {
       ...existing,
       ...incoming,
@@ -307,7 +346,11 @@ export async function restoreEncryptedVault({
   const verified = decryptVaultArchive(archive, userId, passphrase);
   const restoredCollections = [];
 
-  for (const [collection, incomingDoc] of Object.entries(verified.collections)) {
+  const restoreSet = cleanMode === "replace"
+    ? VAULT_COLLECTIONS.map((collection) => [collection, verified.collections[collection] ?? null])
+    : Object.entries(verified.collections);
+
+  for (const [collection, incomingDoc] of restoreSet) {
     let nextDoc = incomingDoc;
     if (cleanMode === "merge") {
       const existingDoc = await readUserJsonDocument(dataDirectory, userId, collection);
