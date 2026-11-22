@@ -1,6 +1,6 @@
 # Alfie Core
 
-> **Release preparation:** version `1.0.0` is being prepared. This is not yet a published or deployment-verified release. See [EXTRACTION_STATUS.md](EXTRACTION_STATUS.md) for the remaining homelab acceptance gates and [CHANGELOG.md](CHANGELOG.md) for the release scope.
+> **Version 1.0.0 prepared and merged:** the Core and standalone Interface version metadata is aligned on `main`. This is not yet a tagged, published or deployment-verified release. Complete the homelab acceptance gates in [EXTRACTION_STATUS.md](EXTRACTION_STATUS.md) before tagging `v1.0.0`; see [CHANGELOG.md](CHANGELOG.md) for the prepared release scope.
 
 Independent service foundation for Alfie, developed separately from Petrio's existing application and chat UI.
 
