@@ -488,3 +488,37 @@ test("vault replace restore clearly explains overwrite scope and requires confir
   assert.match(app, /Collections not included in the archive will remain unchanged/);
   assert.match(app, /Restore cancelled/);
 });
+
+test("Settings includes V1 Provider Setup & Model Management control panel", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+
+  for (const id of [
+    "settings-providers-surface",
+    "provider-routing-form",
+    "provider-default-mode",
+    "provider-add-btn",
+    "provider-editor-panel",
+    "provider-endpoint-form",
+    "provider-field-type",
+    "provider-field-url",
+    "provider-field-trusted-local",
+    "provider-field-credential",
+    "provider-test-btn",
+    "provider-field-model-select",
+    "provider-field-model",
+    "provider-endpoints-list"
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`), `Missing #${id} in index.html`);
+  }
+
+  assert.match(css, /\.provider-endpoints-grid/);
+  assert.match(css, /\.provider-endpoint-card/);
+  assert.match(css, /\.provider-editor-panel/);
+  assert.match(app, /initProviderManagement/);
+  assert.match(app, /loadProvidersPanel/);
+  assert.match(app, /\/api\/core\/providers\/test/);
+  assert.match(app, /\/api\/core\/providers\/endpoints/);
+  assert.match(app, /\/api\/core\/providers\/settings/);
+});

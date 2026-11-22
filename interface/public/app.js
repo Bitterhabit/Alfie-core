@@ -6716,43 +6716,17 @@ async function loadToolsAndApprovals() {
 
 async function loadSettings() {
   const account = $("#account-status");
-  const providers = $("#provider-status");
   const core = $("#core-status");
-  account.textContent = "Checking…";
-  providers.replaceChildren();
-  core.replaceChildren();
+  if (account) account.textContent = "Checking…";
+  if (core) core.replaceChildren();
   try {
-    const [who, status, providerList, health] = await Promise.all([
-      api("/api/core/whoami"), api("/api/core/status"), api("/api/core/providers"), api("/api/core/providers/health")
+    const [who, status] = await Promise.all([
+      api("/api/core/whoami"), api("/api/core/status")
     ]);
-    account.textContent = who.linked ? "Linked to your Petrio account · " + who.userId : "Not linked";
-    providers.appendChild(createItem("Routing mode", String(providerList.mode || "auto").toUpperCase() + " · choose a mode from the chat composer to influence model selection."));
-    for (const endpoint of (health.endpoints || [])) {
-      const config = (providerList.endpoints || []).find((item) => item.id === endpoint.id) || {};
-      const details = [
-        endpoint.online ? "Online" : "Offline",
-        config.provider || "provider",
-        endpoint.model || config.model || "No model configured",
-        config.mode || "standard",
-        Number.isFinite(endpoint.latencyMs) ? endpoint.latencyMs + " ms" : ""
-      ].filter(Boolean).join(" · ");
-      providers.appendChild(createItem(config.name || endpoint.id, details));
-      const installedModels = Array.isArray(endpoint.models) ? endpoint.models : [];
-      if (installedModels.length) {
-        providers.appendChild(createItem(
-          "Installed on " + (config.name || endpoint.id),
-          installedModels.map((model) => model === config.model ? model + " · ACTIVE" : model).join("  |  ")
-        ));
-      } else {
-        providers.appendChild(createItem(
-          "Model inventory · " + (config.name || endpoint.id),
-          endpoint.online ? "No models are installed on this endpoint yet." : "Connect this endpoint to inspect its installed models."
-        ));
-      }
-    }
-    if (!health.endpoints?.length) providers.textContent = "No model endpoints configured.";
-    core.textContent = (status.implemented || []).length + " capabilities active · " + (status.planned || []).length + " planned";
+    if (account) account.textContent = who.linked ? "Linked to your Petrio account · " + who.userId : "Not linked";
+    if (core) core.textContent = (status.implemented || []).length + " capabilities active · " + (status.planned || []).length + " planned";
     await Promise.all([
+      loadProvidersPanel(),
       refreshVramStatus(),
       loadCloudAgents(),
       loadWorkflowProfile(),
@@ -6762,9 +6736,8 @@ async function loadSettings() {
       loadDiagnosticsAudit()
     ]);
   } catch (error) {
-    account.textContent = error.message;
-    providers.textContent = "Provider information unavailable.";
-    core.textContent = "Core status unavailable.";
+    if (account) account.textContent = error.message;
+    if (core) core.textContent = "Core status unavailable.";
   }
 }
 
@@ -9132,6 +9105,668 @@ function initPhase6Timeline() {
   });
 }
 
+// ── V1 Provider Setup & Model Management ──
+const providerPanelState = {
+  config: { mode: "auto", healthIntervalSeconds: 30, endpoints: [], source: "environment", updatedAt: null },
+  healthById: new Map(),
+  editingId: null,
+  confirmDeleteId: null,
+  discoveredModels: []
+};
+
+function isLocalLikeUrl(urlStr) {
+  try {
+    const parsed = new URL(String(urlStr || "").trim());
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    if (!host) return false;
+    if (["localhost", "127.0.0.1", "::1", "host.docker.internal"].includes(host)) return true;
+    if (!host.includes(".")) return true;
+    if (/^(10\.|192\.168\.|127\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) return true;
+    return host.endsWith(".local") || host.endsWith(".lan") || host.endsWith(".internal");
+  } catch {
+    return false;
+  }
+}
+
+function populateEditorModelSelect(models = [], currentModel = "") {
+  const select = $("#provider-field-model-select");
+  if (!select) return;
+  const cleanModels = [...new Set((Array.isArray(models) ? models : []).map((m) => String(m || "").trim()).filter(Boolean))];
+  select.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = cleanModels.length
+    ? `Select from ${cleanModels.length} installed model${cleanModels.length === 1 ? "" : "s"}…`
+    : "Run Test connection to discover installed models…";
+  select.appendChild(placeholder);
+  for (const modelName of cleanModels) {
+    const opt = document.createElement("option");
+    opt.value = modelName;
+    opt.textContent = modelName;
+    if (modelName === currentModel) opt.selected = true;
+    select.appendChild(opt);
+  }
+  if (currentModel && !cleanModels.includes(currentModel)) {
+    const customOpt = document.createElement("option");
+    customOpt.value = currentModel;
+    customOpt.textContent = `${currentModel} (configured)`;
+    customOpt.selected = true;
+    select.appendChild(customOpt);
+  }
+}
+
+function setProviderTestResult(result, isError = false) {
+  const box = $("#provider-test-result");
+  if (!box) return;
+  box.replaceChildren();
+  if (!result) {
+    box.hidden = true;
+    box.className = "provider-test-result";
+    return;
+  }
+  box.hidden = false;
+  box.className = `provider-test-result ${isError || !result.online ? "is-error" : "is-ok"}`;
+  const heading = document.createElement("strong");
+  if (isError || !result.online) {
+    heading.textContent = "Connection failed";
+  } else {
+    const latency = Number.isFinite(result.latencyMs) ? ` · ${result.latencyMs} ms` : "";
+    const count = Array.isArray(result.models) ? result.models.length : 0;
+    heading.textContent = `Connected${latency} · ${count} model${count === 1 ? "" : "s"} discovered`;
+  }
+  const detail = document.createElement("p");
+  if (isError || !result.online) {
+    detail.textContent = result.error || "Could not reach endpoint. Check the URL, server status, and Trusted local setting.";
+  } else if (result.modelAvailable === false) {
+    detail.textContent = "Server is reachable, but the currently entered model name was not found in the installed list. Choose one below.";
+  } else if (Array.isArray(result.models) && result.models.length) {
+    detail.textContent = `Available: ${result.models.slice(0, 6).join(", ")}${result.models.length > 6 ? ` (+${result.models.length - 6} more)` : ""}`;
+  } else {
+    detail.textContent = "Server responded, but reported no installed models yet.";
+  }
+  box.append(heading, detail);
+}
+
+function closeProviderEditor() {
+  const panel = $("#provider-editor-panel");
+  if (panel) panel.hidden = true;
+  providerPanelState.editingId = null;
+  providerPanelState.discoveredModels = [];
+  const err = $("#provider-form-error");
+  if (err) err.textContent = "";
+  setProviderTestResult(null);
+}
+
+function openProviderEditor(endpoint = null) {
+  const panel = $("#provider-editor-panel");
+  if (!panel) return;
+  const isEdit = Boolean(endpoint);
+  providerPanelState.editingId = isEdit ? endpoint.id : null;
+  const health = isEdit ? providerPanelState.healthById.get(endpoint.id) : null;
+  const models = Array.isArray(health?.models) ? health.models : [];
+  providerPanelState.discoveredModels = models;
+
+  $("#provider-editor-title").textContent = isEdit ? `Edit endpoint: ${endpoint.name || endpoint.id}` : "Add model endpoint";
+  $("#provider-field-id").value = isEdit ? endpoint.id : "";
+  $("#provider-field-name").value = isEdit ? (endpoint.name || "") : "";
+  $("#provider-field-type").value = isEdit ? (endpoint.provider || "ollama") : "ollama";
+  $("#provider-field-url").value = isEdit ? (endpoint.baseUrl || "") : "http://127.0.0.1:11434";
+  $("#provider-field-url").placeholder = ($("#provider-field-type").value === "ollama") ? "http://127.0.0.1:11434" : "http://127.0.0.1:1234/v1";
+  $("#provider-field-mode").value = isEdit ? (endpoint.mode || "standard") : "standard";
+  $("#provider-field-priority").value = String(isEdit ? (endpoint.priority ?? 50) : 60);
+  $("#provider-field-temperature").value = String(isEdit ? (endpoint.temperature ?? 0.4) : 0.4);
+  $("#provider-field-max-tokens").value = String(isEdit ? (endpoint.maxTokens ?? 700) : 700);
+  $("#provider-field-trusted-local").checked = isEdit ? Boolean(endpoint.trustedLocal) : true;
+  $("#provider-field-enabled").checked = isEdit ? endpoint.enabled !== false : true;
+  $("#provider-field-credential").value = "";
+  $("#provider-field-clear-key").checked = false;
+
+  const secretHint = $("#provider-secret-hint");
+  const clearWrap = $("#provider-clear-key-wrap");
+  if (isEdit && endpoint.apiKeyConfigured) {
+    if (secretHint) secretHint.textContent = "An encrypted API key is saved on the server. Leave blank to keep it, enter a new key to replace it, or check clear below.";
+    if (clearWrap) clearWrap.hidden = false;
+  } else {
+    if (secretHint) secretHint.textContent = "Encrypted on the server and never sent back to the browser.";
+    if (clearWrap) clearWrap.hidden = true;
+  }
+
+  $("#provider-field-model").value = isEdit ? (endpoint.model || "") : "";
+  populateEditorModelSelect(models, isEdit ? (endpoint.model || "") : "");
+  const err = $("#provider-form-error");
+  if (err) err.textContent = "";
+  setProviderTestResult(null);
+  panel.hidden = false;
+  $("#provider-field-name")?.focus();
+}
+
+function buildEndpointPayloadFromForm() {
+  const credential = $("#provider-field-credential")?.value?.trim() || "";
+  const clearKey = Boolean($("#provider-field-clear-key")?.checked);
+  const payload = {
+    name: $("#provider-field-name")?.value?.trim() || "",
+    provider: $("#provider-field-type")?.value === "ollama" ? "ollama" : "openai-compatible",
+    baseUrl: $("#provider-field-url")?.value?.trim() || "",
+    mode: $("#provider-field-mode")?.value || "standard",
+    priority: Number($("#provider-field-priority")?.value || 50),
+    temperature: Number($("#provider-field-temperature")?.value ?? 0.4),
+    maxTokens: Number($("#provider-field-max-tokens")?.value || 700),
+    trustedLocal: Boolean($("#provider-field-trusted-local")?.checked),
+    enabled: Boolean($("#provider-field-enabled")?.checked),
+    model: $("#provider-field-model")?.value?.trim() || ""
+  };
+  if (credential) payload.apiKey = credential;
+  if (clearKey) payload.clearApiKey = true;
+  return payload;
+}
+
+function renderProvidersPanel() {
+  const cfg = providerPanelState.config || { mode: "auto", healthIntervalSeconds: 30, endpoints: [] };
+  const modeSelect = $("#provider-default-mode");
+  const intervalInput = $("#provider-health-interval");
+  const sourceEl = $("#provider-config-source");
+  const listHost = $("#provider-endpoints-list");
+
+  if (modeSelect) modeSelect.value = cfg.mode || "auto";
+  if (intervalInput) intervalInput.value = String(cfg.healthIntervalSeconds || 30);
+
+  const endpoints = Array.isArray(cfg.endpoints) ? [...cfg.endpoints] : [];
+  endpoints.sort((a, b) => (b.priority ?? 50) - (a.priority ?? 50));
+
+  const enabledCount = endpoints.filter((ep) => ep.enabled !== false).length;
+  const sourceLabel = cfg.source === "persisted" ? "Saved in workspace" : "Environment defaults";
+  if (sourceEl) {
+    sourceEl.textContent = `${sourceLabel} · ${endpoints.length} endpoint${endpoints.length === 1 ? "" : "s"} (${enabledCount} enabled)`;
+  }
+
+  if (!listHost) return;
+  listHost.replaceChildren();
+
+  if (!endpoints.length) {
+    const empty = document.createElement("div");
+    empty.className = "provider-empty-state";
+    const title = document.createElement("strong");
+    title.textContent = "No model endpoints configured yet";
+    const copy = document.createElement("p");
+    copy.className = "muted";
+    copy.textContent = "Add a local Ollama server or an OpenAI-compatible endpoint to run Alfie with your chosen models. You can test connectivity and inspect installed models before saving.";
+    const cta = document.createElement("button");
+    cta.type = "button";
+    cta.className = "primary-button";
+    cta.textContent = "Add your first endpoint";
+    cta.addEventListener("click", () => openProviderEditor(null));
+    empty.append(title, copy, cta);
+    listHost.appendChild(empty);
+    return;
+  }
+
+  for (let idx = 0; idx < endpoints.length; idx += 1) {
+    const ep = endpoints[idx];
+    const health = providerPanelState.healthById.get(ep.id) || null;
+    const installedModels = Array.isArray(health?.models) ? health.models : [];
+    const card = document.createElement("article");
+    card.className = `provider-endpoint-card${ep.enabled === false ? " is-disabled" : ""}${health?.online ? " is-online" : ""}`;
+    card.dataset.endpointId = ep.id;
+
+    // Header row
+    const head = document.createElement("div");
+    head.className = "provider-card-head";
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "provider-card-title";
+    const nameEl = document.createElement("strong");
+    nameEl.textContent = ep.name || ep.id;
+    const metaEl = document.createElement("span");
+    metaEl.className = "provider-card-meta";
+    const metaParts = [
+      ep.provider === "ollama" ? "Ollama" : "OpenAI-compatible",
+      `Priority ${ep.priority ?? 50}`,
+      `${(ep.mode || "standard").charAt(0).toUpperCase()}${(ep.mode || "standard").slice(1)} tier`,
+      ep.trustedLocal ? "Trusted local" : "External",
+      ep.apiKeyConfigured ? "API key saved" : "No API key"
+    ];
+    metaEl.textContent = metaParts.join(" · ");
+    titleWrap.append(nameEl, metaEl);
+
+    const statusText = document.createElement("span");
+    statusText.className = "provider-status-text";
+    if (ep.enabled === false) {
+      statusText.classList.add("is-muted");
+      statusText.textContent = "Disabled";
+    } else if (!health) {
+      statusText.classList.add("is-muted");
+      statusText.textContent = "Checking…";
+    } else if (!health.online) {
+      statusText.classList.add("is-error");
+      statusText.textContent = "Offline";
+    } else if (!ep.model) {
+      statusText.classList.add("is-warn");
+      statusText.textContent = `Online · ${health.latencyMs} ms · Select model`;
+    } else if (health.modelAvailable === false) {
+      statusText.classList.add("is-warn");
+      statusText.textContent = `Online · ${health.latencyMs} ms · Model missing`;
+    } else {
+      statusText.classList.add("is-ok");
+      statusText.textContent = `Online · ${health.latencyMs} ms`;
+    }
+    head.append(titleWrap, statusText);
+    card.appendChild(head);
+
+    // URL + active model row
+    const details = document.createElement("div");
+    details.className = "provider-card-details";
+    const urlLine = document.createElement("div");
+    urlLine.className = "provider-detail-row";
+    const urlLabel = document.createElement("span");
+    urlLabel.className = "provider-detail-label";
+    urlLabel.textContent = "Endpoint";
+    const urlCode = document.createElement("code");
+    urlCode.className = "provider-detail-code";
+    urlCode.textContent = ep.baseUrl;
+    urlLine.append(urlLabel, urlCode);
+
+    const modelLine = document.createElement("div");
+    modelLine.className = "provider-detail-row";
+    const modelLabel = document.createElement("span");
+    modelLabel.className = "provider-detail-label";
+    modelLabel.textContent = "Active model";
+    if (installedModels.length) {
+      const quickSelect = document.createElement("select");
+      quickSelect.className = "provider-inline-model-select";
+      quickSelect.setAttribute("aria-label", `Select model for ${ep.name || ep.id}`);
+      if (!ep.model) {
+        const emptyOpt = document.createElement("option");
+        emptyOpt.value = "";
+        emptyOpt.textContent = "Choose a model…";
+        quickSelect.appendChild(emptyOpt);
+      } else if (!installedModels.includes(ep.model)) {
+        const missingOpt = document.createElement("option");
+        missingOpt.value = ep.model;
+        missingOpt.textContent = `${ep.model} (not on server)`;
+        missingOpt.selected = true;
+        quickSelect.appendChild(missingOpt);
+      }
+      for (const m of installedModels) {
+        const opt = document.createElement("option");
+        opt.value = m;
+        opt.textContent = m;
+        if (m === ep.model) opt.selected = true;
+        quickSelect.appendChild(opt);
+      }
+      quickSelect.addEventListener("change", async () => {
+        const chosen = quickSelect.value;
+        if (!chosen || chosen === ep.model) return;
+        quickSelect.disabled = true;
+        try {
+          const res = await api(`/api/core/providers/endpoints/${encodeURIComponent(ep.id)}`, {
+            method: "PATCH",
+            body: JSON.stringify({ model: chosen })
+          });
+          if (res?.config) providerPanelState.config = res.config;
+          const updatedHealth = providerPanelState.healthById.get(ep.id);
+          if (updatedHealth) {
+            updatedHealth.modelAvailable = installedModels.includes(chosen);
+          }
+          renderProvidersPanel();
+          toast(`Active model switched to ${chosen}`);
+        } catch (error) {
+          toast(error.message || "Could not update model");
+          quickSelect.value = ep.model || "";
+        } finally {
+          quickSelect.disabled = false;
+        }
+      });
+      modelLine.append(modelLabel, quickSelect);
+    } else {
+      const modelVal = document.createElement("span");
+      modelVal.className = "provider-detail-value";
+      modelVal.textContent = ep.model || "None selected";
+      modelLine.append(modelLabel, modelVal);
+    }
+    details.append(urlLine, modelLine);
+    card.appendChild(details);
+
+    // Installed model summary or error message
+    if (health && !health.online && health.error) {
+      const errBox = document.createElement("p");
+      errBox.className = "provider-card-error";
+      errBox.textContent = health.error;
+      card.appendChild(errBox);
+    } else if (health?.online && ep.model && health.modelAvailable === false) {
+      const warnBox = document.createElement("p");
+      warnBox.className = "provider-card-warn";
+      warnBox.textContent = `Configured model "${ep.model}" was not listed by this server. Select one of the ${installedModels.length} installed model(s) above.`;
+      card.appendChild(warnBox);
+    }
+
+    const inventory = document.createElement("p");
+    inventory.className = "provider-inventory-line muted";
+    if (installedModels.length) {
+      const preview = installedModels.slice(0, 6).join(" · ");
+      inventory.textContent = `Installed (${installedModels.length}): ${preview}${installedModels.length > 6 ? ` · +${installedModels.length - 6} more` : ""}`;
+    } else if (health?.online) {
+      inventory.textContent = "Server online · No installed models reported.";
+    } else {
+      inventory.textContent = "Test connection to inspect installed models on this endpoint.";
+    }
+    card.appendChild(inventory);
+
+    // Actions row
+    const actions = document.createElement("div");
+    actions.className = "provider-card-actions";
+
+    const testBtn = document.createElement("button");
+    testBtn.type = "button";
+    testBtn.className = "secondary-button";
+    testBtn.textContent = "Test";
+    testBtn.addEventListener("click", async () => {
+      testBtn.disabled = true;
+      testBtn.textContent = "Testing…";
+      try {
+        const res = await api("/api/core/providers/test", {
+          method: "POST",
+          body: JSON.stringify({ id: ep.id })
+        });
+        providerPanelState.healthById.set(ep.id, res);
+        renderProvidersPanel();
+        toast(res.online ? `${ep.name} online (${res.models?.length || 0} models)` : `${ep.name} offline: ${res.error || "unreachable"}`);
+      } catch (error) {
+        toast(error.message || "Test failed");
+      } finally {
+        testBtn.disabled = false;
+        testBtn.textContent = "Test";
+      }
+    });
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "secondary-button";
+    editBtn.textContent = "Edit";
+    editBtn.addEventListener("click", () => openProviderEditor(ep));
+
+    const toggleBtn = document.createElement("button");
+    toggleBtn.type = "button";
+    toggleBtn.className = "secondary-button";
+    toggleBtn.textContent = ep.enabled === false ? "Enable" : "Disable";
+    toggleBtn.addEventListener("click", async () => {
+      toggleBtn.disabled = true;
+      try {
+        const res = await api(`/api/core/providers/endpoints/${encodeURIComponent(ep.id)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ enabled: ep.enabled === false })
+        });
+        if (res?.config) providerPanelState.config = res.config;
+        renderProvidersPanel();
+        toast(ep.enabled === false ? `Enabled ${ep.name}` : `Disabled ${ep.name}`);
+      } catch (error) {
+        toast(error.message || "Could not update endpoint");
+      } finally {
+        toggleBtn.disabled = false;
+      }
+    });
+
+    actions.append(testBtn, editBtn, toggleBtn);
+
+    if (endpoints.length > 1) {
+      const upBtn = document.createElement("button");
+      upBtn.type = "button";
+      upBtn.className = "secondary-button provider-order-btn";
+      upBtn.textContent = "Higher";
+      upBtn.disabled = idx === 0;
+      upBtn.setAttribute("aria-label", `Increase priority for ${ep.name || ep.id}`);
+      upBtn.addEventListener("click", () => reorderProviderEndpoint(ep.id, -1));
+
+      const downBtn = document.createElement("button");
+      downBtn.type = "button";
+      downBtn.className = "secondary-button provider-order-btn";
+      downBtn.textContent = "Lower";
+      downBtn.disabled = idx === endpoints.length - 1;
+      downBtn.setAttribute("aria-label", `Decrease priority for ${ep.name || ep.id}`);
+      downBtn.addEventListener("click", () => reorderProviderEndpoint(ep.id, 1));
+      actions.append(upBtn, downBtn);
+    }
+
+    if (providerPanelState.confirmDeleteId === ep.id) {
+      const confirmBtn = document.createElement("button");
+      confirmBtn.type = "button";
+      confirmBtn.className = "secondary-button is-danger";
+      confirmBtn.textContent = "Confirm remove";
+      confirmBtn.addEventListener("click", async () => {
+        confirmBtn.disabled = true;
+        try {
+          const res = await api(`/api/core/providers/endpoints/${encodeURIComponent(ep.id)}`, { method: "DELETE" });
+          providerPanelState.confirmDeleteId = null;
+          providerPanelState.healthById.delete(ep.id);
+          if (providerPanelState.editingId === ep.id) closeProviderEditor();
+          if (res?.config) providerPanelState.config = res.config;
+          renderProvidersPanel();
+          toast(`Removed endpoint ${ep.name}`);
+        } catch (error) {
+          toast(error.message || "Could not remove endpoint");
+        } finally {
+          confirmBtn.disabled = false;
+        }
+      });
+      const cancelDelBtn = document.createElement("button");
+      cancelDelBtn.type = "button";
+      cancelDelBtn.className = "secondary-button";
+      cancelDelBtn.textContent = "Keep";
+      cancelDelBtn.addEventListener("click", () => {
+        providerPanelState.confirmDeleteId = null;
+        renderProvidersPanel();
+      });
+      actions.append(confirmBtn, cancelDelBtn);
+    } else {
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "secondary-button";
+      removeBtn.textContent = "Remove";
+      removeBtn.addEventListener("click", () => {
+        providerPanelState.confirmDeleteId = ep.id;
+        renderProvidersPanel();
+      });
+      actions.appendChild(removeBtn);
+    }
+
+    card.appendChild(actions);
+    listHost.appendChild(card);
+  }
+}
+
+async function reorderProviderEndpoint(endpointId, delta) {
+  const sorted = [...(providerPanelState.config.endpoints || [])]
+    .sort((a, b) => (b.priority ?? 50) - (a.priority ?? 50));
+  const idx = sorted.findIndex((ep) => ep.id === endpointId);
+  const nextIdx = idx + delta;
+  if (idx < 0 || nextIdx < 0 || nextIdx >= sorted.length) return;
+  const [moved] = sorted.splice(idx, 1);
+  sorted.splice(nextIdx, 0, moved);
+  try {
+    const res = await api("/api/core/providers/settings", {
+      method: "PUT",
+      body: JSON.stringify({ endpointOrder: sorted.map((ep) => ep.id) })
+    });
+    if (res?.config) providerPanelState.config = res.config;
+    renderProvidersPanel();
+    toast("Endpoint priority updated");
+  } catch (error) {
+    toast(error.message || "Could not reorder endpoints");
+  }
+}
+
+async function loadProvidersPanel({ forceRefresh = false } = {}) {
+  const listHost = $("#provider-endpoints-list");
+  if (!listHost) return;
+  try {
+    const [configRes, healthRes] = await Promise.all([
+      api("/api/core/providers"),
+      api("/api/core/providers/health" + (forceRefresh ? "?refresh=1" : ""))
+    ]);
+    providerPanelState.config = configRes || { mode: "auto", healthIntervalSeconds: 30, endpoints: [] };
+    providerPanelState.healthById = new Map(
+      (healthRes?.endpoints || []).map((item) => [item.id, item])
+    );
+    renderProvidersPanel();
+  } catch (error) {
+    listHost.replaceChildren();
+    const errEl = document.createElement("p");
+    errEl.className = "error-message";
+    errEl.textContent = error.message || "Provider configuration unavailable.";
+    listHost.appendChild(errEl);
+  }
+}
+
+function initProviderManagement() {
+  $("#provider-add-btn")?.addEventListener("click", () => openProviderEditor(null));
+  $("#provider-editor-close-btn")?.addEventListener("click", closeProviderEditor);
+  $("#provider-cancel-btn")?.addEventListener("click", closeProviderEditor);
+
+  $("#providers-refresh-btn")?.addEventListener("click", async () => {
+    const btn = $("#providers-refresh-btn");
+    if (btn) btn.disabled = true;
+    try {
+      await loadProvidersPanel({ forceRefresh: true });
+      toast("Provider status refreshed");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  $("#provider-field-type")?.addEventListener("change", (event) => {
+    const type = event.target.value;
+    const urlInput = $("#provider-field-url");
+    if (!urlInput) return;
+    urlInput.placeholder = type === "ollama" ? "http://127.0.0.1:11434" : "http://127.0.0.1:1234/v1";
+    if (!providerPanelState.editingId) {
+      if (type === "ollama" && (!urlInput.value || urlInput.value === "http://127.0.0.1:1234/v1")) {
+        urlInput.value = "http://127.0.0.1:11434";
+      } else if (type === "openai-compatible" && (!urlInput.value || urlInput.value === "http://127.0.0.1:11434")) {
+        urlInput.value = "http://127.0.0.1:1234/v1";
+      }
+    }
+  });
+
+  $("#provider-field-url")?.addEventListener("input", (event) => {
+    const urlVal = event.target.value;
+    const trustedCheckbox = $("#provider-field-trusted-local");
+    if (!providerPanelState.editingId && trustedCheckbox) {
+      if (!isLocalLikeUrl(urlVal) && /^https:\/\//i.test(urlVal)) {
+        trustedCheckbox.checked = false;
+      }
+    }
+  });
+
+  $("#provider-field-model-select")?.addEventListener("change", (event) => {
+    const val = event.target.value;
+    if (val && $("#provider-field-model")) {
+      $("#provider-field-model").value = val;
+    }
+  });
+
+  $("#provider-routing-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const saveBtn = $("#provider-routing-save-btn");
+    const statusEl = $("#provider-routing-status");
+    const mode = $("#provider-default-mode")?.value || "auto";
+    const healthIntervalSeconds = Number($("#provider-health-interval")?.value || 30);
+    if (saveBtn) saveBtn.disabled = true;
+    if (statusEl) statusEl.textContent = "Saving…";
+    try {
+      const res = await api("/api/core/providers/settings", {
+        method: "PUT",
+        body: JSON.stringify({ mode, healthIntervalSeconds })
+      });
+      if (res?.config) providerPanelState.config = res.config;
+      renderProvidersPanel();
+      if (statusEl) statusEl.textContent = "Saved";
+      toast(`Default routing set to ${mode}`);
+    } catch (error) {
+      if (statusEl) statusEl.textContent = error.message || "Save failed";
+      toast(error.message || "Could not save routing settings");
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  });
+
+  $("#provider-test-btn")?.addEventListener("click", async () => {
+    const testBtn = $("#provider-test-btn");
+    const errEl = $("#provider-form-error");
+    if (errEl) errEl.textContent = "";
+    const payload = buildEndpointPayloadFromForm();
+    if (providerPanelState.editingId) payload.id = providerPanelState.editingId;
+    if (!payload.baseUrl) {
+      if (errEl) errEl.textContent = "Enter an endpoint URL before testing the connection.";
+      return;
+    }
+    if (testBtn) {
+      testBtn.disabled = true;
+      testBtn.textContent = "Testing…";
+    }
+    try {
+      const res = await api("/api/core/providers/test", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      setProviderTestResult(res, !res.online);
+      const discovered = Array.isArray(res.models) ? res.models : [];
+      providerPanelState.discoveredModels = discovered;
+      const modelInput = $("#provider-field-model");
+      let currentModel = modelInput?.value?.trim() || "";
+      if (!currentModel && discovered.length) {
+        currentModel = discovered[0];
+        if (modelInput) modelInput.value = currentModel;
+      }
+      populateEditorModelSelect(discovered, currentModel);
+      if (providerPanelState.editingId) {
+        providerPanelState.healthById.set(providerPanelState.editingId, res);
+      }
+    } catch (error) {
+      setProviderTestResult({ online: false, error: error.message || "Connection test failed." }, true);
+    } finally {
+      if (testBtn) {
+        testBtn.disabled = false;
+        testBtn.textContent = "Test connection";
+      }
+    }
+  });
+
+  $("#provider-endpoint-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const saveBtn = $("#provider-save-btn");
+    const errEl = $("#provider-form-error");
+    if (errEl) errEl.textContent = "";
+    const payload = buildEndpointPayloadFromForm();
+    if (!payload.name) {
+      if (errEl) errEl.textContent = "Enter a display name for this endpoint.";
+      return;
+    }
+    if (!payload.baseUrl) {
+      if (errEl) errEl.textContent = "Enter a valid HTTP or HTTPS endpoint URL.";
+      return;
+    }
+    if (saveBtn) saveBtn.disabled = true;
+    try {
+      const editId = providerPanelState.editingId;
+      const res = editId
+        ? await api(`/api/core/providers/endpoints/${encodeURIComponent(editId)}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload)
+          })
+        : await api("/api/core/providers/endpoints", {
+            method: "POST",
+            body: JSON.stringify(payload)
+          });
+      if (res?.config) providerPanelState.config = res.config;
+      closeProviderEditor();
+      await loadProvidersPanel({ forceRefresh: true });
+      toast(editId ? `Updated endpoint ${payload.name}` : `Added endpoint ${payload.name}`);
+    } catch (error) {
+      if (errEl) errEl.textContent = error.message || "Could not save endpoint.";
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  });
+}
+
 initWorkingModeSelector();
 initIdeasVault();
 initWatchers();
@@ -9149,4 +9784,5 @@ initPhase6Diagnostics();
 initPhase6PeerTokens();
 initPhase6Playbooks();
 initPhase6Timeline();
+initProviderManagement();
 initialise();

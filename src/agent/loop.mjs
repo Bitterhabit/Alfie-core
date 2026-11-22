@@ -80,6 +80,7 @@ export class AgentLoop {
   constructor({
     providerRegistry,
     providerConfig,
+    providerStore = null,
     toolRegistry,
     dispatcher,
     contextAssembler,
@@ -99,6 +100,7 @@ export class AgentLoop {
   } = {}) {
     this.providerRegistry = providerRegistry;
     this.providerConfig = providerConfig;
+    this.providerStore = providerStore;
     this.toolRegistry = toolRegistry;
     this.dispatcher = dispatcher;
     this.contextAssembler = contextAssembler;
@@ -254,7 +256,10 @@ export class AgentLoop {
           );
         } else {
           try {
-            selected = await awaitWithAbort(this.providerRegistry.complete(this.providerConfig, context.messages, mode, { signal: controller.signal }), controller.signal);
+            const activeProviderConfig = this.providerStore
+              ? (await this.providerStore.getEffectiveConfig(userId)).config
+              : this.providerConfig;
+            selected = await awaitWithAbort(this.providerRegistry.complete(activeProviderConfig, context.messages, mode, { signal: controller.signal }), controller.signal);
           } catch (providerError) {
             if (controller.signal.aborted) throw providerError;
             selected = await this.coreAssistantComplete({

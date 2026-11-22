@@ -2,6 +2,7 @@ import { createServer as createHttpServer } from "node:http";
 import { timingSafeEqual, randomUUID } from "node:crypto";
 import path from "node:path";
 import { ProviderRegistry, normaliseConfig, publicConfig } from "./providers/registry.mjs";
+import { ProviderStore } from "./providers/store.mjs";
 import { createPetrioIdentityAuth } from "./auth/petrioIdentity.mjs";
 import { createIdentityAuthRegistry, createSignedIdentityAuth } from "./auth/signedIdentity.mjs";
 import { IdentityLinkStore } from "./auth/identityLinkStore.mjs";
@@ -179,6 +180,7 @@ export function createAlfieCoreServer({
     catch { return { mode: "auto", endpoints: [] }; }
   })(),
   providerRegistry = new ProviderRegistry(),
+  providerStore = null,
   identityAuth = createDefaultIdentityAuth(),
   identityLinkStore = new IdentityLinkStore(),
   petrioIdentityAuth = createPetrioIdentityAuth(),
@@ -205,7 +207,11 @@ export function createAlfieCoreServer({
   playbookStore = new PlaybookStore({ dataDirectory: memoryStore.dataDirectory }),
   assetsDirectory = process.env.ALFIE_ASSETS_DIR || path.resolve(process.cwd(), "assets")
 } = {}) {
-  const providers = normaliseConfig(providerConfig);
+  const providers = normaliseConfig(providerConfig, { defaultTrustedLocal: true, enforceUrlPolicy: false });
+  const resolvedProviderStore = providerStore || new ProviderStore({
+    dataDirectory: memoryStore.dataDirectory || projectStore.dataDirectory || process.env.ALFIE_CORE_DATA_DIR || path.resolve(process.cwd(), "data"),
+    fallbackConfig: providers
+  });
   registerPetrioHarnessTools(toolRegistry, petrioHarnessClient);
   registerMemoryTools(toolRegistry, memoryStore);
   registerImageTools(toolRegistry, imageGenerator);
@@ -215,7 +221,15 @@ export function createAlfieCoreServer({
   });
   const jobEngine = new AsyncJobEngine({ jobStore, vramMonitor, auditStore });
   const toolDispatcher = new ToolDispatcher({ registry: toolRegistry, permissionStore, pendingActionStore, auditStore, assetsDirectory });
-  const agentLoop = new AgentLoop({ providerRegistry, providerConfig: providers, toolRegistry, dispatcher: toolDispatcher, contextAssembler, memoryStore, projectStore, watcherStore, profileStore, imageGenerator, cloudAgentStore, cloudAdapters, assetsDirectory });
+  const agentLoop = new AgentLoop({ providerRegistry, providerConfig: providers, providerStore: resolvedProviderStore, toolRegistry, dispatcher: toolDispatcher, contextAssembler, memoryStore, projectStore, watcherStore, profileStore, imageGenerator, cloudAgentStore, cloudAdapters, assetsDirectory });
+
+  const hasIdentityHeaders = (headers = {}) => Boolean(
+    headers["x-alfie-identity-signature"] ||
+    headers["x-alfie-identity-user-id"] ||
+    headers["x-alfie-identity-provider"] ||
+    headers["x-petrio-signature"] ||
+    headers["x-petrio-user-id"]
+  );
 
   return createHttpServer(async (req, res) => {
     const url = new URL(req.url || "/", "http://alfie-core.internal");
@@ -683,10 +697,11 @@ export function createAlfieCoreServer({
           return json(res, 200, removed);
         }
         if (watcherCheckMatch && req.method === "POST") {
+          const { config: userProviders } = await resolvedProviderStore.getEffectiveConfig(identity.userId);
           const result = await watcherStore.runCheck(identity.userId, watcherCheckMatch[1], {
             projectStore,
             vramMonitor,
-            endpoints: providers.endpoints
+            endpoints: userProviders.endpoints
           });
           return json(res, 200, result);
         }
@@ -1062,7 +1077,9 @@ export function createAlfieCoreServer({
           profileStore.get(identity.userId),
           pendingActionStore.list(identity.userId),
           jobStore.list(identity.userId, { status: "running", limit: 20 }),
-          vramMonitor.inspect({ endpoints: providers.endpoints }).catch(() => null)
+          resolvedProviderStore.getEffectiveConfig(identity.userId)
+            .then(({ config }) => vramMonitor.inspect({ endpoints: config.endpoints }))
+            .catch(() => null)
         ]);
         const presence = deriveAmbientPresence({
           projects,
@@ -1400,14 +1417,16 @@ export function createAlfieCoreServer({
       catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
       try {
         if (url.pathname === "/v1/system/vram" && req.method === "GET") {
-          const vram = await vramMonitor.inspect({ userId: identity.userId, endpoints: providers.endpoints });
+          const { config: userProviders } = await resolvedProviderStore.getEffectiveConfig(identity.userId);
+          const vram = await vramMonitor.inspect({ userId: identity.userId, endpoints: userProviders.endpoints });
           return json(res, 200, { vram });
         }
         if (url.pathname === "/v1/system/vram/report" && req.method === "POST") {
           const body = await readJsonBody(req);
           const result = vramMonitor.report(identity.userId, body);
           if (body.clear === true) {
-            const vram = await vramMonitor.inspect({ userId: identity.userId, endpoints: providers.endpoints });
+            const { config: userProviders } = await resolvedProviderStore.getEffectiveConfig(identity.userId);
+            const vram = await vramMonitor.inspect({ userId: identity.userId, endpoints: userProviders.endpoints });
             return json(res, 200, { cleared: true, vram });
           }
           return json(res, 200, { vram: result });
@@ -1522,14 +1541,130 @@ export function createAlfieCoreServer({
       return json(res, 405, { error: "Method not allowed." });
     }
 
-    if (req.method === "GET" && url.pathname === "/v1/providers") {
-      return json(res, 200, publicConfig(providers));
-    }
+    const providerEndpointMatch = /^\/v1\/providers\/endpoints\/([a-z0-9_-]{1,64})$/i.exec(url.pathname);
+    if (
+      url.pathname === "/v1/providers" ||
+      url.pathname === "/v1/providers/health" ||
+      url.pathname === "/v1/providers/settings" ||
+      url.pathname === "/v1/providers/endpoints" ||
+      url.pathname === "/v1/providers/test" ||
+      providerEndpointMatch
+    ) {
+      // Backwards-compatible read path: allow service-token-only GET /v1/providers & /v1/providers/health
+      // when no user identity headers are supplied; require signed identity on all user reads and mutations.
+      if (req.method === "GET" && (url.pathname === "/v1/providers" || url.pathname === "/v1/providers/health") && !hasIdentityHeaders(req.headers)) {
+        if (url.pathname === "/v1/providers") {
+          return json(res, 200, { ...publicConfig(providers), source: "environment", updatedAt: null, maxEndpoints: 8 });
+        }
+        const forceRefresh = url.searchParams.get("refresh") === "1";
+        const health = await Promise.all(providers.endpoints.map((endpoint) =>
+          forceRefresh
+            ? providerRegistry.inspect(endpoint)
+            : providerRegistry.inspectCached(endpoint, providers.healthIntervalSeconds)));
+        return json(res, 200, { mode: providers.mode, endpoints: health });
+      }
 
-    if (req.method === "GET" && url.pathname === "/v1/providers/health") {
-      const health = await Promise.all(providers.endpoints.map((endpoint) =>
-        providerRegistry.inspectCached(endpoint, providers.healthIntervalSeconds)));
-      return json(res, 200, { mode: providers.mode, endpoints: health });
+      let identity;
+      try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
+      catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
+
+      try {
+        if (req.method === "GET" && url.pathname === "/v1/providers") {
+          return json(res, 200, await resolvedProviderStore.getPublicState(identity.userId));
+        }
+        if (req.method === "GET" && url.pathname === "/v1/providers/health") {
+          const { config: userProviders } = await resolvedProviderStore.getEffectiveConfig(identity.userId);
+          const forceRefresh = url.searchParams.get("refresh") === "1";
+          const health = await Promise.all(userProviders.endpoints.map((endpoint) =>
+            forceRefresh
+              ? providerRegistry.inspect(endpoint)
+              : providerRegistry.inspectCached(endpoint, userProviders.healthIntervalSeconds)));
+          return json(res, 200, { mode: userProviders.mode, endpoints: health });
+        }
+        if (req.method === "PUT" && url.pathname === "/v1/providers/settings") {
+          const body = await readJsonBody(req);
+          const updated = await resolvedProviderStore.updateSettings(identity.userId, body);
+          providerRegistry.clearHealthCache();
+          await auditStore.record(identity.userId, {
+            event: "provider.settings_updated",
+            actor: "user",
+            toolId: "providers",
+            risk: "low",
+            status: "updated",
+            detail: `Routing mode set to ${updated.mode}, health interval ${updated.healthIntervalSeconds}s.`
+          });
+          return json(res, 200, { config: updated });
+        }
+        if (req.method === "POST" && url.pathname === "/v1/providers/endpoints") {
+          const body = await readJsonBody(req);
+          const created = await resolvedProviderStore.addEndpoint(identity.userId, body);
+          providerRegistry.clearHealthCache(created.endpoint.id);
+          await auditStore.record(identity.userId, {
+            event: "provider.endpoint_added",
+            actor: "user",
+            toolId: created.endpoint.id,
+            risk: created.endpoint.trustedLocal ? "medium" : "low",
+            status: created.endpoint.enabled ? "enabled" : "disabled",
+            detail: `Added ${created.endpoint.provider} endpoint "${created.endpoint.name}" (${created.endpoint.baseUrl}, model: ${created.endpoint.model || "unset"}, trustedLocal: ${created.endpoint.trustedLocal}, keyConfigured: ${created.endpoint.apiKeyConfigured}).`
+          });
+          return json(res, 201, created);
+        }
+        if (req.method === "PATCH" && providerEndpointMatch) {
+          const body = await readJsonBody(req);
+          const updated = await resolvedProviderStore.updateEndpoint(identity.userId, providerEndpointMatch[1], body);
+          providerRegistry.clearHealthCache(updated.endpoint.id);
+          await auditStore.record(identity.userId, {
+            event: "provider.endpoint_updated",
+            actor: "user",
+            toolId: updated.endpoint.id,
+            risk: updated.endpoint.trustedLocal ? "medium" : "low",
+            status: updated.endpoint.enabled ? "enabled" : "disabled",
+            detail: `Updated ${updated.endpoint.provider} endpoint "${updated.endpoint.name}" (${updated.endpoint.baseUrl}, model: ${updated.endpoint.model || "unset"}, priority: ${updated.endpoint.priority}, key: ${updated.keyAction}).`
+          });
+          return json(res, 200, { endpoint: updated.endpoint, config: updated.config });
+        }
+        if (req.method === "DELETE" && providerEndpointMatch) {
+          const removed = await resolvedProviderStore.removeEndpoint(identity.userId, providerEndpointMatch[1]);
+          providerRegistry.clearHealthCache(removed.removed.id);
+          await auditStore.record(identity.userId, {
+            event: "provider.endpoint_removed",
+            actor: "user",
+            toolId: removed.removed.id,
+            risk: "low",
+            status: "removed",
+            detail: `Removed ${removed.removed.provider} endpoint "${removed.removed.name}" (${removed.removed.baseUrl}).`
+          });
+          return json(res, 200, removed);
+        }
+        if (req.method === "POST" && url.pathname === "/v1/providers/test") {
+          const body = await readJsonBody(req);
+          const candidate = await resolvedProviderStore.prepareTestEndpoint(identity.userId, body);
+          const result = await providerRegistry.inspect(candidate);
+          await auditStore.record(identity.userId, {
+            event: "provider.connection_tested",
+            actor: "user",
+            toolId: candidate.id,
+            risk: "low",
+            status: result.online ? "online" : "offline",
+            detail: result.online
+              ? `Tested ${candidate.provider} endpoint (${candidate.baseUrl}): online in ${result.latencyMs}ms, ${result.models.length} model(s) discovered.`
+              : `Tested ${candidate.provider} endpoint (${candidate.baseUrl}): offline (${result.error || "unreachable"}).`
+          });
+          return json(res, 200, {
+            ok: result.online,
+            provider: candidate.provider,
+            baseUrl: candidate.baseUrl,
+            trustedLocal: candidate.trustedLocal,
+            ...result
+          });
+        }
+      } catch (error) {
+        return json(res, error.status || 500, {
+          error: error.message || "Provider configuration operation failed.",
+          ...(error.code ? { code: error.code } : {})
+        });
+      }
+      return json(res, 405, { error: "Method not allowed." });
     }
 
     const cloudAgentMatch = /^\/v1\/cloud-agents\/(gemini|openai)$/.exec(url.pathname);
@@ -1657,10 +1792,11 @@ export function createAlfieCoreServer({
         const agentProvider = ["local", "gemini", "openai"].includes(body.agentProvider) ? body.agentProvider : "local";
         const workingMode = resolveWorkingMode(body.workingMode).id;
         const projectId = typeof body.projectId === "string" && /^[a-f0-9-]{36}$/i.test(body.projectId) ? body.projectId : null;
+        const { config: userProviders } = await resolvedProviderStore.getEffectiveConfig(identity.userId);
         const result = await agentLoop.run({
           userId: identity.userId, messages: cleanMessages(body.messages),
           dashboardState: body.dashboardState || {},
-          mode: ["auto", "light", "standard", "work"].includes(body.mode) ? body.mode : providers.mode,
+          mode: ["auto", "light", "standard", "work"].includes(body.mode) ? body.mode : userProviders.mode,
           workingMode,
           projectId,
           agentProvider,
@@ -1691,7 +1827,8 @@ export function createAlfieCoreServer({
         const identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search });
         const body = await readJsonBody(req);
         const messages = cleanMessages(body.messages);
-        const requestedMode = ["auto", "light", "standard", "work"].includes(body.mode) ? body.mode : providers.mode;
+        const { config: userProviders } = await resolvedProviderStore.getEffectiveConfig(identity.userId);
+        const requestedMode = ["auto", "light", "standard", "work"].includes(body.mode) ? body.mode : userProviders.mode;
         const workingMode = resolveWorkingMode(body.workingMode).id;
         const projectId = typeof body.projectId === "string" && /^[a-f0-9-]{36}$/i.test(body.projectId) ? body.projectId : null;
         const agentProvider = ["local", "gemini", "openai"].includes(body.agentProvider) ? body.agentProvider : "local";

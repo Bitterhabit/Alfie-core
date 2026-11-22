@@ -20,7 +20,8 @@ export const KNOWN_COLLECTIONS = Object.freeze([
   "jobs.json",
   "reflections.json",
   "peer-tokens.json",
-  "playbooks.json"
+  "playbooks.json",
+  "providers.json"
 ]);
 
 const COLLECTION_SET = new Set(KNOWN_COLLECTIONS);

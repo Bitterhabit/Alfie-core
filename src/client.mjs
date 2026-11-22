@@ -202,6 +202,25 @@ export function createAlfieCoreClient({
       }
       return payload;
     },
+    getProviders(userId) { return request(userId, "/v1/providers"); },
+    getProvidersHealth(userId, { refresh = false } = {}) {
+      return request(userId, "/v1/providers/health" + (refresh ? "?refresh=1" : ""));
+    },
+    updateProviderSettings(userId, body = {}) {
+      return request(userId, "/v1/providers/settings", { method: "PUT", body });
+    },
+    addProviderEndpoint(userId, body = {}) {
+      return request(userId, "/v1/providers/endpoints", { method: "POST", body });
+    },
+    updateProviderEndpoint(userId, id, body = {}) {
+      return request(userId, "/v1/providers/endpoints/" + encodeURIComponent(id), { method: "PATCH", body });
+    },
+    removeProviderEndpoint(userId, id) {
+      return request(userId, "/v1/providers/endpoints/" + encodeURIComponent(id), { method: "DELETE" });
+    },
+    testProviderEndpoint(userId, body = {}) {
+      return request(userId, "/v1/providers/test", { method: "POST", body });
+    },
     listCloudAgents(userId) { return request(userId, "/v1/cloud-agents"); },
     updateCloudAgent(userId, provider, body = {}) {
       return request(userId, "/v1/cloud-agents/" + encodeURIComponent(provider), { method: "PATCH", body });

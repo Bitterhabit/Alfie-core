@@ -797,7 +797,31 @@ export function createAlfieInterfaceServer({
         }
         if (method === "GET" && url.pathname === "/api/core/audit") return json(res, 200, await coreClient.listAudit(userId, Number(url.searchParams.get("limit") || 50)));
         if (method === "GET" && url.pathname === "/api/core/providers") return json(res, 200, await coreClient.request(userId, "/v1/providers"));
-        if (method === "GET" && url.pathname === "/api/core/providers/health") return json(res, 200, await coreClient.request(userId, "/v1/providers/health"));
+        if (method === "GET" && url.pathname === "/api/core/providers/health") {
+          const suffix = url.searchParams.get("refresh") === "1" ? "?refresh=1" : "";
+          return json(res, 200, await coreClient.request(userId, "/v1/providers/health" + suffix));
+        }
+        if (method === "PUT" && url.pathname === "/api/core/providers/settings") {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.request(userId, "/v1/providers/settings", { method: "PUT", body: await readJson(req) }));
+        }
+        if (method === "POST" && url.pathname === "/api/core/providers/endpoints") {
+          requireCsrf(req, session);
+          return json(res, 201, await coreClient.request(userId, "/v1/providers/endpoints", { method: "POST", body: await readJson(req) }));
+        }
+        const providerEndpointMatch = /^\/api\/core\/providers\/endpoints\/([a-z0-9_-]{1,64})$/i.exec(url.pathname);
+        if (method === "PATCH" && providerEndpointMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.request(userId, "/v1/providers/endpoints/" + encodeURIComponent(providerEndpointMatch[1]), { method: "PATCH", body: await readJson(req) }));
+        }
+        if (method === "DELETE" && providerEndpointMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.request(userId, "/v1/providers/endpoints/" + encodeURIComponent(providerEndpointMatch[1]), { method: "DELETE" }));
+        }
+        if (method === "POST" && url.pathname === "/api/core/providers/test") {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.request(userId, "/v1/providers/test", { method: "POST", body: await readJson(req) }));
+        }
         if (method === "GET" && url.pathname === "/api/core/cloud-agents") {
           return json(res, 200, await coreClient.listCloudAgents(userId));
         }

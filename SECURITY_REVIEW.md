@@ -49,6 +49,10 @@ This document summarizes the security controls enforced across the standalone Al
 
 8. **Explicit confirmation for destructive vault restores (`interface/public/app.js`, `interface/public/index.html`)**
    - Restore modes are described accurately. `replace` warns which archived collections will overwrite local data and requires confirmation; collections absent from the archive are left unchanged.
+9. **Hardened provider setup & model management (`src/providers/store.mjs`, `src/providers/registry.mjs`, `src/server.mjs`, `interface/src/server.mjs`)**
+   - Provider endpoint mutations and connection tests require an authenticated session, signed Core identity, and CSRF/origin verification, and are never exposed as agent tools.
+   - Endpoint URLs enforce strict `http:`/`https:` validation, reject embedded credentials, query/fragments, and redirects (`redirect: "error"`), permanently block cloud metadata/link-local/multicast destinations, and require explicit `trustedLocal: true` opt-in for localhost or private LAN endpoints (with DNS validation before outbound calls).
+   - Optional endpoint API keys are encrypted at rest with AES-256-GCM + HKDF-SHA256 (bound to `(userId, endpointId)` AAD), redacted from upstream error messages and audit logs, and never returned to the browser. Every provider change and connection test is recorded in the user's audit log without invalidating or bypassing pending tool approvals.
 
 ## Forward-Looking Threat Model (Phase 4+)
 

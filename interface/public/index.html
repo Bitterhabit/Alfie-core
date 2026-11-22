@@ -1125,6 +1125,135 @@
       <section id="view-settings" class="view" hidden>
         <div class="view-intro"><p class="eyebrow">CORE STATUS</p><h2>Settings</h2><p class="muted">Connection, interface theme, model providers and account status.</p></div>
         <div class="settings-grid">
+          <section class="surface surface-span-2" id="settings-providers-surface" aria-labelledby="settings-providers-heading">
+            <div class="providers-panel-header">
+              <div>
+                <h3 id="settings-providers-heading">Model Providers &amp; Endpoints</h3>
+                <p class="muted">Configure Ollama and OpenAI-compatible endpoints, test connections, discover installed models, and set routing priority.</p>
+              </div>
+              <div class="providers-header-actions">
+                <button id="providers-refresh-btn" class="secondary-button" type="button">Refresh status</button>
+                <button id="provider-add-btn" class="primary-button" type="button">Add endpoint</button>
+              </div>
+            </div>
+
+            <form id="provider-routing-form" class="provider-routing-bar">
+              <div class="provider-routing-fields">
+                <label>Default routing mode
+                  <select id="provider-default-mode" name="mode" aria-label="Default routing mode">
+                    <option value="auto">Auto (Balanced)</option>
+                    <option value="light">Light (Fast)</option>
+                    <option value="standard">Standard</option>
+                    <option value="work">Work (Deep)</option>
+                  </select>
+                </label>
+                <label>Health check interval (seconds)
+                  <input id="provider-health-interval" name="healthIntervalSeconds" type="number" min="10" max="300" step="5" value="30">
+                </label>
+                <div class="provider-routing-meta">
+                  <span id="provider-config-source" class="muted">Loading provider configuration…</span>
+                  <span id="provider-routing-status" class="provider-inline-status" role="status" aria-live="polite"></span>
+                </div>
+              </div>
+              <button id="provider-routing-save-btn" class="secondary-button" type="submit">Save routing</button>
+            </form>
+
+            <div id="provider-editor-panel" class="provider-editor-panel" hidden>
+              <div class="provider-editor-head">
+                <h4 id="provider-editor-title">Add model endpoint</h4>
+                <button id="provider-editor-close-btn" class="secondary-button" type="button">Cancel</button>
+              </div>
+              <form id="provider-endpoint-form" class="provider-endpoint-form" novalidate>
+                <input id="provider-field-id" name="endpointId" type="hidden" value="">
+                <div class="provider-form-grid">
+                  <label>Display name
+                    <input id="provider-field-name" name="name" maxlength="80" placeholder="e.g. Local Ollama or Studio vLLM" required>
+                  </label>
+                  <label>Provider type
+                    <select id="provider-field-type" name="provider">
+                      <option value="ollama">Ollama (/api/tags, /api/chat)</option>
+                      <option value="openai-compatible">OpenAI-compatible (/v1/models, /v1/chat/completions)</option>
+                    </select>
+                  </label>
+                  <label class="provider-field-wide">Endpoint URL
+                    <input id="provider-field-url" name="baseUrl" type="url" maxlength="1024" placeholder="http://127.0.0.1:11434" required>
+                  </label>
+                  <label>Routing tier
+                    <select id="provider-field-mode" name="mode">
+                      <option value="light">Light (Fast)</option>
+                      <option value="standard" selected>Standard</option>
+                      <option value="work">Work (Deep)</option>
+                    </select>
+                  </label>
+                  <label>Priority (1–100, higher runs first)
+                    <input id="provider-field-priority" name="priority" type="number" min="1" max="100" value="60" required>
+                  </label>
+                  <label>Temperature (0–2)
+                    <input id="provider-field-temperature" name="temperature" type="number" min="0" max="2" step="0.1" value="0.4">
+                  </label>
+                  <label>Max tokens (64–4096)
+                    <input id="provider-field-max-tokens" name="maxTokens" type="number" min="64" max="4096" step="1" value="700">
+                  </label>
+                </div>
+
+                <div class="provider-security-row">
+                  <label class="provider-check-label">
+                    <input id="provider-field-trusted-local" name="trustedLocal" type="checkbox">
+                    <span>Trusted local / LAN endpoint (explicitly allow localhost or private network hosts; cloud metadata addresses remain blocked)</span>
+                  </label>
+                  <label class="provider-check-label">
+                    <input id="provider-field-enabled" name="enabled" type="checkbox" checked>
+                    <span>Enabled for chat routing</span>
+                  </label>
+                </div>
+
+                <div class="provider-secret-row">
+                  <label class="provider-field-wide">Bearer credential / API key (optional)
+                    <input id="provider-field-credential" name="endpointCredential" type="password" autocomplete="off" maxlength="512" placeholder="Leave blank for local keyless servers">
+                  </label>
+                  <div class="provider-secret-meta">
+                    <span id="provider-secret-hint" class="muted">Encrypted on the server and never sent back to the browser.</span>
+                    <label id="provider-clear-key-wrap" class="provider-check-label" hidden>
+                      <input id="provider-field-clear-key" name="clearEndpointCredential" type="checkbox">
+                      <span>Clear saved key on save</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="provider-model-discovery-box">
+                  <div class="provider-discovery-head">
+                    <div>
+                      <strong>Connection check &amp; model selection</strong>
+                      <p class="muted">Test connectivity before saving to verify availability and populate installed models.</p>
+                    </div>
+                    <button id="provider-test-btn" class="secondary-button" type="button">Test connection</button>
+                  </div>
+                  <div id="provider-test-result" class="provider-test-result" role="status" aria-live="polite" hidden></div>
+                  <div class="provider-model-grid">
+                    <label>Discovered models
+                      <select id="provider-field-model-select" aria-label="Discovered models">
+                        <option value="">Run Test connection to discover installed models…</option>
+                      </select>
+                    </label>
+                    <label>Selected model name
+                      <input id="provider-field-model" name="model" maxlength="200" placeholder="e.g. qwen2.5:14b or llama-3.3-70b">
+                    </label>
+                  </div>
+                </div>
+
+                <p id="provider-form-error" class="error-message" role="alert"></p>
+                <div class="provider-editor-footer">
+                  <button id="provider-cancel-btn" class="secondary-button" type="button">Cancel</button>
+                  <button id="provider-save-btn" class="primary-button" type="submit">Save endpoint</button>
+                </div>
+              </form>
+            </div>
+
+            <div id="provider-endpoints-list" class="provider-endpoints-grid" aria-live="polite">
+              <p class="muted">Loading configured model endpoints…</p>
+            </div>
+          </section>
+
           <section class="surface" id="settings-theme-surface">
             <h3>Interface Theme</h3>
             <p class="muted">Toggle between Alfie's dark violet theme and crisp light theme.</p>
@@ -1543,7 +1672,6 @@
             </div>
           </section>
           <section class="surface"><h3>Account connection</h3><div id="account-status" class="settings-value">Checking…</div></section>
-          <section class="surface"><h3>Model providers</h3><div id="provider-status" class="item-list"></div></section>
           <section class="surface"><h3>Core capabilities</h3><div id="core-status" class="item-list"></div></section>
           <section class="surface"><h3>Change password</h3><form id="password-form" class="stack"><label>Current password<input name="currentPassword" type="password" autocomplete="current-password" minlength="6" maxlength="256" required></label><label>New password<input name="newPassword" type="password" autocomplete="new-password" minlength="16" maxlength="256" required></label><label>Confirm new password<input name="confirmPassword" type="password" autocomplete="new-password" minlength="16" maxlength="256" required></label><button class="secondary-button" type="submit">Update password</button><p class="muted">Changing your password signs out all active sessions, including this one.</p><p id="password-error" class="error-message" role="alert"></p></form></section>
         </div>
