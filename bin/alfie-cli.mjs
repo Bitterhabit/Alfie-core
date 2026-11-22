@@ -17,7 +17,7 @@ function printUsage() {
     "Alfie Peer Quick-Capture CLI",
     "",
     "Environment:",
-    "  ALFIE_URL    Base URL of Alfie Interface or Core (default: http://127.0.0.1:3000)",
+    "  ALFIE_URL    Base URL of the Alfie Interface (default: http://127.0.0.1:3000)",
     "  ALFIE_TOKEN  Scoped personal Peer Token (alf_...)",
     "",
     "Commands:",
