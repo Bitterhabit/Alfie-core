@@ -118,7 +118,8 @@ export class PeerTokenStore {
       const nowMs = Date.parse(nowIso);
       const activeCount = store.tokens.filter((token) => {
         if (token.revokedAt) return false;
-        if (!token.expiresAt) return true;
+        if (token.expiresAt === null || token.expiresAt === undefined) return true;
+        if (typeof token.expiresAt !== "string") return false;
         const expiresAtMs = Date.parse(token.expiresAt);
         return Number.isFinite(expiresAtMs) && expiresAtMs > nowMs;
       }).length;
@@ -187,7 +188,8 @@ export class PeerTokenStore {
       if (rec.revokedAt) return null;
 
       const nowIso = this.now();
-      if (rec.expiresAt) {
+      if (rec.expiresAt !== null && rec.expiresAt !== undefined) {
+        if (typeof rec.expiresAt !== "string") return null;
         const expiresAtMs = Date.parse(rec.expiresAt);
         if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.parse(nowIso)) return null;
       }
