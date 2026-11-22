@@ -5,11 +5,12 @@ import path from "node:path";
 import os from "node:os";
 import { ToolRegistry } from "../src/tools/registry.mjs";
 import { registerModularConnectorTools } from "../src/integrations/modularConnectors.mjs";
+import { safeUserKey } from "../src/storage/userJsonStore.mjs";
 
 test("notes.write refuses symlink targets and does not modify the linked file", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-note-symlink-"));
   const userId = "test-user";
-  const notesDir = path.join(root, "users", userId, "notes");
+  const notesDir = path.join(root, "users", safeUserKey(userId), "notes");
   const outside = path.join(root, "outside.txt");
   await fs.mkdir(notesDir, { recursive: true });
   await fs.writeFile(outside, "outside-safe");
@@ -35,7 +36,7 @@ test("notes.write creates confined notes with restrictive permissions", async ()
   const tool = registry.tools.get("notes.write");
 
   const result = await tool.handler({ name: "test-note", content: "hello" }, { userId });
-  const file = path.join(root, "users", userId, "notes", "test-note.md");
+  const file = path.join(root, "users", safeUserKey(userId), "notes", "test-note.md");
   assert.equal(result.saved, true);
   assert.equal(await fs.readFile(file, "utf8"), "hello");
   assert.equal((await fs.stat(file)).mode & 0o777, 0o600);
