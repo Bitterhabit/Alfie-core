@@ -210,7 +210,8 @@ test("POST /api/telemetry/vram enforces bearer token auth and streams external P
     headers: { "content-type": "application/json", cookie, origin: uiUrl, "x-csrf-token": csrfToken },
     body: JSON.stringify({})
   });
-  assert.equal(standaloneRes.status, 201);
+  const standalonePayload = await standaloneRes.json();
+  assert.equal(standaloneRes.status, 201, JSON.stringify(standalonePayload));
 
   const vramRes = await fetch(`${uiUrl}/api/core/system/vram`, {
     headers: { cookie }
