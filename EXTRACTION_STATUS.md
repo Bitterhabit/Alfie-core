@@ -3,11 +3,11 @@
 Last reviewed: 22 November 2026  
 Repository: Bitterhabit/Alfie-core  
 Current main commit at release-preparation start: 33d7307fc07a10140c6f629b4228f7188c244c5b  
-Release-preparation versions: `@alfie/core 1.0.0`, `@alfie/interface 1.0.0` (PR #17 CI passed; merge and deployment acceptance pending)
+Main versions: `@alfie/core 1.0.0`, `@alfie/interface 1.0.0` (PR #17 merged; deployment acceptance pending)
 
 ## Current state
 
-Alfie Core is an independent Node.js service with a separate standalone web interface. Phases 1–6 in `docs/ROADMAP.md` describe the implemented capability set. The main branch includes the security and reliability hardening merged through PR #16.
+Alfie Core is an independent Node.js service with a separate standalone web interface. Phases 1–6 in `docs/ROADMAP.md` describe the implemented capability set. The main branch includes the security and reliability hardening merged through PR #16 and the 1.0.0 release-preparation metadata from PR #17.
 
 The service boundary remains deliberate:
 
@@ -50,14 +50,15 @@ Squash merge commits on main:
 - PR #14: `99eebc7a9db9ec5ff283e301790495f77d26b9be`
 - PR #15: `aa8817e000b58fca1c3ae8b7735bd21d59fadb18`
 - PR #16: `33d7307fc07a10140c6f629b4228f7188c244c5b`
+- PR #17: `d7eed92930e28e9d6536945b7cde80dc67f3307a`
 
 These are repository changes and CI results, not evidence of a live homelab deployment.
 
 ## Remaining 1.0 release gates
 
-1. **Merge the 1.0.0 preparation change.** PRs #8–#16 are merged. PR #17 aligns package and image versions and adds release notes; all CI steps, including both container smoke tests, passed on commit `aebafa4c51d20b024ed9fcc8bd987617ae83cda1`. Review/merge and deployment acceptance remain.
+1. **1.0.0 preparation is merged.** PR #17 aligns package and image versions and adds release notes. All CI steps, including both container smoke tests, passed on its tested code commit `aebafa4c51d20b024ed9fcc8bd987617ae83cda1`; the documentation-only status corrections were included before merge. The merge commit is `d7eed92930e28e9d6536945b7cde80dc67f3307a`.
 2. **Keep the release untagged until acceptance.** Do not create the `v1.0.0` tag or call this a completed release until the homelab deployment, real provider, user workflows and restore rehearsal below have passed. PR #2 (`Stabilise Alfie 0.9.0 release`) remains an obsolete draft and is not a release candidate.
-3. **Deploy to the target homelab.** Pull the approved main commit, rebuild both containers, verify volume ownership/persistence, confirm the Core has no published host port, and verify the Interface is reachable only through the intended trusted ingress.
+3. **Deploy to the target homelab.** Pull main at or beyond `d7eed92930e28e9d6536945b7cde80dc67f3307a`, rebuild both containers, verify volume ownership/persistence, confirm the Core has no published host port, and verify the Interface is reachable only through the intended trusted ingress.
 4. **Validate ingress and browser security.** Confirm the public origin is HTTPS, secure cookies work, CSRF/origin checks pass, and proxy-header trust is enabled only when the Interface is reachable exclusively through a proxy that overwrites those headers.
 5. **Exercise a real model provider.** Configure the intended local or remote provider and verify health, a normal chat, a longer response, provider-unavailable behaviour and recovery after the provider returns. CI uses test providers; it does not validate the user's actual model endpoint or model performance.
 6. **Run the user-facing acceptance checks.** Verify first-run setup, login, password change/recovery, conversation persistence, memory create/edit/forget and provenance, permission grants, draft/approve/reject flows, job cancellation, watcher checks/quiet hours, peer token creation/revocation, and mobile navigation.
