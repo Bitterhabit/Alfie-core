@@ -537,6 +537,52 @@ export async function writeUserSqliteDocument(dataDirectory, userId, collection,
   }
 }
 
+
+/**
+ * Applies a set of user document replacements in one SQLite transaction.
+ * Search and graph indexes are updated in the same transaction as the documents.
+ */
+export async function writeUserSqliteDocuments(dataDirectory, userId, documents) {
+  safeUserKey(userId);
+  if (!Array.isArray(documents) || documents.some((entry) =>
+    !entry || typeof entry.collection !== "string" || !COLLECTION_SET.has(entry.collection) ||
+    !Object.prototype.hasOwnProperty.call(entry, "payload")
+  )) {
+    throw new TypeError("A valid collection document batch is required.");
+  }
+  const { db } = await openUserDb(dataDirectory, userId);
+  const updatedAt = new Date().toISOString();
+  const write = db.prepare(
+    `INSERT INTO user_documents (collection, payload_json, revision, updated_at, migrated_from, legacy_mtime_ms)
+     VALUES (?, ?, 1, ?, NULL, NULL)
+     ON CONFLICT(collection) DO UPDATE SET
+       payload_json = excluded.payload_json,
+       revision = user_documents.revision + 1,
+       updated_at = excluded.updated_at`
+  );
+  try {
+    const results = [];
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const { collection, payload } of documents) {
+        const serialized = JSON.stringify(payload);
+        if (serialized === undefined) throw new TypeError(`Collection ${collection} is not JSON serializable.`);
+        write.run(collection, serialized, updatedAt);
+        const revision = Number(db.prepare("SELECT revision FROM user_documents WHERE collection = ?").get(collection)?.revision || 1);
+        const indexedRows = indexCollectionTx(db, collection, payload, updatedAt);
+        results.push({ collection, revision, updatedAt, indexedRows });
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      try { db.exec("ROLLBACK"); } catch {}
+      throw error;
+    }
+    return results;
+  } finally {
+    db.close();
+  }
+}
+
 export async function migrateUserStorageToSqlite(dataDirectory, userId) {
   safeUserKey(userId);
   const migratedCollections = [];
