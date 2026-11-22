@@ -20,7 +20,7 @@ jobs:
         with:
           node-version: 22
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Run tests
         run: npm test
       - name: Check standalone browser script syntax
