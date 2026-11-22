@@ -1,6 +1,9 @@
 FROM node:22-bookworm-slim
 
 ENV NODE_ENV=production
+LABEL org.opencontainers.image.title="Alfie Interface" \
+      org.opencontainers.image.version="1.0.0" \
+      org.opencontainers.image.source="https://github.com/Bitterhabit/Alfie-core"
 WORKDIR /app
 
 COPY --chown=node:node src ./src
