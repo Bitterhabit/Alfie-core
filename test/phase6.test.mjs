@@ -22,6 +22,7 @@ import { PendingActionStore } from "../src/agent/pendingActionStore.mjs";
 import { AsyncJobStore, AsyncJobEngine } from "../src/jobs/engine.mjs";
 import { ReflectionStore } from "../src/reflections/generator.mjs";
 import { AuditStore } from "../src/audit/store.mjs";
+import { readUserJsonDocument, writeUserJsonDocument } from "../src/storage/userJsonStore.mjs";
 
 async function tempDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), "alfie-phase6-"));
@@ -338,4 +339,50 @@ test("Phase 6.5 & HTTP E2E: Continuity Timeline, Markdown Digest Export, and Cor
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+
+test("Vault merge chooses newer backup records while retaining newer local records", async () => {
+  const dir = await tempDir();
+  const userId = "vault-merge-timestamps";
+  const passphrase = "Timestamp-Vault-Backup-Strong-2026!";
+  const memoryStore = new MemoryStore({ dataDirectory: dir });
+  const backupMemory = await memoryStore.create(userId, { kind: "note", text: "Backup version" });
+  const exported = await exportEncryptedVault({ dataDirectory: dir, userId, passphrase });
+
+  const doc = await readUserJsonDocument(dir, userId, "memories.json");
+  const localBackupRecord = doc.memories.find((item) => item.id === backupMemory.id);
+  localBackupRecord.text = "Older local duplicate";
+  localBackupRecord.updatedAt = "2026-11-20T10:00:00.000Z";
+  doc.memories.push({
+    id: "local-newer-record",
+    kind: "note",
+    text: "Newer local-only record",
+    createdAt: "2026-11-20T10:00:00.000Z",
+    updatedAt: "2026-11-22T18:00:00.000Z"
+  });
+  await writeUserJsonDocument(dir, userId, "memories.json", doc);
+
+  await restoreEncryptedVault({ dataDirectory: dir, userId, archive: exported.archive, passphrase, mode: "merge" });
+  const restored = await readUserJsonDocument(dir, userId, "memories.json");
+  assert.equal(restored.memories.find((item) => item.id === backupMemory.id).text, "Backup version");
+  assert.equal(restored.memories.find((item) => item.id === "local-newer-record").text, "Newer local-only record");
+});
+
+test("Vault replace clears collections omitted from archive", async () => {
+  const dir = await tempDir();
+  const userId = "vault-replace-omitted";
+  const passphrase = "Replace-Vault-Archive-Strong-2026!";
+  const exported = await exportEncryptedVault({ dataDirectory: dir, userId, passphrase });
+
+  await writeUserJsonDocument(dir, userId, "watchers.json", {
+    schemaVersion: 1,
+    ownerId: userId,
+    watchers: [{ id: "local-watcher", name: "Must be removed" }]
+  });
+
+  const result = await restoreEncryptedVault({ dataDirectory: dir, userId, archive: exported.archive, passphrase, mode: "replace" });
+  assert.equal(result.mode, "replace");
+  assert.ok(result.restoredCollections.includes("watchers.json"));
+  assert.equal(await readUserJsonDocument(dir, userId, "watchers.json"), null);
 });
