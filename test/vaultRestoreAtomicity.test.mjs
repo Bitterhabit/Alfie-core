@@ -54,4 +54,27 @@ describe("atomic vault restore", () => {
       await rm(sourceDirectory, { recursive: true, force: true });
     }
   });
+  it("compensates JSON fallback writes when a later document fails", async () => {
+    const dataDirectory = await mkdtemp(path.join(tmpdir(), "alfie-vault-json-rollback-"));
+    try {
+      await writeUserJsonDocuments(dataDirectory, "alice", [
+        { filename: "memories.json", data: { ownerId: "alice", memories: [{ id: "original" }] } }
+      ], { backend: "json" });
+
+      await assert.rejects(
+        writeUserJsonDocuments(dataDirectory, "alice", [
+          { filename: "memories.json", data: { ownerId: "alice", memories: [{ id: "replacement" }] } },
+          { filename: "projects.json", data: { ownerId: "alice", projects: [1n] } }
+        ], { backend: "json" }),
+        /BigInt|serialize/i
+      );
+
+      const memories = await readUserJsonDocument(dataDirectory, "alice", "memories.json", { backend: "json" });
+      const projects = await readUserJsonDocument(dataDirectory, "alice", "projects.json", { backend: "json" });
+      assert.deepEqual(memories.memories, [{ id: "original" }]);
+      assert.equal(projects, null);
+    } finally {
+      await rm(dataDirectory, { recursive: true, force: true });
+    }
+  });
 });
