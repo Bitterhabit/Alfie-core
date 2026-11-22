@@ -3,7 +3,7 @@
 Last reviewed: 22 November 2026  
 Repository: Bitterhabit/Alfie-core  
 Current main commit at release-preparation start: 33d7307fc07a10140c6f629b4228f7188c244c5b  
-Release-preparation versions: `@alfie/core 1.0.0`, `@alfie/interface 1.0.0` (pending merge, CI and deployment acceptance)
+Release-preparation versions: `@alfie/core 1.0.0`, `@alfie/interface 1.0.0` (PR #17 CI passed; merge and deployment acceptance pending)
 
 ## Current state
 
@@ -55,7 +55,7 @@ These are repository changes and CI results, not evidence of a live homelab depl
 
 ## Remaining 1.0 release gates
 
-1. **Merge the 1.0.0 preparation change.** PRs #8–#16 are merged. This release-preparation branch aligns package and image versions and adds release notes; it still needs CI and review.
+1. **Merge the 1.0.0 preparation change.** PRs #8–#16 are merged. PR #17 aligns package and image versions and adds release notes; all CI steps, including both container smoke tests, passed on commit `aebafa4c51d20b024ed9fcc8bd987617ae83cda1`. Review/merge and deployment acceptance remain.
 2. **Keep the release untagged until acceptance.** Do not create the `v1.0.0` tag or call this a completed release until the homelab deployment, real provider, user workflows and restore rehearsal below have passed. PR #2 (`Stabilise Alfie 0.9.0 release`) remains an obsolete draft and is not a release candidate.
 3. **Deploy to the target homelab.** Pull the approved main commit, rebuild both containers, verify volume ownership/persistence, confirm the Core has no published host port, and verify the Interface is reachable only through the intended trusted ingress.
 4. **Validate ingress and browser security.** Confirm the public origin is HTTPS, secure cookies work, CSRF/origin checks pass, and proxy-header trust is enabled only when the Interface is reachable exclusively through a proxy that overwrites those headers.
