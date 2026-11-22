@@ -6,7 +6,7 @@ import {
   scryptSync,
   timingSafeEqual
 } from "node:crypto";
-import { readUserJsonDocument, writeUserJsonDocument } from "../storage/userJsonStore.mjs";
+import { readUserJsonDocument, writeUserJsonDocuments } from "../storage/userJsonStore.mjs";
 
 export const VAULT_FORMAT = "alfie-sovereign-vault";
 export const VAULT_FORMAT_VERSION = 1;
@@ -344,21 +344,24 @@ export async function restoreEncryptedVault({
 }) {
   const cleanMode = mode === "replace" ? "replace" : "merge";
   const verified = decryptVaultArchive(archive, userId, passphrase);
-  const restoredCollections = [];
-
   const restoreSet = cleanMode === "replace"
     ? VAULT_COLLECTIONS.map((collection) => [collection, verified.collections[collection] ?? null])
     : Object.entries(verified.collections);
 
+  // Prepare every document before writing anything. SQLite applies the batch
+  // transactionally; the JSON backend performs compensating rollback.
+  const documents = [];
   for (const [collection, incomingDoc] of restoreSet) {
     let nextDoc = incomingDoc;
     if (cleanMode === "merge") {
       const existingDoc = await readUserJsonDocument(dataDirectory, userId, collection);
       nextDoc = mergeCollectionDocument(collection, existingDoc, incomingDoc);
     }
-    await writeUserJsonDocument(dataDirectory, userId, collection, nextDoc);
-    restoredCollections.push(collection);
+    documents.push({ filename: collection, data: nextDoc });
   }
+
+  await writeUserJsonDocuments(dataDirectory, userId, documents);
+  const restoredCollections = documents.map(({ filename }) => filename);
 
   return {
     restored: true,
