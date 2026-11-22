@@ -90,22 +90,23 @@ function buildDeterministicProjectBrief({ userText, project, workingMode }) {
   if (project.vision) sections.push(`**Vision:** ${project.vision}`);
   if (project.description) sections.push(`**Shared Notes:** ${project.description}`);
   if (project.architecture) sections.push(`**Architecture:** ${project.architecture}`);
-  if (project.nextActions?.length) sections.push("**Next Recommended Actions:**\\n" + project.nextActions.map((item) => `• ${item}`).join("\\n"));
-  if (project.blockers?.length) sections.push("**Current Blockers:**\\n" + project.blockers.map((item) => `• ${item}`).join("\\n"));
-  if (project.decisions?.length) sections.push("**Recorded Decisions:**\\n" + project.decisions.slice(-5).map((decision) =>
+  if (project.nextActions?.length) sections.push("**Next Recommended Actions:**\n" + project.nextActions.map((item) => `• ${item}`).join("\n"));
+  if (project.blockers?.length) sections.push("**Current Blockers:**\n" + project.blockers.map((item) => `• ${item}`).join("\n"));
+  if (project.decisions?.length) sections.push("**Recorded Decisions:**\n" + project.decisions.slice(-5).map((decision) =>
     decision.rationale ? `• **${decision.summary}** — ${decision.rationale}` : `• **${decision.summary}**`
-  ).join("\\n"));
-  if (project.postponed?.length) sections.push("**Deliberately Postponed:**\\n" + project.postponed.map((item) => `• ${item}`).join("\\n"));
+  ).join("\n"));
+  if (project.postponed?.length) sections.push("**Deliberately Postponed:**\n" + project.postponed.map((item) => `• ${item}`).join("\n"));
   if (sections.length === 1) {
     sections.push("No Vision, Architecture, Next Actions, Blockers, or Decisions have been recorded in this dossier yet. Open **Dossier** in the chat bar to capture your current state so future briefings stay grounded.");
   }
   sections.push(`*Mode: ${workingMode?.label || "Companion"} · Grounded directly in your Living Project Dossier.*`);
-  const message = sections.join("\\n\\n");
+  const message = sections.join("\n\n");
+  const completionTokens = Math.max(1, Math.round(message.length / 4));
   return {
     endpoint: { id: "alfie-core-dossier", model: "deterministic-project-brief", provider: "alfie-core" },
     result: {
       content: JSON.stringify({ type: "final", message }),
-      raw: { usage: { prompt_tokens: 24, completion_tokens: Math.max(1, Math.round(message.length / 4)), total_tokens: 0 } }
+      raw: { usage: { prompt_tokens: 24, completion_tokens: completionTokens, total_tokens: 24 + completionTokens } }
     }
   };
 }
