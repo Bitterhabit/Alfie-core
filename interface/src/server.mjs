@@ -215,6 +215,28 @@ export function createAlfieInterfaceServer({
     return String(forwardedIp || req.socket.remoteAddress || "unknown").slice(0, 100);
   }
 
+  // Reserve an attempt synchronously before password/recovery hashing yields.
+  // Counting only after a failure lets concurrent requests all pass the limit.
+  function consumeAuthAttempt(ip, message) {
+    const currentTime = now();
+    for (const [key, value] of loginAttempts) {
+      if (value.resetAt <= currentTime) loginAttempts.delete(key);
+    }
+    while (loginAttempts.size >= 5000 && !loginAttempts.has(ip)) {
+      loginAttempts.delete(loginAttempts.keys().next().value);
+    }
+    const current = loginAttempts.get(ip);
+    if (current && current.resetAt > currentTime && current.count >= 5) {
+      return false;
+    }
+    const bucket = current && current.resetAt > currentTime
+      ? current
+      : { count: 0, resetAt: currentTime + 10 * 60 * 1000 };
+    bucket.count += 1;
+    loginAttempts.set(ip, bucket);
+    return true;
+  }
+
   async function sessionFor(req) {
     const token = cookies(req.headers.cookie)[COOKIE_NAME];
     if (!token) return null;
@@ -319,29 +341,14 @@ export function createAlfieInterfaceServer({
             return json(res, 403, { error: "Request origin was not accepted." });
           }
           const ip = clientIp(req);
-          // Expired buckets are discarded and the map is bounded against random-IP memory growth.
-          for (const [key, value] of loginAttempts) {
-            if (value.resetAt <= now()) loginAttempts.delete(key);
-          }
-          while (loginAttempts.size >= 5000) loginAttempts.delete(loginAttempts.keys().next().value);
-          const current = loginAttempts.get(ip);
-          if (current && current.resetAt > now() && current.count >= 5) {
+          if (!consumeAuthAttempt(ip)) {
             return json(res, 429, { error: "Too many sign-in attempts. Wait ten minutes before trying again." });
           }
           const body = await readJson(req);
-          try {
-            const result = await authStore.login(body.username, body.password, { ip });
-            loginAttempts.delete(ip);
-            setSessionCookie(res, result.token, cookieSecure);
-            return json(res, 200, { authenticated: true, user: result.user, csrfToken: result.csrfToken });
-          } catch (error) {
-            const attempt = current && current.resetAt > now()
-              ? current
-              : { count: 0, resetAt: now() + 10 * 60 * 1000 };
-            attempt.count += 1;
-            loginAttempts.set(ip, attempt);
-            throw error;
-          }
+          const result = await authStore.login(body.username, body.password, { ip });
+          loginAttempts.delete(ip);
+          setSessionCookie(res, result.token, cookieSecure);
+          return json(res, 200, { authenticated: true, user: result.user, csrfToken: result.csrfToken });
         }
 
         if (method === "POST" && url.pathname === "/api/auth/password") {
@@ -359,28 +366,14 @@ export function createAlfieInterfaceServer({
             return json(res, 403, { error: "Request origin was not accepted." });
           }
           const ip = clientIp(req);
-          for (const [key, value] of loginAttempts) {
-            if (value.resetAt <= now()) loginAttempts.delete(key);
-          }
-          while (loginAttempts.size >= 5000) loginAttempts.delete(loginAttempts.keys().next().value);
-          const current = loginAttempts.get(ip);
-          if (current && current.resetAt > now() && current.count >= 5) {
+          if (!consumeAuthAttempt(ip)) {
             return json(res, 429, { error: "Too many recovery attempts. Wait ten minutes before trying again." });
           }
           const body = await readJson(req);
-          try {
-            const result = await authStore.recoverWithCode(body.username, body.recoveryCode, body.newPassword);
-            loginAttempts.delete(ip);
-            clearSessionCookie(res, cookieSecure);
-            return json(res, 200, result);
-          } catch (error) {
-            const attempt = current && current.resetAt > now()
-              ? current
-              : { count: 0, resetAt: now() + 10 * 60 * 1000 };
-            attempt.count += 1;
-            loginAttempts.set(ip, attempt);
-            throw error;
-          }
+          const result = await authStore.recoverWithCode(body.username, body.recoveryCode, body.newPassword);
+          loginAttempts.delete(ip);
+          clearSessionCookie(res, cookieSecure);
+          return json(res, 200, result);
         }
 
         if (method === "GET" && url.pathname === "/api/auth/recovery-status") {
