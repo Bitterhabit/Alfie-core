@@ -162,6 +162,7 @@ export class WatcherStore {
     this.now = now;
     this.uuid = uuid;
     this.mutex = new UserMutex();
+    this.checkLocks = new Map();
   }
 
   watchersFile(userId) {
@@ -174,6 +175,21 @@ export class WatcherStore {
 
   async exclusive(userId, operation) {
     return this.mutex.run(safeUserKey(userId), operation);
+  }
+
+  async withWatcherCheckLock(userId, watcherId, operation) {
+    const key = `${safeUserKey(userId)}:${watcherId}`;
+    const previous = this.checkLocks.get(key) || Promise.resolve();
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    this.checkLocks.set(key, gate);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.checkLocks.get(key) === gate) this.checkLocks.delete(key);
+    }
   }
 
   async loadWatchers(userId) {
@@ -269,7 +285,7 @@ export class WatcherStore {
     if (!input || typeof input !== "object" || Array.isArray(input)) {
       throw Object.assign(new Error("Watcher update payload must be an object."), { status: 400 });
     }
-    return this.exclusive(userId, async () => {
+    return this.withWatcherCheckLock(userId, watcherId, async () => this.exclusive(userId, async () => {
       const store = await this.loadWatchers(userId);
       const index = store.watchers.findIndex((item) => item.id === watcherId);
       if (index < 0) throw Object.assign(new Error("Watcher not found."), { status: 404 });
@@ -287,14 +303,14 @@ export class WatcherStore {
       store.watchers[index] = next;
       await this.saveWatchers(userId, store);
       return next;
-    });
+    }));
   }
 
   async remove(userId, watcherId) {
     if (!UUID_PATTERN.test(String(watcherId || ""))) {
       throw Object.assign(new Error("Watcher not found."), { status: 404 });
     }
-    return this.exclusive(userId, async () => {
+    return this.withWatcherCheckLock(userId, watcherId, async () => this.exclusive(userId, async () => {
       const store = await this.loadWatchers(userId);
       const before = store.watchers.length;
       store.watchers = store.watchers.filter((item) => item.id !== watcherId);
@@ -303,7 +319,7 @@ export class WatcherStore {
       }
       await this.saveWatchers(userId, store);
       return { deleted: true, id: watcherId };
-    });
+    }));
   }
 
   async recordEvaluation(userId, watcherId, evaluation) {
@@ -369,27 +385,31 @@ export class WatcherStore {
   }
 
   async runCheck(userId, watcherId, dependencies = {}) {
-    const watcher = await this.get(userId, watcherId);
-    const evaluation = await evaluateWatcher(watcher, {
-      userId,
-      projectStore: dependencies.projectStore || null,
-      vramMonitor: dependencies.vramMonitor || null,
-      endpoints: dependencies.endpoints || [],
-      ...(dependencies.dnsLookup ? { dnsLookup: dependencies.dnsLookup } : {}),
-      ...(dependencies.requestImpl ? { requestImpl: dependencies.requestImpl } : {}),
-      ...(dependencies.tlsOptions ? { tlsOptions: dependencies.tlsOptions } : {}),
-      now: this.now
+    return this.withWatcherCheckLock(userId, watcherId, async () => {
+      const watcher = await this.get(userId, watcherId);
+      const evaluation = await evaluateWatcher(watcher, {
+        userId,
+        projectStore: dependencies.projectStore || null,
+        vramMonitor: dependencies.vramMonitor || null,
+        endpoints: dependencies.endpoints || [],
+        ...(dependencies.dnsLookup ? { dnsLookup: dependencies.dnsLookup } : {}),
+        ...(dependencies.requestImpl ? { requestImpl: dependencies.requestImpl } : {}),
+        ...(dependencies.tlsOptions ? { tlsOptions: dependencies.tlsOptions } : {}),
+        now: this.now
+      });
+      return this.recordEvaluation(userId, watcherId, evaluation);
     });
-    return this.recordEvaluation(userId, watcherId, evaluation);
   }
 
   async ingestMetric(userId, watcherId, reading = {}) {
-    const watcher = await this.get(userId, watcherId);
-    if (watcher.kind !== "push_metric") {
-      throw Object.assign(new Error("Only push_metric watchers accept pushed metric readings."), { status: 400 });
-    }
-    const evaluation = evaluatePushMetricReading(watcher, reading);
-    return this.recordEvaluation(userId, watcherId, evaluation);
+    return this.withWatcherCheckLock(userId, watcherId, async () => {
+      const watcher = await this.get(userId, watcherId);
+      if (watcher.kind !== "push_metric") {
+        throw Object.assign(new Error("Only push_metric watchers accept pushed metric readings."), { status: 400 });
+      }
+      const evaluation = evaluatePushMetricReading(watcher, reading);
+      return this.recordEvaluation(userId, watcherId, evaluation);
+    });
   }
 
   async listEvents(userId, { tier = "", unacknowledged = false, limit = 50 } = {}) {

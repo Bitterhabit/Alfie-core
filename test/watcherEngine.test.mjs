@@ -161,3 +161,122 @@ test("WatcherStore runs deterministic checks, stamps external_untrusted provenan
 
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+
+test("WatcherStore serializes overlapping checks for the same watcher", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-watcher-race-"));
+  const watcherStore = new WatcherStore({ dataDirectory: dir });
+  const watcher = await watcherStore.create("race-user", {
+    name: "Concurrent GPU Monitor",
+    kind: "vram_threshold",
+    tier: "notify",
+    config: { thresholdPercent: 80 }
+  });
+
+  let calls = 0;
+  let active = 0;
+  let maxActive = 0;
+  let firstEntered;
+  const firstStarted = new Promise((resolve) => { firstEntered = resolve; });
+  const monitor = {
+    async inspect() {
+      calls += 1;
+      const call = calls;
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      if (call === 1) firstEntered();
+      try {
+        if (call === 1) await new Promise((resolve) => setTimeout(resolve, 40));
+        return { available: true, percent: call === 1 ? 95 : 55, gpuName: "Test GPU" };
+      } finally {
+        active -= 1;
+      }
+    }
+  };
+
+  try {
+    const first = watcherStore.runCheck("race-user", watcher.id, { vramMonitor: monitor });
+    await firstStarted;
+    const second = watcherStore.runCheck("race-user", watcher.id, { vramMonitor: monitor });
+    await Promise.all([first, second]);
+
+    assert.equal(calls, 2);
+    assert.equal(maxActive, 1, "checks for one watcher must not overlap");
+    const finalWatcher = await watcherStore.get("race-user", watcher.id);
+    assert.equal(finalWatcher.lastStatus, "ok");
+    assert.match(finalWatcher.lastSummary, /55%/);
+    const events = await watcherStore.listEvents("race-user", { limit: 2 });
+    assert.equal(events.length, 2);
+    assert.equal(events[0].severity, "ok");
+    assert.equal(events[1].severity, "alert");
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+test("WatcherStore serializes edits and deletion with in-flight checks", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-watcher-mutations-"));
+  const watcherStore = new WatcherStore({ dataDirectory: dir });
+  const watcher = await watcherStore.create("mutation-user", {
+    name: "Mutable GPU Monitor",
+    kind: "vram_threshold",
+    tier: "notify",
+    config: { thresholdPercent: 80 }
+  });
+
+  const originalExclusive = watcherStore.exclusive.bind(watcherStore);
+  let trackExclusive = false;
+  let exclusiveCalls = 0;
+  watcherStore.exclusive = (userId, operation) => {
+    if (trackExclusive) exclusiveCalls += 1;
+    return originalExclusive(userId, operation);
+  };
+
+  let releaseInspect;
+  let signalInspect;
+  const inspectStarted = new Promise((resolve) => { signalInspect = resolve; });
+  const inspectGate = new Promise((resolve) => { releaseInspect = resolve; });
+  const monitor = {
+    async inspect() {
+      signalInspect();
+      await inspectGate;
+      return { available: true, percent: 95, gpuName: "Test GPU" };
+    }
+  };
+  let releaseSecondInspect;
+
+  try {
+    const check = watcherStore.runCheck("mutation-user", watcher.id, { vramMonitor: monitor });
+    await inspectStarted;
+    trackExclusive = true;
+    const update = watcherStore.update("mutation-user", watcher.id, { enabled: false });
+    await Promise.resolve();
+    assert.equal(exclusiveCalls, 0, "update must wait for the active check lock");
+    releaseInspect();
+    await Promise.all([check, update]);
+    assert.equal((await watcherStore.get("mutation-user", watcher.id)).enabled, false);
+
+    let signalSecondInspect;
+    const secondStarted = new Promise((resolve) => { signalSecondInspect = resolve; });
+    const secondGate = new Promise((resolve) => { releaseSecondInspect = resolve; });
+    const secondMonitor = {
+      async inspect() {
+        signalSecondInspect();
+        await secondGate;
+        return { available: true, percent: 55, gpuName: "Test GPU" };
+      }
+    };
+    const secondCheck = watcherStore.runCheck("mutation-user", watcher.id, { vramMonitor: secondMonitor });
+    await secondStarted;
+    exclusiveCalls = 0;
+    const remove = watcherStore.remove("mutation-user", watcher.id);
+    await Promise.resolve();
+    assert.equal(exclusiveCalls, 0, "deletion must wait for the active check lock");
+    releaseSecondInspect();
+    await Promise.all([secondCheck, remove]);
+    await assert.rejects(() => watcherStore.get("mutation-user", watcher.id), (error) => error.status === 404);
+  } finally {
+    releaseInspect();
+    releaseSecondInspect?.();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
