@@ -7,7 +7,7 @@ Release-preparation versions: `@alfie/core 1.0.0`, `@alfie/interface 1.0.0` (pen
 
 ## Current state
 
-Alfie Core is an independent Node.js service with a separate standalone web interface. Phases 1–6 in `docs/ROADMAP.md` describe the implemented capability set. The main branch includes the security and reliability hardening merged through PR #7.
+Alfie Core is an independent Node.js service with a separate standalone web interface. Phases 1–6 in `docs/ROADMAP.md` describe the implemented capability set. The main branch includes the security and reliability hardening merged through PR #16.
 
 The service boundary remains deliberate:
 
@@ -52,10 +52,11 @@ Squash merge commits on main:
 - PR #16: `33d7307fc07a10140c6f629b4228f7188c244c5b`
 
 These are repository changes and CI results, not evidence of a live homelab deployment.
+
 ## Remaining 1.0 release gates
 
-1. **Review and merge the hardening PRs.** Confirm the current diff and checks for PRs #8–#15. PR #2 (`Stabilise Alfie 0.9.0 release`) is an old draft based on an earlier main commit and is not a release candidate; do not merge it as a shortcut to versioning.
-2. **Prepare a clean 1.0.0 release.** Align the Core package/service version, Interface package version, Compose image tags and lockfile. Add release notes and tag only after the approved hardening changes are on main.
+1. **Merge the 1.0.0 preparation change.** PRs #8–#16 are merged. This release-preparation branch aligns package and image versions and adds release notes; it still needs CI and review.
+2. **Keep the release untagged until acceptance.** Do not create the `v1.0.0` tag or call this a completed release until the homelab deployment, real provider, user workflows and restore rehearsal below have passed. PR #2 (`Stabilise Alfie 0.9.0 release`) remains an obsolete draft and is not a release candidate.
 3. **Deploy to the target homelab.** Pull the approved main commit, rebuild both containers, verify volume ownership/persistence, confirm the Core has no published host port, and verify the Interface is reachable only through the intended trusted ingress.
 4. **Validate ingress and browser security.** Confirm the public origin is HTTPS, secure cookies work, CSRF/origin checks pass, and proxy-header trust is enabled only when the Interface is reachable exclusively through a proxy that overwrites those headers.
 5. **Exercise a real model provider.** Configure the intended local or remote provider and verify health, a normal chat, a longer response, provider-unavailable behaviour and recovery after the provider returns. CI uses test providers; it does not validate the user's actual model endpoint or model performance.
