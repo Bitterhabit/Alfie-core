@@ -2,8 +2,8 @@
 
 Last reviewed: 22 November 2026  
 Repository: Bitterhabit/Alfie-core  
-Current main commit: c83ea0bdd504acb8bfd1cafa0ee98b7c561d9b33  
-Current package versions: `@alfie/core 0.3.0`, `alfie-interface 0.1.0`
+Current main commit at release-preparation start: 33d7307fc07a10140c6f629b4228f7188c244c5b  
+Release-preparation versions: `@alfie/core 1.0.0`, `@alfie/interface 1.0.0` (pending merge, CI and deployment acceptance)
 
 ## Current state
 
@@ -26,23 +26,32 @@ The following changes are already on `main`:
 - **PR #6 — Job cancellation isolation:** user-scoped cancellation and protection against late results overwriting terminal states.
 - **PR #7 — Vault restore semantics:** replace mode clears collections absent from the archive; merge mode preserves local-only/newer data.
 
-## Additional 1.0 hardening awaiting review
+## Merged 1.0 hardening
 
-These pull requests are source changes only. They have not been merged or deployed. Check their current GitHub status before merging.
+All changes below are merged into `main` and their PR checks passed:
 
-| PR | Change | Latest validation known at review |
-|---|---|---|
-| [#8](https://github.com/Bitterhabit/Alfie-core/pull/8) | Serialize watcher checks, metric ingestion, edits and deletion per watcher | CI passed, including regression tests for check/edit/delete races |
-| [#9](https://github.com/Bitterhabit/Alfie-core/pull/9) | Transactional vault restore; SQLite batch rollback and JSON fallback compensation | CI passed, including SQLite/JSON restore tests, both image builds and container smoke test |
-| [#10](https://github.com/Bitterhabit/Alfie-core/pull/10) | Reserve authentication attempts before password/recovery verification to close a concurrent rate-limit bypass | CI passed |
-| [#11](https://github.com/Bitterhabit/Alfie-core/pull/11) | Expired peer tokens no longer consume active capacity; malformed expiry values fail closed | CI passed, including malformed-expiry tests, both image builds and container smoke test |
-| [#12](https://github.com/Bitterhabit/Alfie-core/pull/12) | Correct security documentation for replace/merge vault semantics | CI passed |
-| [#13](https://github.com/Bitterhabit/Alfie-core/pull/13) | Use `npm ci` with the committed lockfile in CI and the Core image; syntax-check all application source files | CI passed, including both image builds and container smoke test |
-| [#14](https://github.com/Bitterhabit/Alfie-core/pull/14) | Clarify that the peer CLI targets the Interface proxy; test the peer proxy contract | CI passed |
-| [#15](https://github.com/Bitterhabit/Alfie-core/pull/15) | Stop advertising the unimplemented `projects:read` peer scope | CI passed |
+- **PR #8 — Watcher serialization:** checks, metric ingestion, edits and deletion are serialized per watcher, with concurrency regression tests.
+- **PR #9 — Transactional vault restore:** SQLite batch restore is transactional; JSON fallback compensates on failure; replace/merge semantics are covered.
+- **PR #10 — Authentication throttling:** attempts are reserved before password/recovery verification, closing the concurrent bypass.
+- **PR #11 — Peer token expiry:** expired tokens no longer consume active capacity; malformed expiry values fail closed.
+- **PR #12 — Vault security documentation:** documents restore behaviour and safety boundaries.
+- **PR #13 — Reproducible production installs:** CI and Core image use the committed lockfile with `npm ci`; all application source files receive syntax checks.
+- **PR #14 — Peer CLI contract:** documents the Interface proxy target and tests authenticated peer forwarding.
+- **PR #15 — Peer scope accuracy:** only implemented peer scopes are advertised.
+- **PR #16 — Readiness gates:** this document distinguishes merged code from deployment acceptance.
 
-Do not treat a green PR check as proof of a live homelab deployment. The PRs above still need review/merge approval, followed by a fresh green run on the resulting main branch.
+Squash merge commits on main:
+- PR #8: `33b94df3182890346cb55d408d980c24b464520a`
+- PR #9: `36499e05abf1d9974d02b69bdcb8ffdf1dc271c5`
+- PR #10: `d85121caf2c6b4d71c6a8c12ebb1b442e319cb59`
+- PR #11: `87d31545803815493a618d444b83bb59b366e749`
+- PR #12: `0b69f9e83d4abf16fc148350b89f1f3063e8da25`
+- PR #13: `9635d7fa32c97d2ec341066a0690aadc9b508292`
+- PR #14: `99eebc7a9db9ec5ff283e301790495f77d26b9be`
+- PR #15: `aa8817e000b58fca1c3ae8b7735bd21d59fadb18`
+- PR #16: `33d7307fc07a10140c6f629b4228f7188c244c5b`
 
+These are repository changes and CI results, not evidence of a live homelab deployment.
 ## Remaining 1.0 release gates
 
 1. **Review and merge the hardening PRs.** Confirm the current diff and checks for PRs #8–#15. PR #2 (`Stabilise Alfie 0.9.0 release`) is an old draft based on an earlier main commit and is not a release candidate; do not merge it as a shortcut to versioning.
