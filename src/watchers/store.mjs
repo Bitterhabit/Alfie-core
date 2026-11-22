@@ -285,7 +285,7 @@ export class WatcherStore {
     if (!input || typeof input !== "object" || Array.isArray(input)) {
       throw Object.assign(new Error("Watcher update payload must be an object."), { status: 400 });
     }
-    return this.exclusive(userId, async () => {
+    return this.withWatcherCheckLock(userId, watcherId, async () => this.exclusive(userId, async () => {
       const store = await this.loadWatchers(userId);
       const index = store.watchers.findIndex((item) => item.id === watcherId);
       if (index < 0) throw Object.assign(new Error("Watcher not found."), { status: 404 });
@@ -303,14 +303,14 @@ export class WatcherStore {
       store.watchers[index] = next;
       await this.saveWatchers(userId, store);
       return next;
-    });
+    }));
   }
 
   async remove(userId, watcherId) {
     if (!UUID_PATTERN.test(String(watcherId || ""))) {
       throw Object.assign(new Error("Watcher not found."), { status: 404 });
     }
-    return this.exclusive(userId, async () => {
+    return this.withWatcherCheckLock(userId, watcherId, async () => this.exclusive(userId, async () => {
       const store = await this.loadWatchers(userId);
       const before = store.watchers.length;
       store.watchers = store.watchers.filter((item) => item.id !== watcherId);
@@ -319,7 +319,7 @@ export class WatcherStore {
       }
       await this.saveWatchers(userId, store);
       return { deleted: true, id: watcherId };
-    });
+    }));
   }
 
   async recordEvaluation(userId, watcherId, evaluation) {
