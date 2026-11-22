@@ -19,6 +19,7 @@ import { ProjectStore } from "../src/projects/store.mjs";
 import { IdeaStore } from "../src/ideas/store.mjs";
 import { WatcherStore } from "../src/watchers/store.mjs";
 import { WorkflowProfileStore } from "../src/profile/store.mjs";
+import { AuditStore } from "../src/audit/store.mjs";
 import { createAlfieCoreServer } from "../src/server.mjs";
 import { createSignedIdentityAuth } from "../src/auth/signedIdentity.mjs";
 import { createAlfieCoreClient } from "../src/client.mjs";
@@ -247,7 +248,8 @@ test("HTTP /v1/storage/status, /v1/storage/migrate, and /v1/search enforce per-u
     projectStore: new ProjectStore({ dataDirectory: dir }),
     ideaStore: new IdeaStore({ dataDirectory: dir }),
     watcherStore: new WatcherStore({ dataDirectory: dir }),
-    profileStore: new WorkflowProfileStore({ dataDirectory: dir })
+    profileStore: new WorkflowProfileStore({ dataDirectory: dir }),
+    auditStore: new AuditStore({ dataDirectory: dir })
   });
 
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
