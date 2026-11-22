@@ -171,9 +171,6 @@ export class AsyncJobEngine {
   async execute(userId, job, steps = []) {
     const controller = new AbortController();
     const controllerKey = safeUserKey(userId) + ":" + job.id;
-    if (this.activeControllers.has(controllerKey)) {
-      throw Object.assign(new Error("This job is already being executed."), { status: 409, code: "JOB_ALREADY_RUNNING" });
-    }
     this.activeControllers.set(controllerKey, controller);
 
     const startedMs = Date.now();
