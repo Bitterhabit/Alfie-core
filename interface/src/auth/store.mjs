@@ -289,20 +289,21 @@ export class InterfaceAuthStore {
       const store = await this.load();
       const user = store.users.find((item) => item.username.toLowerCase() === String(username || "").trim().toLowerCase());
       const normalizedCode = String(recoveryCode || "").trim().toUpperCase();
+      const validCodeShape = normalizedCode.length >= 8 && normalizedCode.length <= 32;
+      const candidateCode = validCodeShape ? normalizedCode : "00000-00000";
+      const entries = user && !user.disabled && Array.isArray(user.recoveryCodes) ? user.recoveryCodes : [];
       let matchedEntry = null;
-      if (user && !user.disabled && Array.isArray(user.recoveryCodes) && normalizedCode.length >= 8 && normalizedCode.length <= 32) {
-        for (const entry of user.recoveryCodes) {
-          if (entry.usedAt) continue;
-          const actual = Buffer.from(await passwordDigest(normalizedCode, entry.salt), "hex");
-          const expected = Buffer.from(entry.hash, "hex");
-          if (actual.length === expected.length && timingSafeEqual(actual, expected)) {
-            matchedEntry = entry;
-            break;
-          }
-        }
-      } else {
-        // Constant-work dummy derivation to avoid timing leaks on unknown users
-        await passwordDigest(normalizedCode || "00000-00000", DUMMY_SALT);
+
+      // Perform a fixed number of derivations and comparisons for known and unknown
+      // accounts, and do not stop on the first match. This avoids disclosing
+      // whether recovery is configured or which code slot matched by timing.
+      for (let index = 0; index < 8; index += 1) {
+        const entry = entries[index] && !entries[index].usedAt ? entries[index] : null;
+        const salt = entry?.salt || DUMMY_SALT;
+        const actual = Buffer.from(await passwordDigest(candidateCode, salt), "hex");
+        const expected = Buffer.from(entry?.hash || DUMMY_HASH, "hex");
+        const matches = actual.length === expected.length && timingSafeEqual(actual, expected);
+        if (entry && validCodeShape && matches) matchedEntry = entry;
       }
 
       if (!user || user.disabled || !matchedEntry) {
