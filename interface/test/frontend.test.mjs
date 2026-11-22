@@ -478,3 +478,13 @@ test("Phase 6 UI surfaces (Encrypted Vault, Self-Audit Diagnostics, Peer Client 
 
 
 
+
+test("vault replace restore clearly explains overwrite scope and requires confirmation", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+  assert.match(html, /Merge \(keep current items, add missing archived items\)/);
+  assert.match(html, /Overwrite archived collections with backup/);
+  assert.match(app, /window\.confirm\(/);
+  assert.match(app, /Collections not included in the archive will remain unchanged/);
+  assert.match(app, /Restore cancelled/);
+});
