@@ -1,5 +1,8 @@
 import net from "node:net";
 import dns from "node:dns/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { Readable } from "node:stream";
 import {
   isPrivateOrReservedIpv4,
   isPrivateOrReservedIpv6,
@@ -401,6 +404,74 @@ export function headersFor(endpoint) {
   return headers;
 }
 
+/**
+ * Perform a provider request against only the IPs validated immediately
+ * beforehand. Keep the original hostname for Host, TLS certificate checks,
+ * and SNI; pin only the socket lookup. A one-shot agent prevents socket reuse.
+ */
+export async function fetchPinnedProviderRequest(rawUrl, options = {}, validatedTarget) {
+  const url = new URL(rawUrl);
+  const addresses = validatedTarget?.addresses;
+  if (!Array.isArray(addresses) || addresses.length === 0) {
+    throw Object.assign(new Error("Provider destination was not DNS-validated."), { code: "PROVIDER_DNS_FAILED" });
+  }
+  const hostname = normaliseHost(url.hostname);
+  const literalFamily = net.isIP(hostname);
+  const transport = url.protocol === "https:" ? httpsRequest : httpRequest;
+  if (!["http:", "https:"].includes(url.protocol)) {
+    throw Object.assign(new Error("Unsupported provider request protocol."), { code: "INVALID_PROVIDER_CONFIG" });
+  }
+  const pinnedLookup = (requestedHost, lookupOptions, callback) => {
+    if (normaliseHost(requestedHost) !== hostname) {
+      callback(Object.assign(new Error("Unexpected provider DNS lookup host."), { code: "PROVIDER_DNS_FAILED" }));
+      return;
+    }
+    const eligible = addresses.filter((entry) =>
+      entry && net.isIP(String(entry.address || "")) &&
+      (!lookupOptions?.family || Number(lookupOptions.family) === Number(entry.family))
+    );
+    if (!eligible.length) {
+      callback(Object.assign(new Error("No validated address matches the provider connection."), { code: "PROVIDER_DNS_FAILED" }));
+      return;
+    }
+    if (lookupOptions?.all) {
+      callback(null, eligible.map((entry) => ({
+        address: String(entry.address),
+        family: Number(entry.family) || net.isIP(String(entry.address))
+      })));
+      return;
+    }
+    const selected = eligible[0];
+    callback(null, String(selected.address), Number(selected.family) || net.isIP(String(selected.address)));
+  };
+  const headers = options.headers instanceof Headers
+    ? Object.fromEntries(options.headers.entries())
+    : { ...(options.headers || {}) };
+  const requestOptions = {
+    method: options.method || "GET",
+    headers,
+    agent: false,
+    ...(literalFamily ? {} : {
+      lookup: pinnedLookup,
+      ...(url.protocol === "https:" ? { servername: url.hostname } : {})
+    }),
+    ...(options.signal ? { signal: options.signal } : {})
+  };
+  return await new Promise((resolve, reject) => {
+    const request = transport(url, requestOptions, (incoming) => {
+      const body = [204, 205, 304].includes(incoming.statusCode) ? null : Readable.toWeb(incoming);
+      resolve(new Response(body, {
+        status: incoming.statusCode || 502,
+        statusText: incoming.statusMessage || "",
+        headers: incoming.headers
+      }));
+    });
+    request.once("error", reject);
+    if (options.body !== undefined && options.body !== null) request.write(options.body);
+    request.end();
+  });
+}
+
 export function modeRank(endpointMode, requestedMode) {
   if (requestedMode === "auto") return endpointMode === "standard" ? 3 : endpointMode === "work" ? 2 : 1;
   if (endpointMode === requestedMode) return 4;
@@ -438,13 +509,12 @@ export class ProviderRegistry {
     const trustedLocal = typeof endpoint.trustedLocal === "boolean"
       ? endpoint.trustedLocal
       : isLocalOrPrivateHost(new URL(endpoint.baseUrl).hostname);
-
     const staticCheck = validateProviderUrl(endpoint.baseUrl, { trustedLocal });
     if (!staticCheck.valid) {
       throw Object.assign(new Error(staticCheck.error), { status: 400, code: staticCheck.code });
     }
-
-    // Perform DNS validation when using real network fetch or when an explicit dnsLookup is injected
+    // The default network path returns the validated addresses for pinning.
+    // Custom fetch implementations remain injectable for isolated unit tests.
     if (this.dnsLookup || this.usesDefaultFetch) {
       const dnsCheck = await resolveAndValidateProviderTarget(endpoint.baseUrl, {
         trustedLocal,
@@ -453,19 +523,24 @@ export class ProviderRegistry {
       if (!dnsCheck.valid) {
         throw Object.assign(new Error(dnsCheck.error), { status: 400, code: dnsCheck.code });
       }
+      return dnsCheck;
     }
+    return staticCheck;
   }
 
   async inspect(endpoint) {
     const started = this.now();
     try {
-      await this.assertTargetAllowed(endpoint);
-      const response = await this.fetchImpl(endpointFor(endpoint, "models"), {
+      const validatedTarget = await this.assertTargetAllowed(endpoint);
+      const requestOptions = {
         method: "GET",
         headers: headersFor(endpoint),
         redirect: "error",
         signal: AbortSignal.timeout(6000)
-      });
+      };
+      const response = this.usesDefaultFetch
+        ? await fetchPinnedProviderRequest(endpointFor(endpoint, "models"), requestOptions, validatedTarget)
+        : await this.fetchImpl(endpointFor(endpoint, "models"), requestOptions);
       const text = await response.text();
       let payload = {};
       try { payload = text ? JSON.parse(text) : {}; } catch { payload = {}; }
@@ -578,7 +653,7 @@ export class ProviderRegistry {
   }
 
   async chat(endpoint, messages, { stream = false, signal } = {}) {
-    await this.assertTargetAllowed(endpoint);
+    const validatedTarget = await this.assertTargetAllowed(endpoint);
     const body = endpoint.provider === "ollama"
       ? {
           model: endpoint.model, messages, stream,
@@ -588,13 +663,16 @@ export class ProviderRegistry {
           model: endpoint.model, messages, stream,
           temperature: endpoint.temperature, max_tokens: endpoint.maxTokens
         };
-    const response = await this.fetchImpl(endpointFor(endpoint, "chat"), {
+    const requestOptions = {
       method: "POST",
       headers: headersFor(endpoint),
       body: JSON.stringify(body),
       redirect: "error",
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000)
-    });
+    };
+    const response = this.usesDefaultFetch
+      ? await fetchPinnedProviderRequest(endpointFor(endpoint, "chat"), requestOptions, validatedTarget)
+      : await this.fetchImpl(endpointFor(endpoint, "chat"), requestOptions);
     if (!response.ok) {
       const text = await response.text();
       let payload = {};
