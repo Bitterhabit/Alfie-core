@@ -29,7 +29,7 @@ This section describes the intended 1.0.0 release scope. The version is prepared
 - Petrio integration remains optional; unfinished mail/calendar write integrations and model download/management are not represented as completed 1.0 features.
 
 ### Release verification still required
-- GitHub Actions on the final release-preparation commit.
+- GitHub Actions passed on release-preparation commit `aebafa4c51d20b024ed9fcc8bd987617ae83cda1`, including tests, syntax checks, Compose validation, both image builds and container smoke tests.
 - Pull/rebuild on the user's Proxmox host and verify container health, storage persistence and ingress.
 - Test the configured real model provider and user-facing workflows.
 - Rehearse encrypted vault backup/restore using a disposable target.
