@@ -33,9 +33,9 @@ These pull requests are source changes only. They have not been merged or deploy
 | PR | Change | Latest validation known at review |
 |---|---|---|
 | [#8](https://github.com/Bitterhabit/Alfie-core/pull/8) | Serialize watcher checks, metric ingestion, edits and deletion per watcher | CI passed, including regression tests for check/edit/delete races |
-| [#9](https://github.com/Bitterhabit/Alfie-core/pull/9) | Transactional vault restore; SQLite batch rollback and JSON fallback compensation | Full tests passed; Docker smoke test was still running |
+| [#9](https://github.com/Bitterhabit/Alfie-core/pull/9) | Transactional vault restore; SQLite batch rollback and JSON fallback compensation | CI passed, including SQLite/JSON restore tests, both image builds and container smoke test |
 | [#10](https://github.com/Bitterhabit/Alfie-core/pull/10) | Reserve authentication attempts before password/recovery verification to close a concurrent rate-limit bypass | CI passed |
-| [#11](https://github.com/Bitterhabit/Alfie-core/pull/11) | Expired peer tokens no longer consume active capacity; malformed expiry values fail closed | Full tests and image builds passed; Docker smoke test was still running |
+| [#11](https://github.com/Bitterhabit/Alfie-core/pull/11) | Expired peer tokens no longer consume active capacity; malformed expiry values fail closed | CI passed, including malformed-expiry tests, both image builds and container smoke test |
 | [#12](https://github.com/Bitterhabit/Alfie-core/pull/12) | Correct security documentation for replace/merge vault semantics | CI passed |
 | [#13](https://github.com/Bitterhabit/Alfie-core/pull/13) | Use `npm ci` with the committed lockfile in CI and the Core image; syntax-check all application source files | CI passed, including both image builds and container smoke test |
 | [#14](https://github.com/Bitterhabit/Alfie-core/pull/14) | Clarify that the peer CLI targets the Interface proxy; test the peer proxy contract | CI passed |
