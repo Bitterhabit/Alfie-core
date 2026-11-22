@@ -3,7 +3,6 @@ import { createAssetInterceptorMiddleware } from "./assetMiddleware.mjs";
 import { applyCloudPrivacyPolicy, isToolAllowedByVisibility } from "../privacy/policy.mjs";
 import { containsUntrustedData } from "./untrustedData.mjs";
 import { resolveWorkingMode } from "./workingModes.mjs";
-import { resolveLearningMode } from "../profile/store.mjs";
 
 export const MAX_STEPS = 4;
 export const WALL_CLOCK_TIMEOUT = 30_000;
@@ -88,7 +87,6 @@ export class AgentLoop {
     projectStore = null,
     watcherStore = null,
     profileStore = null,
-    imageGenerator = null,
     cloudAgentStore = null,
     cloudAdapters = null,
     assetsDirectory,
@@ -108,7 +106,6 @@ export class AgentLoop {
     this.projectStore = projectStore;
     this.watcherStore = watcherStore;
     this.profileStore = profileStore;
-    this.imageGenerator = imageGenerator;
     this.cloudAgentStore = cloudAgentStore;
     this.cloudAdapters = cloudAdapters;
     this.now = now;
@@ -262,20 +259,13 @@ export class AgentLoop {
             selected = await awaitWithAbort(this.providerRegistry.complete(activeProviderConfig, context.messages, mode, { signal: controller.signal }), controller.signal);
           } catch (providerError) {
             if (controller.signal.aborted) throw providerError;
-            selected = await this.coreAssistantComplete({
-              userId,
-              userText,
-              history,
-              context,
-              memories: effectiveMemories,
-              project: activeProject,
-              workingMode: resolvedMode,
-              workflowProfile,
+            this.dispatcher.resetTurn(turnId);
+            return {
+              status: "provider_unavailable",
+              message: "I couldn't reach a configured model provider, so I haven't generated a response or taken any action. Check the model connection in Settings and try again.",
               steps,
-              turnId,
-              onProgress,
-              signal: controller.signal
-            });
+              provider: "local"
+            };
           }
         }
         steps += 1;
@@ -412,156 +402,5 @@ export class AgentLoop {
     }
   }
 
-  async coreAssistantComplete({ userId, userText, history, context, memories = [], project = null, workingMode = resolveWorkingMode(), workflowProfile = null, steps, turnId, onProgress, signal }) {
-    const cleanUser = String(userText || "").trim();
-    const lower = cleanUser.toLowerCase();
-    const modeLabel = workingMode?.label || "Companion";
-    const learningInfo = workflowProfile ? resolveLearningMode(workflowProfile.learningMode) : null;
 
-    // 1. Image generation intent
-    const isImageCmd = lower.startsWith("/image");
-    const isImageIntent = isImageCmd || (
-      (lower.includes("generate") || lower.includes("create") || lower.includes("draw") || lower.includes("paint") || lower.includes("render")) &&
-      (lower.includes("image") || lower.includes("art") || lower.includes("picture") || lower.includes("illustration") || lower.includes("pixel"))
-    );
-
-    if (isImageIntent && this.imageGenerator) {
-      let prompt = cleanUser.replace(/^\/image\s*/i, "").trim();
-      if (!prompt || prompt.toLowerCase() === "generate visual asset" || prompt.toLowerCase() === "/image") {
-        prompt = "A tranquil pixel art garden with glowing purple amethyst crystals and quiet stars";
-      }
-      if (typeof onProgress === "function") {
-        onProgress({
-          type: "tool_start",
-          toolId: "generate_image",
-          toolName: "Generate visual asset",
-          action: "Generating visual asset: " + prompt.slice(0, 36) + "…",
-          isExternal: false,
-          steps: steps + 1
-        });
-      }
-      const image = await this.imageGenerator.generate({ prompt, style: "pixel-art" });
-      const msg = `Here is the visual asset you requested for **"${prompt}"**:\n\n![${image.prompt}](${image.url})\n\n*Created with Alfie Pixel Studio (${image.provider}) · 512×512 pixel-art.*`;
-      return {
-        endpoint: { id: "alfie-core-local", model: "alfie-core-engine", provider: "alfie-core" },
-        result: {
-          content: JSON.stringify({ type: "final", message: msg }),
-          raw: { usage: { prompt_tokens: Math.max(1, Math.round(cleanUser.length / 4)), completion_tokens: 80, total_tokens: 100 } }
-        }
-      };
-    }
-
-    // 2. Grounded Project Continuity Briefing ("Where are we with this project?")
-    const asksProjectStatus = lower.includes("where are we")
-      || lower.includes("project status")
-      || lower.includes("this project")
-      || lower.includes("project brief")
-      || lower.includes("blockers")
-      || lower.includes("next actions");
-    if (project && asksProjectStatus) {
-      const sections = [`### Project Brief: ${project.name} (${project.status || "active"})`];
-      if (project.vision) sections.push(`**Vision:** ${project.vision}`);
-      if (project.description) sections.push(`**Shared Notes:** ${project.description}`);
-      if (project.architecture) sections.push(`**Architecture:** ${project.architecture}`);
-      if (project.nextActions?.length) {
-        sections.push("**Next Recommended Actions:**\n" + project.nextActions.map((item) => `• ${item}`).join("\n"));
-      }
-      if (project.blockers?.length) {
-        sections.push("**Current Blockers:**\n" + project.blockers.map((item) => `• ${item}`).join("\n"));
-      }
-      if (project.decisions?.length) {
-        sections.push("**Recorded Decisions:**\n" + project.decisions.slice(-5).map((d) =>
-          d.rationale ? `• **${d.summary}** — ${d.rationale}` : `• **${d.summary}**`
-        ).join("\n"));
-      }
-      if (project.postponed?.length) {
-        sections.push("**Deliberately Postponed:**\n" + project.postponed.map((item) => `• ${item}`).join("\n"));
-      }
-      if (sections.length === 1) {
-        sections.push("No Vision, Architecture, Next Actions, Blockers, or Decisions have been recorded in this dossier yet. Open **Dossier** in the chat bar to capture your current state so future briefings stay grounded.");
-      }
-      sections.push(`*Mode: ${modeLabel} · Grounded directly in your Living Project Dossier.*`);
-      return {
-        endpoint: { id: "alfie-core-local", model: "alfie-core-engine", provider: "alfie-core" },
-        result: {
-          content: JSON.stringify({ type: "final", message: sections.join("\n\n") }),
-          raw: { usage: { prompt_tokens: 24, completion_tokens: 110, total_tokens: 134 } }
-        }
-      };
-    }
-
-    // 3. Overview & priorities
-    if (lower.includes("overview") || lower.includes("priorities") || lower.includes("priority") || lower.includes("focus")) {
-      let memorySummary = "";
-      if (memories.length) {
-        const top = [...memories].sort((a, b) => (b.importance || 5) - (a.importance || 5)).slice(0, 3);
-        memorySummary = "\n\n**Key Context from Your Garden:**\n" +
-          top.map((m) => `• **${m.title || "Note"}** (Importance ${m.importance || 5}/10): ${m.text}`).join("\n");
-      }
-      const projectNote = project
-        ? `\n\n**Active Project (${project.name} · ${project.status || "active"}):**\n${project.nextActions?.length ? project.nextActions.slice(0, 3).map((a) => `• Next: ${a}`).join("\n") : (project.vision || project.description || "Assigned to this conversation.")}`
-        : "";
-      const msg = `### Concise Overview of Current Priorities\n\nHere is a synthesized snapshot in **${modeLabel}** mode:${projectNote}${memorySummary}\n\n**Active Workflows:**\n• **Core Stability & Access**: Alfie Core is online and governing memories, project dossiers, ideas, and tools.\n• **Memory Continuity**: Your Garden and Ideas Vault are ready to capture or recall thoughts cleanly.\n• **Creative Generation**: Visual asset studio is active—use \`/image <prompt>\` anytime to generate art.\n\n*What would you like to advance next?*`;
-      return {
-        endpoint: { id: "alfie-core-local", model: "alfie-core-engine", provider: "alfie-core" },
-        result: {
-          content: JSON.stringify({ type: "final", message: msg }),
-          raw: { usage: { prompt_tokens: 20, completion_tokens: 90, total_tokens: 110 } }
-        }
-      };
-    }
-
-    // 4. Thinking through an idea
-    if (lower.includes("think through") || lower.includes("idea") || lower.includes("brainstorm") || lower.includes("developing")) {
-      const msg = `### Strategic Exploration Framework (${modeLabel} mode)\n\nI’m ready to think this through with you. Let’s break it down methodically:\n\n1. **Core Problem & Value**:\n   • What specific tension or need does this solve?\n   • What does the simplest high-leverage outcome look like?\n\n2. **Key Assumptions & Variables**:\n   • What is the riskiest assumption to validate first?\n   • Are there technical, security, or resource constraints?\n\n3. **Recommended First Step**:\n   • Frame the premise in 1–2 sentences, or type \`/idea <thought>\` to squirrel it into your Ideas Vault for later.`;
-      return {
-        endpoint: { id: "alfie-core-local", model: "alfie-core-engine", provider: "alfie-core" },
-        result: {
-          content: JSON.stringify({ type: "final", message: msg }),
-          raw: { usage: { prompt_tokens: 20, completion_tokens: 80, total_tokens: 100 } }
-        }
-      };
-    }
-
-    // 5. Review recent activity
-    if (lower.includes("summarise") || lower.includes("summarize") || lower.includes("recent activity") || lower.includes("pending") || lower.includes("actions")) {
-      let pendingCount = 0;
-      if (this.dispatcher?.pendingActionStore) {
-        try {
-          const pending = await this.dispatcher.pendingActionStore.list(userId);
-          pendingCount = pending.length;
-        } catch {}
-      }
-      let watcherLine = "";
-      if (this.watcherStore?.listEvents) {
-        try {
-          const alerts = await this.watcherStore.listEvents(userId, { unacknowledged: true, limit: 20 });
-          const actionable = alerts.filter((e) => e.tier === "urgent" || e.tier === "notify" || e.tier === "digest");
-          watcherLine = `\n• **Watchers & Attention Budget**: ${actionable.length ? `${actionable.length} unacknowledged watcher alert(s) ready in Tools & access` : "All watchers calm — no unacknowledged alerts."}`;
-        } catch {}
-      }
-      const msg = `### System & Activity Review\n\n• **Pending Approvals**: ${pendingCount ? `${pendingCount} action(s) awaiting your decision in Tools & access` : "No actions pending approval. System is clear."}${watcherLine}\n• **Memory Garden**: Context retrieval is active with ${memories.length} relevant memory record(s) indexed.\n• **Active Mode**: ${modeLabel}${project ? ` · Project: **${project.name}**` : ""}\n• **Foundation**: Alfie Core service is healthy and connected to your private workspace.\n\nLet me know if you’d like to review permissions, inspect a project dossier, or plant a new memory.`;
-      return {
-        endpoint: { id: "alfie-core-local", model: "alfie-core-engine", provider: "alfie-core" },
-        result: {
-          content: JSON.stringify({ type: "final", message: msg }),
-          raw: { usage: { prompt_tokens: 25, completion_tokens: 75, total_tokens: 100 } }
-        }
-      };
-    }
-
-    // 6. General conversational response tailored to active Working Mode, Learning Posture & Project
-    const projectLine = project ? `\n• **Active Project**: **${project.name}** (${project.status || "active"}) — ask *"Where are we with this project?"* for a grounded brief.` : "";
-    const learningLine = learningInfo && ["tutor", "challenge", "attempt_first"].includes(learningInfo.id)
-      ? `\n• **Learning Posture (${learningInfo.label})**: ${learningInfo.promptHint}`
-      : "";
-    const msg = `Alfie here — I’m ready in **${modeLabel}** mode.${projectLine}${learningLine}\n\n• **Chat & Ideation**: Ask questions, work through technical trade-offs, or switch working modes anytime.\n• **Ideas Vault**: Type \`/idea <thought>\` to squirrel away an idea without breaking flow.\n• **Memory Garden**: Plant, recall, and audit important memories with full provenance.\n• **Visual Creation**: Type \`/image <prompt>\` to create artwork.\n\nHow can I help you right now?`;
-    return {
-      endpoint: { id: "alfie-core-local", model: "alfie-core-engine", provider: "alfie-core" },
-      result: {
-        content: JSON.stringify({ type: "final", message: msg }),
-        raw: { usage: { prompt_tokens: 15, completion_tokens: 65, total_tokens: 80 } }
-      }
-    };
-  }
 }
