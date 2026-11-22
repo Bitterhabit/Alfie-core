@@ -497,3 +497,25 @@ test("cloud agent settings and privacy preview routes enforce auth and CSRF", as
 
 
 
+
+
+test("concurrent failed logins reserve throttle slots before password hashing", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-ui-concurrent-throttle-"));
+  const authStore = new InterfaceAuthStore({ dataDirectory: directory });
+  await authStore.bootstrap("alfie-admin", "test-password-for-ci-only-123456");
+  const server = createAlfieInterfaceServer({ authStore, cookieSecure: false, coreClient: {} });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = "http://127.0.0.1:" + server.address().port;
+  try {
+    const attempts = await Promise.all(Array.from({ length: 8 }, () => fetch(base + "/api/auth/login", {
+      method: "POST",
+      headers: { origin: base, "content-type": "application/json" },
+      body: JSON.stringify({ username: "alfie-admin", password: "incorrect-password-123456" })
+    })));
+    assert.equal(attempts.filter((response) => response.status === 429).length, 3);
+    assert.equal(attempts.filter((response) => response.status === 401).length, 5);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
