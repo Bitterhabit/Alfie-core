@@ -223,9 +223,10 @@ test("a user cannot abort another user's active job by presenting its job ID", a
 
     const execution = jobEngine.execute("alice", job, [{
       name: "wait for completion",
-      run: async () => {
+      run: async ({ signal }) => {
         markStarted();
         await gate;
+        if (signal.aborted) throw Object.assign(new Error("Cancelled"), { name: "AbortError" });
         return { summary: "Completed normally" };
       }
     }]);
