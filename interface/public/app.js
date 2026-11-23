@@ -9211,7 +9211,7 @@ function openProviderEditor(endpoint = null) {
   $("#provider-field-name").value = isEdit ? (endpoint.name || "") : "";
   $("#provider-field-type").value = isEdit ? (endpoint.provider || "ollama") : "ollama";
   $("#provider-field-url").value = isEdit ? (endpoint.baseUrl || "") : "http://127.0.0.1:11434";
-  $("#provider-field-url").placeholder = ($("#provider-field-type").value === "ollama") ? "http://127.0.0.1:11434" : "http://127.0.0.1:1234/v1";
+  $("#provider-field-url").placeholder = ($("#provider-field-type").value === "ollama") ? "http://127.0.0.1:11434" : "https://api.example.com/v1 or a custom API root";
   $("#provider-field-mode").value = isEdit ? (endpoint.mode || "standard") : "standard";
   $("#provider-field-priority").value = String(isEdit ? (endpoint.priority ?? 50) : 60);
   $("#provider-field-temperature").value = String(isEdit ? (endpoint.temperature ?? 0.4) : 0.4);
