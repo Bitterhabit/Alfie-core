@@ -1,29 +1,25 @@
 # ADR-004: Async Job Engine & Bounded Sub-Agent Delegation
 
-- **Status:** Accepted & Shipped (`src/jobs/engine.mjs`, `src/agents/workshop.mjs`)
-- **Target Phase:** Phase 4 (Complete)
+- **Status:** Partially implemented. The job record/state store and bounded workshop executor exist; a persistent background worker, restart recovery, and durable chat submission are not yet implemented.
+- **Target Phase:** Phase 4 (in progress)
 
 ## Context
 
-Interactive chat must tolerate slow local inference and long provider responses; a fixed 30-second wall-clock deadline incorrectly turns slow-but-healthy model calls into failures. Interactive turns remain bounded by a maximum of four model/tool steps and a 30-minute wall-clock ceiling. The HTTP client allows 35 minutes, and the streaming server emits 15-second heartbeats so reverse proxies do not mistake a quiet model for a dead connection. Complex workflows that must survive a browser disconnect still belong in the durable job engine.
+Interactive chat must tolerate slow local inference and long provider responses; a fixed 30-second wall-clock deadline incorrectly turns slow-but-healthy model calls into failures. Interactive turns remain bounded by a maximum of four model/tool steps and a 30-minute wall-clock ceiling. The HTTP client allows 35 minutes, and the streaming server emits 15-second heartbeats so reverse proxies do not mistake a quiet model for a dead connection.
+
+The existing job implementation persists per-user job records and checkpoints, but execution is still invoked and awaited by the HTTP request. The workshop route calls `jobEngine.execute()` inline. The generic jobs POST route only creates a queued record. Active cancellation controllers exist only in process memory. Consequently, the current implementation is not yet a durable background execution system: a browser disconnect can interrupt request-bound work, and a Core restart can leave a job marked running without a recovery path.
 
 ## Decision
 
-Keep interactive turns bounded by step count and a generous wall-clock ceiling. Use the separate **Async Job Engine** for durable multi-step background work and bounded sub-agent delegation:
+Keep interactive turns bounded by step count and a generous wall-clock ceiling. Complete the separate **Async Job Engine** as a true background execution system under ADR-005:
 
-1. **Durable Job State Machine:** `queued -> running -> awaiting_approval -> completed | failed | cancelled`, persisted per user with explicit step, token, and wall-clock budgets.
+1. **Durable Job State Machine:** `queued -> running -> awaiting_approval -> completed | failed | cancelled`, persisted per user with explicit step, token, and wall-clock budgets. Add a safe interrupted/recovery state where automatic replay cannot be proven safe.
 2. **Sub-Agent Capability Ceilings:** Any delegated specialist role (Researcher, Auditor, Planner, Developer) receives a strict subset of the parent's granted scopes (typically `read`-only or `draft`-only via Capability Leases) and cannot approve its own actions.
 3. **VRAM-Aware Scheduling:** Local-model jobs yield to interactive chat turns and consult `VramMonitor` before launching concurrent inference.
-4. **Parent Review & Taint Propagation:** Sub-agent outputs return as structured artifacts tagged with the lowest trust level touched during execution (`ADR-003`), reviewed by Alfie before presenting to the user.
-
-## Consequences
-
-- **Positive:** Allows long-running interactive inference without a 30-second false timeout, while durable jobs can continue independently of a chat connection without bypassing Alfie's approval and audit guarantees.
-- **Prerequisite:** Requires SQLite storage (`ADR-001`), Capability Leases, and Persistent Taint Provenance (`ADR-003`) to be in place first.
-
+4. **Parent Review & Taint Propagation:** Sub-agent outputs return as structured artifacts tagged with the lowest trust level touched during execution (ADR-003), reviewed by Alfie before presenting to the user.
 
 ## Long-running chat transport
 
-The interactive chat path now permits up to 30 minutes per turn (still capped at four agent-loop steps). Core-to-interface chat, agent-run, and stream requests use a 35-minute transport timeout. The Core stream emits a lightweight heartbeat every 15 seconds while waiting for the agent loop, keeping idle model inference visible to reverse proxies. Heartbeats are transport events only; they are not persisted as conversation messages.
+The interactive chat path permits up to 30 minutes per turn (still capped at four model/tool steps). Core-to-interface chat, agent-run, and stream requests use a 35-minute transport timeout. The Core stream emits a lightweight heartbeat every 15 seconds while waiting for the agent loop. Heartbeats are transport events only; they are not persisted as conversation messages.
 
-This does **not** make an in-flight interactive turn durable across browser or process restarts. Work that must continue after a user disconnects must be submitted to the Async Job Engine and polled through its persisted job state. This change removes the premature timeout and preserves the existing durable-job boundary; it does not silently convert every chat prompt into a background job.
+This transport change does **not** make an in-flight interactive turn durable across browser or process restarts. Do not describe the current job engine as a background worker until the acceptance criteria in ADR-005 are implemented and tested.
