@@ -1026,7 +1026,7 @@ export function createAlfieCoreServer({
           const body = await readJsonBody(req);
           const existing = await jobStore.get(identity.userId, jobCancelMatch[1]);
           if (existing.status === "awaiting_approval" && existing.pendingActionId) {
-            try { await toolDispatcher.reject(identity.userId, existing.pendingActionId); } catch {}
+            await toolDispatcher.reject(identity.userId, existing.pendingActionId);
           }
           const cancelled = await jobEngine.cancel(identity.userId, jobCancelMatch[1], body.reason || "Cancelled by user");
           return json(res, 200, { job: publicJob(cancelled) });
