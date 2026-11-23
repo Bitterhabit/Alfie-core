@@ -83,7 +83,11 @@ Set `ALFIE_CORE_PROVIDERS_JSON` in the Core container environment. Example:
 }
 ```
 
-The value is server-side configuration; API keys are never returned by `GET /v1/providers`. Do not put credentials in endpoint URLs. Use private network addresses for model endpoints and keep the Core service off the public internet.
+The standalone Interface also exposes this through **Settings → Model Providers & Endpoints**. Add up to eight endpoints, store API keys (encrypted at rest by the Core and never returned to the browser), test connectivity, discover models, and set routing priority. Petrio should use the same Core provider registry rather than maintaining a second copy of provider credentials.
+
+For cloud services and self-hosted servers that implement the OpenAI chat-completions API, choose **OpenAI-compatible** and enter the API root URL. The path is preserved, so both `https://api.openai.com/v1` and vendor compatibility roots such as `https://generativelanguage.googleapis.com/v1beta/openai` work. Enter the model ID supplied by that service and its API key. For a local server, enter its reachable LAN IP/hostname and port (for example `http://192.168.1.50:1234/v1`) and enable **Trusted local / LAN endpoint** only for a machine you control.
+
+Do not put credentials in endpoint URLs. Use private network addresses for model endpoints and keep the Core service off the public internet.
 
 ## API
 
