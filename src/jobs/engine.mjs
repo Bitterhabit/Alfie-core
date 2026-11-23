@@ -81,14 +81,30 @@ export class AsyncJobStore {
     const maxSteps = Math.max(1, Math.min(20, Math.floor(Number(input.maxSteps) || 6)));
     const maxDurationMs = Math.max(5000, Math.min(MAX_JOB_DURATION_MS, Math.floor(Number(input.maxDurationMs) || DEFAULT_JOB_DURATION_MS)));
     const tokenBudget = Math.max(500, Math.min(32000, Math.floor(Number(input.tokenBudget) || 4000)));
+    const conversationId = UUID_PATTERN.test(String(input.conversationId || "")) ? String(input.conversationId) : null;
+    const turnId = UUID_PATTERN.test(String(input.turnId || "")) ? String(input.turnId) : null;
+    const idempotencyKey = cleanString(input.idempotencyKey || "", 80) || null;
+    let payload = null;
+    if (input.payload && typeof input.payload === "object" && !Array.isArray(input.payload)) {
+      try { payload = JSON.parse(JSON.stringify(input.payload)); } catch { throw Object.assign(new Error("Task payload must be JSON serializable."), { status: 400 }); }
+      if (Buffer.byteLength(JSON.stringify(payload), "utf8") > 256 * 1024) throw Object.assign(new Error("Task payload exceeds the 256 KB limit."), { status: 413 });
+    }
 
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
+      if (idempotencyKey) {
+        const existing = store.jobs.find((item) => item.idempotencyKey === idempotencyKey);
+        if (existing) return existing;
+      }
       const nowIso = this.now();
       const job = {
         id: this.uuid(),
         ownerId: userId,
         kind,
+        conversationId,
+        turnId,
+        idempotencyKey,
+        payload,
         role: cleanString(input.role || "", 40) || null,
         title,
         objective: cleanString(input.objective || "", 1200),
