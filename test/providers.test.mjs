@@ -43,7 +43,20 @@ test("builds correct Ollama and OpenAI-compatible endpoints and headers", () => 
   assert.equal(endpointFor(ollama, "chat"), "http://thor:11434/api/chat");
   const openai = normaliseEndpoint({ baseUrl: "http://llm:1234/v1", apiKey: "secret" });
   assert.equal(endpointFor(openai, "models"), "http://llm:1234/v1/models");
+  assert.equal(endpointFor(openai, "chat"), "http://llm:1234/v1/chat/completions");
   assert.equal(headersFor(openai).Authorization, "Bearer secret");
+
+  const geminiCompatible = normaliseEndpoint({
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model: "gemini-2.5-flash",
+    apiKey: "gemini-secret"
+  });
+  assert.equal(endpointFor(geminiCompatible, "models"), "https://generativelanguage.googleapis.com/v1beta/openai/models");
+  assert.equal(endpointFor(geminiCompatible, "chat"), "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions");
+  assert.equal(headersFor(geminiCompatible).Authorization, "Bearer gemini-secret");
+
+  const rootOnly = normaliseEndpoint({ baseUrl: "https://api.example.test", model: "model" });
+  assert.equal(endpointFor(rootOnly, "chat"), "https://api.example.test/v1/chat/completions");
 });
 
 test("selects the highest ranked healthy endpoint and falls back when a preferred provider is down", async () => {
