@@ -489,11 +489,30 @@ export function createAlfieCoreServer({
         }
         if (isToolApproval && req.method === "POST") {
           const body = await readJsonBody(req);
-          return json(res, 200, await toolDispatcher.approve(identity.userId, body.actionId || body.approvalId));
+          const actionId = body.actionId || body.approvalId;
+          const result = await toolDispatcher.approve(identity.userId, actionId);
+          const waitingJobs = await jobStore.list(identity.userId, { status: "awaiting_approval", limit: 100 });
+          for (const job of waitingJobs.filter((item) => item.pendingActionId === actionId)) {
+            await jobStore.update(identity.userId, job.id, (current, nowIso) => current.status !== "awaiting_approval" ? current : ({
+              ...current, status: "completed", progress: 100, pendingActionId: null,
+              artifact: { ...(current.artifact || {}), approvalOutcome: "approved", summary: "The requested action was approved and executed." },
+              checkpoints: [...current.checkpoints.slice(-24), { at: nowIso, step: current.stepsCompleted, status: "completed", summary: "User approved the pending action." }]
+            }));
+          }
+          return json(res, 200, result);
         }
         if (isToolRejection && req.method === "POST") {
           const body = await readJsonBody(req);
-          return json(res, 200, await toolDispatcher.reject(identity.userId, body.actionId));
+          const actionId = body.actionId;
+          const result = await toolDispatcher.reject(identity.userId, actionId);
+          const waitingJobs = await jobStore.list(identity.userId, { status: "awaiting_approval", limit: 100 });
+          for (const job of waitingJobs.filter((item) => item.pendingActionId === actionId)) {
+            await jobStore.update(identity.userId, job.id, (current, nowIso) => current.status !== "awaiting_approval" ? current : ({
+              ...current, status: "cancelled", pendingActionId: null, error: "The user rejected the pending action.",
+              checkpoints: [...current.checkpoints.slice(-24), { at: nowIso, step: current.stepsCompleted, status: "cancelled", summary: "User rejected the pending action." }]
+            }));
+          }
+          return json(res, 200, result);
         }
         if (isToolExecution && req.method === "POST") {
           return json(res, 410, { error: "Direct tool execution is disabled. Use plan, then explicit user approval." });
