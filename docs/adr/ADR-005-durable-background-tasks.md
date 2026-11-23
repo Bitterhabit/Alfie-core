@@ -7,7 +7,7 @@
 
 A long-running task must not be coupled to the lifetime of the browser tab, chat HTTP request, or streaming connection. Raising request timeouts solves only slow interactive inference while the connection remains open. It does not allow a user to close Alfie, return later, inspect progress, or retrieve a completed result.
 
-The `AsyncJobStore` persists job records and bounded typed payloads. The single in-process worker now dispatches allow-listed `subagent_delegation` and `chat_turn` tasks outside the HTTP request. Chat turns are linked to their original conversation and turn ID; user/assistant message writes are idempotent, results survive browser disconnects, and explicit tool approvals resolve the paused task. A reconnect/list request re-dispatches persisted queued tasks and marks tasks found running after a Core restart as `interrupted` rather than replaying them. This is not yet the completed durable execution architecture: atomic cross-process leases, autonomous startup scanning, persisted cancellation requests, and restart-safe resumable checkpoints remain outstanding.
+The `AsyncJobStore` persists job records and bounded typed payloads. The single in-process worker now dispatches allow-listed `subagent_delegation` and `chat_turn` tasks outside the HTTP request. Chat turns are linked to their original conversation and turn ID; user/assistant message writes are idempotent, results survive browser disconnects, and explicit tool approvals resolve the paused task. An authenticated conversation or jobs request after reconnect re-dispatches persisted queued tasks and marks tasks found running after a Core restart as `interrupted` rather than replaying them. This is not yet the completed durable execution architecture: atomic cross-process leases, autonomous startup scanning, persisted cancellation requests, and restart-safe resumable checkpoints remain outstanding.
 
 ## Decision
 
@@ -31,10 +31,10 @@ Task payloads must be bounded and validated at submission. Sensitive prompt cont
 - [x] Workshop and background chat submissions persist a `queued` task and return HTTP 202 without waiting for execution.
 - [x] A Core-owned in-process worker dispatches allow-listed queued workshop and chat-turn work with a single execution slot.
 - [ ] Add an atomic compare-and-set/transactional lease before supporting multiple Core worker processes.
-- [x] Persist step progress/checkpoints and reconcile stale `running` tasks to `interrupted` on authenticated reconnect.
+- [x] Persist step progress/checkpoints and reconcile stale `running` tasks to `interrupted` on authenticated conversation/jobs reconnect.
 - [ ] Add renewable worker leases and autonomous startup scanning.
 - The worker resolves a handler only from a fixed registry keyed by the validated task kind.
-- [x] Browser disconnects do not cancel in-process workshop execution; cancellation remains authenticated and owner-scoped.
+- [x] Browser disconnects do not cancel in-process workshop or chat-turn execution; cancellation remains authenticated and owner-scoped.
 - [ ] Persist cancellation intent independently of the worker process.
 - The worker propagates an AbortSignal to provider and tool work and stops at safe checkpoints.
 - [x] Owner-scoped polling returns persisted status, checkpoints, and completed artifacts after reconnect.
