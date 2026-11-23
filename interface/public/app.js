@@ -4186,7 +4186,7 @@ async function persistMessage(role, content, conversationId = state.activeConver
     body: JSON.stringify({ role, content, ...(metrics ? { metrics } : {}), ...(provenance ? { provenance } : {}), ...(taskId ? { taskId } : {}) })
   });
   if (conversationId === state.activeConversationId) {
-    state.messages.push(payload.message || { role, content, ...(metrics ? { metrics } : {}), ...(provenance ? { provenance } : {}) });
+    state.messages.push(payload.message || { role, content, ...(metrics ? { metrics } : {}), ...(provenance ? { provenance } : {}), ...(taskId ? { taskId } : {}) });
     syncChatContextBar();
   }
   return payload.message;
@@ -4227,7 +4227,11 @@ async function watchBackgroundChatTask(jobId, conversationId, assistantBody, ind
         return;
       }
       if (job.status === "completed") {
-        if (state.activeConversationId === conversationId && !state.sending) await loadConversation(conversationId);
+        if (state.activeConversationId === conversationId && state.sending) {
+          setTimeout(poll, 1000);
+          return;
+        }
+        if (state.activeConversationId === conversationId) await loadConversation(conversationId);
         toast("Alfie finished the background task.");
         window.alfieSoul?.pulse("completed", 1800, "idle", "purple");
         return;
@@ -4388,6 +4392,8 @@ async function sendMessage(rawText) {
           agentProvider: selectedAgentProvider, dashboardState
         })
       });
+      const backgroundToggle = $("#background-task-toggle");
+      if (backgroundToggle) backgroundToggle.checked = false;
       const backgroundIndicator = thinking;
       thinking = null;
       backgroundIndicator?.setStage("Alfie is working in the background…");
