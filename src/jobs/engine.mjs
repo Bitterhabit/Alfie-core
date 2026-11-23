@@ -226,7 +226,8 @@ export class AsyncJobEngine {
     const jobs = await this.jobStore.list(userId, { status: "all", limit: 100 });
     for (const job of jobs) {
       const key = safeUserKey(userId) + ":" + job.id;
-      if (job.status === "running" && !this.activeJobs.has(key)) {
+      const controllerKey = safeUserKey(userId) + ":" + job.id;
+      if (job.status === "running" && !this.activeJobs.has(key) && !this.activeControllers.has(controllerKey)) {
         await this.jobStore.update(userId, job.id, (current, nowIso) => current.status !== "running" ? current : ({
           ...current, status: "interrupted", error: "Core restarted while this task was running. It was not replayed automatically because its last operation may not be safe to repeat.",
           checkpoints: [...current.checkpoints.slice(-24), { at: nowIso, step: current.stepsCompleted, status: "interrupted", summary: "Execution interrupted by Core restart; manual review required before retry." }]
