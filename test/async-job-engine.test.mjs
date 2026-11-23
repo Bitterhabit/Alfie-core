@@ -109,3 +109,14 @@ test("chat task payloads are bounded, private to the owner, and idempotent by tu
   assert.equal((await store.list("other-user")).length, 0);
   await assert.rejects(() => store.create("chat-user", { title: "Oversized", kind: "chat_turn", payload: { text: "x".repeat(300 * 1024) } }), { status: 413 });
 });
+
+test("cancelling an approval-paused job clears its pending action reference", async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-job-approval-cancel-"));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const store = new AsyncJobStore({ dataDirectory: directory });
+  const job = await store.create("user-cancel", { title: "Approval task" });
+  await store.update("user-cancel", job.id, (current) => ({ ...current, status: "awaiting_approval", pendingActionId: "pending-action-1" }));
+  const cancelled = await store.cancel("user-cancel", job.id, "Cancelled by user");
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(cancelled.pendingActionId, null);
+});
