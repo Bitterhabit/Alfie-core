@@ -102,9 +102,10 @@ test("chat task payloads are bounded, private to the owner, and idempotent by tu
     payload: { messages: [{ role: "user", content: "Create an HTML page" }], mode: "work" }
   };
   const first = await store.create("chat-user", input);
-  const retry = await store.create("chat-user", { ...input, title: "Duplicate submission", payload: { messages: [] } });
+  const retry = await store.create("chat-user", input);
   assert.equal(retry.id, first.id);
   assert.deepEqual(retry.payload, input.payload);
+  await assert.rejects(() => store.create("chat-user", { ...input, payload: { messages: [] } }), { status: 409, code: "JOB_IDEMPOTENCY_CONFLICT" });
   assert.equal((await store.list("other-user")).length, 0);
   await assert.rejects(() => store.create("chat-user", { title: "Oversized", kind: "chat_turn", payload: { text: "x".repeat(300 * 1024) } }), { status: 413 });
 });
