@@ -46,6 +46,8 @@ test("background worker runs queued handlers independently and persists the resu
   }
   assert.equal(started, true);
   assert.equal((await store.get("user-worker", job.id)).status, "running");
+  await engine.recoverUser("user-worker");
+  assert.equal((await store.get("user-worker", job.id)).status, "running");
 
   release();
   let result = await store.get("user-worker", job.id);
