@@ -1807,6 +1807,46 @@ export function createAlfieCoreServer({
     }
 
 
+    if (req.method === "POST" && url.pathname === "/v1/chat/tasks") {
+      try {
+        const identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search });
+        const body = await readJsonBody(req);
+        const conversationId = String(body.conversationId || "");
+        if (!/^[a-f0-9-]{36}$/i.test(conversationId)) throw Object.assign(new Error("A valid conversationId is required for a background chat task."), { status: 400 });
+        const messages = cleanMessages(body.messages);
+        const lastMessage = messages[messages.length - 1];
+        if (lastMessage.role !== "user") throw Object.assign(new Error("The final chat message must be a user message."), { status: 400 });
+        await conversationStore.get(identity.userId, conversationId);
+        const turnId = /^[a-f0-9-]{36}$/i.test(String(body.turnId || "")) ? String(body.turnId) : randomUUID();
+        await conversationStore.appendMessage(identity.userId, conversationId, { role: "user", content: lastMessage.content, taskId: turnId });
+        const projectId = typeof body.projectId === "string" && /^[a-f0-9-]{36}$/i.test(body.projectId) ? body.projectId : null;
+        if (projectId) await projectStore.get(identity.userId, projectId);
+        const task = await jobStore.create(identity.userId, {
+          kind: "chat_turn",
+          title: lastMessage.content.replace(/\\s+/g, " ").slice(0, 72) || "Background chat task",
+          objective: lastMessage.content.slice(0, 1200),
+          conversationId,
+          turnId,
+          idempotencyKey: turnId,
+          projectId,
+          maxSteps: 4,
+          payload: {
+            messages,
+            dashboardState: body.dashboardState && typeof body.dashboardState === "object" && !Array.isArray(body.dashboardState) ? body.dashboardState : {},
+            mode: ["auto", "light", "standard", "work"].includes(body.mode) ? body.mode : "auto",
+            workingMode: resolveWorkingMode(body.workingMode).id,
+            projectId,
+            agentProvider: ["local", "gemini", "openai"].includes(body.agentProvider) ? body.agentProvider : "local"
+          }
+        });
+        if (task.status === "queued") jobEngine.enqueue(identity.userId, task);
+        const terminal = ["completed", "failed", "cancelled", "interrupted"].includes(task.status);
+        return json(res, terminal ? 200 : 202, { job: task });
+      } catch (error) {
+        return json(res, error.status || 500, { error: error.message || "Background chat task could not be submitted.", ...(error.code ? { code: error.code } : {}) });
+      }
+    }
+
     if (req.method === "POST" && url.pathname === "/v1/chat/stream") {
       const controller = new AbortController();
       let streamHeadersSent = false;
