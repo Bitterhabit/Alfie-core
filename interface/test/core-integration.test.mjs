@@ -182,3 +182,64 @@ test("workshop delegation returns immediately and completes in the background wo
     await close(core);
   }
 });
+
+test("background chat tasks survive the submit request and attach one result to the original conversation", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-background-chat-e2e-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const serviceToken = "background-chat-service-token-with-more-than-32-characters";
+  const identityAuth = createPetrioIdentityAuth({ secret: "background-chat-identity-secret-with-more-than-32-characters" });
+  const conversationStore = new ConversationStore({ dataDirectory: root });
+  const conversation = await conversationStore.create("chat-task-user", "Background HTML task");
+  const providerConfig = { mode: "auto", endpoints: [{ id: "test-local", name: "Test local", provider: "ollama", baseUrl: "http://localhost:11434", model: "test-model", enabled: true, trustedLocal: true }] };
+  const stores = {
+    conversationStore,
+    memoryStore: new MemoryStore({ dataDirectory: root }),
+    projectStore: new ProjectStore({ dataDirectory: root }),
+    ideaStore: new IdeaStore({ dataDirectory: root }),
+    watcherStore: new WatcherStore({ dataDirectory: root }),
+    profileStore: new WorkflowProfileStore({ dataDirectory: root }),
+    capsuleStore: new ContextCapsuleStore({ dataDirectory: root }),
+    permissionStore: new PermissionStore({ dataDirectory: root }),
+    auditStore: new AuditStore({ dataDirectory: root })
+  };
+  const providerRegistry = { complete: async () => ({ result: { content: JSON.stringify({ type: "final", message: "The HTML page is ready." }) }, endpoint: { model: "test-model", provider: "ollama" } }) };
+  const providerStore = { getEffectiveConfig: async () => ({ config: providerConfig }) };
+  const core = createAlfieCoreServer({ serviceToken, identityAuth, providerConfig, providerRegistry, providerStore, ...stores, petrioHarnessClient: { enabled: false } });
+  try {
+    const base = await listen(core);
+    const turnId = "44444444-4444-4444-8444-444444444444";
+    const submitPath = "/v1/chat/tasks";
+    const body = { conversationId: conversation.id, turnId, messages: [{ role: "user", content: "Create a simple HTML page" }], mode: "work", workingMode: "engineer", agentProvider: "local" };
+    const submit = await fetch(base + submitPath, {
+      method: "POST",
+      headers: { authorization: "Bearer " + serviceToken, "content-type": "application/json", ...identityAuth.sign("chat-task-user", { method: "POST", path: submitPath }) },
+      body: JSON.stringify(body)
+    });
+    assert.equal(submit.status, 202);
+    const { job } = await submit.json();
+    assert.equal(job.kind, "chat_turn");
+    assert.equal(job.conversationId, conversation.id);
+    assert.equal(Object.hasOwn(job, "payload"), false);
+    let current = job;
+    for (let attempt = 0; attempt < 100 && !["completed", "failed", "interrupted"].includes(current.status); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      current = await (await fetch(base + "/v1/jobs/" + job.id, { headers: { authorization: "Bearer " + serviceToken, ...identityAuth.sign("chat-task-user", { method: "GET", path: "/v1/jobs/" + job.id }) } })).json().then((payload) => payload.job);
+    }
+    assert.equal(current.status, "completed", current.error || "Background chat did not complete.");
+    assert.equal(Object.hasOwn(current, "payload"), false);
+    const saved = await conversationStore.get("chat-task-user", conversation.id);
+    assert.equal(saved.messages.length, 2);
+    assert.equal(saved.messages[0].taskId, turnId);
+    assert.equal(saved.messages[1].taskId, job.id);
+    assert.equal(saved.messages[1].content, "The HTML page is ready.");
+    const duplicate = await fetch(base + submitPath, {
+      method: "POST",
+      headers: { authorization: "Bearer " + serviceToken, "content-type": "application/json", ...identityAuth.sign("chat-task-user", { method: "POST", path: submitPath }) },
+      body: JSON.stringify(body)
+    });
+    assert.equal((await duplicate.json()).job.id, job.id);
+    assert.equal((await conversationStore.get("chat-task-user", conversation.id)).messages.length, 2);
+  } finally {
+    await close(core);
+  }
+});

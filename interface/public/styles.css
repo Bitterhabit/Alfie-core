@@ -1165,6 +1165,9 @@ input:focus,textarea:focus,select:focus{
 .composer-disclaimer{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .composer-controls{display:flex;align-items:center;gap:10px}
 .mode-control{display:flex;align-items:center;gap:7px;color:#9b92b2;font-size:9.5px;font-weight:700}
+.background-task-toggle{display:inline-flex;align-items:center;gap:5px;color:var(--text-muted);font-size:10px;white-space:nowrap;cursor:pointer}
+.background-task-toggle input{width:13px;height:13px;margin:0;accent-color:var(--accent);cursor:pointer}
+.background-task-toggle:has(input:checked){color:var(--text-bright)}
 .mode-control select{
   min-width:96px;
   padding:5px 22px 5px 7px;

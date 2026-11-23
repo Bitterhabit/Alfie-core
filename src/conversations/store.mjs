@@ -394,6 +394,14 @@ export class ConversationStore {
       const store = await this.load(userId);
       const conversation = store.conversations.find((item) => item.id === conversationId);
       if (!conversation) throw Object.assign(new Error("Conversation not found."), { status: 404 });
+      const taskId = CONVERSATION_ID_PATTERN.test(String(input.taskId || "")) ? String(input.taskId) : null;
+      if (taskId) {
+        const existing = conversation.messages.find((item) => item.taskId === taskId);
+        if (existing) {
+          if (existing.role !== role || existing.content !== content) throw Object.assign(new Error("This task ID was already used for a different conversation message."), { status: 409, code: "MESSAGE_IDEMPOTENCY_CONFLICT" });
+          return existing;
+        }
+      }
       if (conversation.messages.length >= MAX_MESSAGES) {
         throw Object.assign(new Error("This conversation has reached its message limit."), { status: 409 });
       }
@@ -411,12 +419,16 @@ export class ConversationStore {
         id: this.uuid(),
         role,
         content,
+        ...(taskId ? { taskId } : {}),
         createdAt: this.now(),
         ...(metrics ? { metrics } : {}),
         ...(provenance ? { provenance } : {}),
         ...(reaction ? { reaction, reactedAt: this.now() } : {})
       };
-      conversation.messages.push(message);
+      const afterTaskId = CONVERSATION_ID_PATTERN.test(String(input.afterTaskId || "")) ? String(input.afterTaskId) : null;
+      const afterIndex = afterTaskId ? conversation.messages.findIndex((item) => item.taskId === afterTaskId && item.role === "user") : -1;
+      if (afterIndex >= 0 && role === "assistant") conversation.messages.splice(afterIndex + 1, 0, message);
+      else conversation.messages.push(message);
       conversation.updatedAt = message.createdAt;
       if (role === "user" && conversation.title === "New conversation") {
         conversation.title = content.replace(/\s+/g, " ").slice(0, 80);

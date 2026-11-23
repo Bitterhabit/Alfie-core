@@ -72,6 +72,16 @@ function createDefaultIdentityAuth() {
   return createIdentityAuthRegistry(providers);
 }
 
+function publicJob(job) {
+  if (!job || typeof job !== "object") return job;
+  const { payload, ...safe } = job;
+  if (safe.kind === "chat_turn") {
+    safe.objective = "";
+    safe.title = "Background chat task";
+  }
+  return safe;
+}
+
 function json(res, statusCode, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(statusCode, {
@@ -228,6 +238,45 @@ export function createAlfieCoreServer({
   });
   const toolDispatcher = new ToolDispatcher({ registry: toolRegistry, permissionStore, pendingActionStore, auditStore, assetsDirectory });
   const agentLoop = new AgentLoop({ providerRegistry, providerConfig: providers, providerStore: resolvedProviderStore, toolRegistry, dispatcher: toolDispatcher, contextAssembler, memoryStore, projectStore, watcherStore, profileStore, imageGenerator, cloudAgentStore, cloudAdapters, assetsDirectory });
+  jobEngine.registerHandler("chat_turn", async ({ userId, job }) => [{
+    name: "Run background chat turn",
+    async run({ context, signal }) {
+      const input = job.payload || {};
+      await jobEngine.reportProgress(userId, job.id, 5, "Preparing your request");
+      const result = await agentLoop.run({
+        userId,
+        messages: cleanMessages(input.messages),
+        dashboardState: input.dashboardState || {},
+        mode: ["auto", "light", "standard", "work"].includes(input.mode) ? input.mode : "auto",
+        workingMode: resolveWorkingMode(input.workingMode).id,
+        projectId: input.projectId || null,
+        agentProvider: ["local", "gemini", "openai"].includes(input.agentProvider) ? input.agentProvider : "local",
+        turnId: job.turnId || job.id,
+        signal,
+        onProgress: (event) => {
+          const progress = event?.type === "tool_start" ? 35 : 15;
+          const detail = event?.toolName ? `Using ${String(event.toolName).slice(0, 80)}` : "Working on your request";
+          jobEngine.reportProgress(userId, job.id, progress, detail).catch(() => {});
+        }
+      });
+      if (result.status === "timeout") throw Object.assign(new Error(result.message || "Chat task exceeded its processing budget."), { code: "CHAT_TASK_TIMEOUT" });
+      const assistantMessage = String(result.message || "The background task finished without a response.").slice(0, 12000);
+      await jobEngine.reportProgress(userId, job.id, 90, "Saving the response to your conversation");
+      await conversationStore.appendMessage(userId, job.conversationId, {
+        role: "assistant",
+        content: assistantMessage,
+        taskId: job.id,
+        afterTaskId: job.turnId,
+        metrics: result.metrics,
+        provenance: result.provenance
+      });
+      context.summary = assistantMessage;
+      if (result.status === "awaiting_user_approval") {
+        return { awaitingApproval: true, pendingActionId: result.actionId, summary: "Paused for explicit user approval.", artifact: { summary: assistantMessage, status: "awaiting_approval", actionId: result.actionId || null } };
+      }
+      return { summary: assistantMessage };
+    }
+  }]);
 
   const hasIdentityHeaders = (headers = {}) => Boolean(
     headers["x-alfie-identity-signature"] ||
@@ -339,7 +388,7 @@ export function createAlfieCoreServer({
           "deterministic-watcher-framework", "attention-budget-router", "dry-run-simulation-receipts",
           "workflow-learning-profile", "context-capsules", "knowledge-graph",
           "sqlite-wal-storage", "fts5-workspace-search", "hybrid-semantic-retrieval",
-          "modular-integration-suite", "async-job-engine", "bounded-multi-agent-workshop", "background-workshop-worker", "queued-job-recovery-on-reconnect", "safe-interruption-after-core-restart",
+          "modular-integration-suite", "async-job-engine", "bounded-multi-agent-workshop", "background-workshop-worker", "queued-job-recovery-on-reconnect", "safe-interruption-after-core-restart", "background-chat-task-submission", "task-linked-conversation-persistence", "background-task-approval-resolution",
           "local-hybrid-voice-loop", "life-continuity-reflections", "ambient-hardware-bridges",
           "optional-virtual-room", "sovereign-encrypted-vault", "workspace-self-audit-diagnostics",
           "scoped-peer-client-tokens", "peer-quick-capture-api", "deterministic-playbooks",
@@ -347,7 +396,7 @@ export function createAlfieCoreServer({
           "intent-based-context-assembly", "strict-json-schema-tool-validation",
           "read-draft-write-risk-tiers", "persistent-pending-actions", "explicit-approve-reject",
           "untrusted-data-envelopes", "tool-call-deduplication", "four-step-turn-budget",
-          "30-minute-wall-clock-budget", "35-minute-chat-transport-timeout", "15-second-stream-heartbeats", "tool-output-truncation", "signed-identity-provider-contract",
+          "30-minute-wall-clock-budget", "35-minute-chat-transport-timeout", "15-second-stream-heartbeats", "30-minute-provider-request-timeout", "tool-output-truncation", "signed-identity-provider-contract",
           "conversation-persistence", "conversation-snapshot-migration", "projects", "context-handoff",
           "vram-monitoring", "memory-crud", "memory-provenance", "ranked-memory-retrieval",
           "untrusted-memory-context", "memory-search-tool", "memory-read-tool",
@@ -453,11 +502,30 @@ export function createAlfieCoreServer({
         }
         if (isToolApproval && req.method === "POST") {
           const body = await readJsonBody(req);
-          return json(res, 200, await toolDispatcher.approve(identity.userId, body.actionId || body.approvalId));
+          const actionId = body.actionId || body.approvalId;
+          const result = await toolDispatcher.approve(identity.userId, actionId);
+          const waitingJobs = await jobStore.list(identity.userId, { status: "awaiting_approval", limit: 100 });
+          for (const job of waitingJobs.filter((item) => item.pendingActionId === actionId)) {
+            await jobStore.update(identity.userId, job.id, (current, nowIso) => current.status !== "awaiting_approval" ? current : ({
+              ...current, status: "completed", progress: 100, pendingActionId: null,
+              artifact: { ...(current.artifact || {}), approvalOutcome: "approved", summary: "The requested action was approved and executed." },
+              checkpoints: [...current.checkpoints.slice(-24), { at: nowIso, step: current.stepsCompleted, status: "completed", summary: "User approved the pending action." }]
+            }));
+          }
+          return json(res, 200, result);
         }
         if (isToolRejection && req.method === "POST") {
           const body = await readJsonBody(req);
-          return json(res, 200, await toolDispatcher.reject(identity.userId, body.actionId));
+          const actionId = body.actionId;
+          const result = await toolDispatcher.reject(identity.userId, actionId);
+          const waitingJobs = await jobStore.list(identity.userId, { status: "awaiting_approval", limit: 100 });
+          for (const job of waitingJobs.filter((item) => item.pendingActionId === actionId)) {
+            await jobStore.update(identity.userId, job.id, (current, nowIso) => current.status !== "awaiting_approval" ? current : ({
+              ...current, status: "cancelled", pendingActionId: null, error: "The user rejected the pending action.",
+              checkpoints: [...current.checkpoints.slice(-24), { at: nowIso, step: current.stepsCompleted, status: "cancelled", summary: "User rejected the pending action." }]
+            }));
+          }
+          return json(res, 200, result);
         }
         if (isToolExecution && req.method === "POST") {
           return json(res, 410, { error: "Direct tool execution is disabled. Use plan, then explicit user approval." });
@@ -946,19 +1014,23 @@ export function createAlfieCoreServer({
             status: url.searchParams.get("status") || "",
             limit: url.searchParams.get("limit") || 40
           });
-          return json(res, 200, { jobs });
+          return json(res, 200, { jobs: jobs.map(publicJob) });
         }
         if (url.pathname === "/v1/jobs" && req.method === "POST") {
           return json(res, 400, { error: "Submit a typed task through its dedicated endpoint. Arbitrary job kinds are not executable." });
         }
         if (jobMatch && req.method === "GET") {
           await jobEngine.recoverUser(identity.userId);
-          return json(res, 200, { job: await jobStore.get(identity.userId, jobMatch[1]) });
+          return json(res, 200, { job: publicJob(await jobStore.get(identity.userId, jobMatch[1])) });
         }
         if (jobCancelMatch && req.method === "POST") {
           const body = await readJsonBody(req);
+          const existing = await jobStore.get(identity.userId, jobCancelMatch[1]);
+          if (existing.status === "awaiting_approval" && existing.pendingActionId) {
+            await toolDispatcher.reject(identity.userId, existing.pendingActionId);
+          }
           const cancelled = await jobEngine.cancel(identity.userId, jobCancelMatch[1], body.reason || "Cancelled by user");
-          return json(res, 200, { job: cancelled });
+          return json(res, 200, { job: publicJob(cancelled) });
         }
       } catch (error) {
         return json(res, error.status || 500, { error: error.message || "Job operation failed.", ...(error.code ? { code: error.code } : {}) });
@@ -1467,6 +1539,7 @@ export function createAlfieCoreServer({
           return json(res, 200, await conversationStore.importLegacy(identity.userId, body.database || body, body.sourceKey || "petrio-server"));
         }
         if (isConversationCollection && req.method === "GET") {
+          await jobEngine.recoverUser(identity.userId);
           const projectId = url.searchParams.get("projectId") || undefined;
           return json(res, 200, { conversations: await conversationStore.list(identity.userId, { projectId }) });
         }
@@ -1508,6 +1581,7 @@ export function createAlfieCoreServer({
           return json(res, 201, { conversation, handoff: brief });
         }
         if (conversationMatch && req.method === "GET") {
+          await jobEngine.recoverUser(identity.userId);
           const conversation = await conversationStore.get(identity.userId, conversationMatch[1]);
           return json(res, 200, { conversation });
         }
@@ -1770,6 +1844,48 @@ export function createAlfieCoreServer({
       }
     }
 
+
+    if (req.method === "POST" && url.pathname === "/v1/chat/tasks") {
+      try {
+        const identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search });
+        const body = await readJsonBody(req);
+        const conversationId = String(body.conversationId || "");
+        if (!/^[a-f0-9-]{36}$/i.test(conversationId)) throw Object.assign(new Error("A valid conversationId is required for a background chat task."), { status: 400 });
+        const messages = cleanMessages(body.messages);
+        const lastMessage = messages[messages.length - 1];
+        if (lastMessage.role !== "user") throw Object.assign(new Error("The final chat message must be a user message."), { status: 400 });
+        await conversationStore.get(identity.userId, conversationId);
+        const turnId = /^[a-f0-9-]{36}$/i.test(String(body.turnId || "")) ? String(body.turnId) : randomUUID();
+        const projectId = typeof body.projectId === "string" && /^[a-f0-9-]{36}$/i.test(body.projectId) ? body.projectId : null;
+        if (projectId) await projectStore.get(identity.userId, projectId);
+        const taskPayload = {
+          messages,
+          dashboardState: body.dashboardState && typeof body.dashboardState === "object" && !Array.isArray(body.dashboardState) ? body.dashboardState : {},
+          mode: ["auto", "light", "standard", "work"].includes(body.mode) ? body.mode : "auto",
+          workingMode: resolveWorkingMode(body.workingMode).id,
+          projectId,
+          agentProvider: ["local", "gemini", "openai"].includes(body.agentProvider) ? body.agentProvider : "local"
+        };
+        if (Buffer.byteLength(JSON.stringify(taskPayload), "utf8") > 256 * 1024) throw Object.assign(new Error("Background chat input exceeds the 256 KB limit."), { status: 413 });
+        await conversationStore.appendMessage(identity.userId, conversationId, { role: "user", content: lastMessage.content, taskId: turnId });
+        const task = await jobStore.create(identity.userId, {
+          kind: "chat_turn",
+          title: "Background chat task",
+          objective: "",
+          conversationId,
+          turnId,
+          idempotencyKey: turnId,
+          projectId,
+          maxSteps: 4,
+          payload: taskPayload
+        });
+        if (task.status === "queued") jobEngine.enqueue(identity.userId, task);
+        const terminal = ["completed", "failed", "cancelled", "interrupted"].includes(task.status);
+        return json(res, terminal ? 200 : 202, { job: publicJob(task) });
+      } catch (error) {
+        return json(res, error.status || 500, { error: error.message || "Background chat task could not be submitted.", ...(error.code ? { code: error.code } : {}) });
+      }
+    }
 
     if (req.method === "POST" && url.pathname === "/v1/chat/stream") {
       const controller = new AbortController();

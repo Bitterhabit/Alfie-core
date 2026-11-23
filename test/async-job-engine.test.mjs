@@ -89,3 +89,34 @@ test("worker recovery interrupts unsafe running work and requeues only queued ty
   assert.equal(result.status, "completed");
   assert.equal(executions, 1);
 });
+
+test("chat task payloads are bounded, private to the owner, and idempotent by turn key", async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-chat-job-payload-"));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const store = new AsyncJobStore({ dataDirectory: directory });
+  const input = {
+    kind: "chat_turn", title: "Build a page", objective: "Create an HTML page",
+    conversationId: "11111111-1111-4111-8111-111111111111",
+    turnId: "22222222-2222-4222-8222-222222222222",
+    idempotencyKey: "22222222-2222-4222-8222-222222222222",
+    payload: { messages: [{ role: "user", content: "Create an HTML page" }], mode: "work" }
+  };
+  const first = await store.create("chat-user", input);
+  const retry = await store.create("chat-user", input);
+  assert.equal(retry.id, first.id);
+  assert.deepEqual(retry.payload, input.payload);
+  await assert.rejects(() => store.create("chat-user", { ...input, payload: { messages: [] } }), { status: 409, code: "JOB_IDEMPOTENCY_CONFLICT" });
+  assert.equal((await store.list("other-user")).length, 0);
+  await assert.rejects(() => store.create("chat-user", { title: "Oversized", kind: "chat_turn", payload: { text: "x".repeat(300 * 1024) } }), { status: 413 });
+});
+
+test("cancelling an approval-paused job clears its pending action reference", async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-job-approval-cancel-"));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const store = new AsyncJobStore({ dataDirectory: directory });
+  const job = await store.create("user-cancel", { title: "Approval task" });
+  await store.update("user-cancel", job.id, (current) => ({ ...current, status: "awaiting_approval", pendingActionId: "pending-action-1" }));
+  const cancelled = await store.cancel("user-cancel", job.id, "Cancelled by user");
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(cancelled.pendingActionId, null);
+});

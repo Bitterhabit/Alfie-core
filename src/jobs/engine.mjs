@@ -81,14 +81,35 @@ export class AsyncJobStore {
     const maxSteps = Math.max(1, Math.min(20, Math.floor(Number(input.maxSteps) || 6)));
     const maxDurationMs = Math.max(5000, Math.min(MAX_JOB_DURATION_MS, Math.floor(Number(input.maxDurationMs) || DEFAULT_JOB_DURATION_MS)));
     const tokenBudget = Math.max(500, Math.min(32000, Math.floor(Number(input.tokenBudget) || 4000)));
+    const conversationId = UUID_PATTERN.test(String(input.conversationId || "")) ? String(input.conversationId) : null;
+    const turnId = UUID_PATTERN.test(String(input.turnId || "")) ? String(input.turnId) : null;
+    const idempotencyKey = cleanString(input.idempotencyKey || "", 80) || null;
+    let payload = null;
+    if (input.payload && typeof input.payload === "object" && !Array.isArray(input.payload)) {
+      try { payload = JSON.parse(JSON.stringify(input.payload)); } catch { throw Object.assign(new Error("Task payload must be JSON serializable."), { status: 400 }); }
+      if (Buffer.byteLength(JSON.stringify(payload), "utf8") > 256 * 1024) throw Object.assign(new Error("Task payload exceeds the 256 KB limit."), { status: 413 });
+    }
 
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
+      if (idempotencyKey) {
+        const existing = store.jobs.find((item) => item.idempotencyKey === idempotencyKey);
+        if (existing) {
+          const sameTask = existing.kind === kind && existing.conversationId === conversationId && existing.turnId === turnId
+            && JSON.stringify(existing.payload || null) === JSON.stringify(payload || null);
+          if (!sameTask) throw Object.assign(new Error("This idempotency key was already used for a different task."), { status: 409, code: "JOB_IDEMPOTENCY_CONFLICT" });
+          return existing;
+        }
+      }
       const nowIso = this.now();
       const job = {
         id: this.uuid(),
         ownerId: userId,
         kind,
+        conversationId,
+        turnId,
+        idempotencyKey,
+        payload,
         role: cleanString(input.role || "", 40) || null,
         title,
         objective: cleanString(input.objective || "", 1200),
@@ -149,6 +170,7 @@ export class AsyncJobStore {
       return {
         ...job,
         status: "cancelled",
+        pendingActionId: null,
         error: cleanString(reason, 200),
         checkpoints: [
           ...job.checkpoints.slice(-24),
@@ -222,6 +244,19 @@ export class AsyncJobEngine {
     });
   }
 
+  async reportProgress(userId, jobId, progress, summary = "Working") {
+    const safeProgress = Math.max(0, Math.min(99, Math.floor(Number(progress) || 0)));
+    const safeSummary = cleanString(summary, 240) || "Working";
+    return this.jobStore.update(userId, jobId, (job, nowIso) => {
+      if (job.status !== "running") return job;
+      return {
+        ...job,
+        progress: Math.max(job.progress || 0, safeProgress),
+        checkpoints: [...job.checkpoints.slice(-24), { at: nowIso, step: job.stepsCompleted, status: "running", summary: safeSummary }]
+      };
+    });
+  }
+
   async recoverUser(userId) {
     const jobs = await this.jobStore.list(userId, { status: "all", limit: 100 });
     for (const job of jobs) {
@@ -285,6 +320,10 @@ export class AsyncJobEngine {
       };
     });
     if (controller.signal.aborted || current.status === "cancelled") return current;
+    const heartbeat = setInterval(() => {
+      this.jobStore.update(userId, job.id, (cur, nowIso) => cur.status !== "running" ? cur : ({ ...cur, heartbeatAt: nowIso })).catch(() => {});
+    }, 15_000);
+    heartbeat.unref?.();
 
     const context = {
       lowestTrustTouched: "user_authored",
@@ -337,6 +376,7 @@ export class AsyncJobEngine {
             ...cur,
             status: "awaiting_approval",
             pendingActionId: stepResult.pendingActionId || null,
+            artifact: stepResult.artifact || cur.artifact,
             stepsCompleted: i + 1,
             progress: Math.round(((i + 1) / Math.max(1, boundedSteps.length)) * 100),
             lowestTrustTouched: context.lowestTrustTouched,
@@ -450,6 +490,7 @@ export class AsyncJobEngine {
       });
       return current;
     } finally {
+      clearInterval(heartbeat);
       this.activeControllers.delete(controllerKey);
     }
   }

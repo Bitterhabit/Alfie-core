@@ -9,6 +9,7 @@ import {
   isPrivateOrReservedIp
 } from "../watchers/engine.mjs";
 
+export const DEFAULT_PROVIDER_CHAT_TIMEOUT_MS = 30 * 60 * 1000;
 const MODES = new Set(["auto", "light", "standard", "work"]);
 const ENDPOINT_MODES = new Set(["light", "standard", "work"]);
 
@@ -620,13 +621,13 @@ export class ProviderRegistry {
     return { ...candidates[0], health };
   }
 
-  async complete(config, messages, requestedMode = config.mode, { signal } = {}) {
+  async complete(config, messages, requestedMode = config.mode, { signal, timeoutMs = DEFAULT_PROVIDER_CHAT_TIMEOUT_MS } = {}) {
     const { candidates, health } = await this.rankedCandidates(config, requestedMode);
     const failures = [];
     for (let index = 0; index < candidates.length; index += 1) {
       const candidate = candidates[index];
       try {
-        const result = await this.chat(candidate.endpoint, messages, { stream: false, signal });
+        const result = await this.chat(candidate.endpoint, messages, { stream: false, signal, timeoutMs });
         return {
           ...candidate,
           health,
@@ -640,13 +641,13 @@ export class ProviderRegistry {
     throw new Error(`All available Alfie providers failed. ${failures.join("; ")}`);
   }
 
-  async openStream(config, messages, requestedMode = config.mode, { signal } = {}) {
+  async openStream(config, messages, requestedMode = config.mode, { signal, timeoutMs = DEFAULT_PROVIDER_CHAT_TIMEOUT_MS } = {}) {
     const { candidates, health } = await this.rankedCandidates(config, requestedMode);
     const failures = [];
     for (let index = 0; index < candidates.length; index += 1) {
       const candidate = candidates[index];
       try {
-        const response = await this.chat(candidate.endpoint, messages, { stream: true, signal });
+        const response = await this.chat(candidate.endpoint, messages, { stream: true, signal, timeoutMs });
         return {
           ...candidate,
           health,
@@ -660,7 +661,7 @@ export class ProviderRegistry {
     throw new Error(`All available Alfie streaming providers failed. ${failures.join("; ")}`);
   }
 
-  async chat(endpoint, messages, { stream = false, signal } = {}) {
+  async chat(endpoint, messages, { stream = false, signal, timeoutMs = DEFAULT_PROVIDER_CHAT_TIMEOUT_MS } = {}) {
     const validatedTarget = await this.assertTargetAllowed(endpoint);
     const body = endpoint.provider === "ollama"
       ? {
@@ -676,7 +677,9 @@ export class ProviderRegistry {
       headers: headersFor(endpoint),
       body: JSON.stringify(body),
       redirect: "error",
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000)
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(Math.max(1000, Math.min(DEFAULT_PROVIDER_CHAT_TIMEOUT_MS, Number(timeoutMs) || DEFAULT_PROVIDER_CHAT_TIMEOUT_MS)))])
+        : AbortSignal.timeout(Math.max(1000, Math.min(DEFAULT_PROVIDER_CHAT_TIMEOUT_MS, Number(timeoutMs) || DEFAULT_PROVIDER_CHAT_TIMEOUT_MS)))
     };
     const response = this.usesDefaultFetch
       ? await fetchPinnedProviderRequest(endpointFor(endpoint, "chat"), requestOptions, validatedTarget)

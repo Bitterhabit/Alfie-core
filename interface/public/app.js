@@ -3055,6 +3055,7 @@ async function loadConversation(id) {
     state.activeConversation = payload.conversation || null;
     state.messages = payload.conversation?.messages || [];
     renderMessages();
+    await restoreBackgroundTaskNotice(id);
     syncChatContextBar();
     renderVramWarningBanner();
     const list = await api("/api/core/conversations");
@@ -4180,16 +4181,105 @@ function renderMessages() {
   scrollChatToBottom({ force: true });
 }
 
-async function persistMessage(role, content, conversationId = state.activeConversationId, metrics = null, provenance = null) {
+async function persistMessage(role, content, conversationId = state.activeConversationId, metrics = null, provenance = null, taskId = null) {
   const payload = await api("/api/core/conversations/" + encodeURIComponent(conversationId) + "/messages", {
     method: "POST",
-    body: JSON.stringify({ role, content, ...(metrics ? { metrics } : {}), ...(provenance ? { provenance } : {}) })
+    body: JSON.stringify({ role, content, ...(metrics ? { metrics } : {}), ...(provenance ? { provenance } : {}), ...(taskId ? { taskId } : {}) })
   });
   if (conversationId === state.activeConversationId) {
-    state.messages.push(payload.message || { role, content, ...(metrics ? { metrics } : {}), ...(provenance ? { provenance } : {}) });
+    state.messages.push(payload.message || { role, content, ...(metrics ? { metrics } : {}), ...(provenance ? { provenance } : {}), ...(taskId ? { taskId } : {}) });
     syncChatContextBar();
   }
   return payload.message;
+}
+
+async function restoreBackgroundTaskNotice(conversationId) {
+  try {
+    const response = await api("/api/core/jobs?limit=100");
+    const jobs = (response.jobs || []).filter((job) => job.kind === "chat_turn" && job.conversationId === conversationId).slice(0, 3);
+    for (const job of jobs) {
+      if (job.status === "completed") continue;
+      const hasAssistantResult = state.messages.some((message) => message.taskId === job.id && message.role === "assistant");
+      if (hasAssistantResult && job.status !== "awaiting_approval") continue;
+      let notice = "Alfie is still working on this background task.";
+      if (job.status === "queued") notice = "Your background task is queued and will start shortly.";
+      else if (job.status === "awaiting_approval") notice = "This background task is waiting for your approval.";
+      else if (job.status === "interrupted") notice = "This task was interrupted when Alfie Core restarted. It was not automatically repeated; send the request again if you want to retry.";
+      else if (job.status === "failed") notice = "This background task failed: " + (job.error || "No error details were recorded.");
+      else if (job.status === "cancelled") notice = "This background task was cancelled.";
+      const body = appendMessageElement({ role: "assistant", content: notice });
+      if (job.status === "queued" || job.status === "running" || job.status === "awaiting_approval") {
+        watchBackgroundChatTask(job.id, conversationId, body, null);
+      }
+    }
+  } catch {}
+}
+
+const activeBackgroundTaskPolls = new Set();
+
+async function watchBackgroundChatTask(jobId, conversationId, assistantBody, indicator) {
+  if (activeBackgroundTaskPolls.has(jobId)) return;
+  activeBackgroundTaskPolls.add(jobId);
+  const finishIndicator = () => {
+    if (indicator) { indicator.stop(); indicator.element.remove(); }
+    activeBackgroundTaskPolls.delete(jobId);
+  };
+  const poll = async () => {
+    try {
+      const response = await api("/api/core/jobs/" + encodeURIComponent(jobId));
+      const job = response.job;
+      if (job.status === "queued" || job.status === "running") {
+        const checkpoint = job.checkpoints?.[job.checkpoints.length - 1]?.summary;
+        indicator?.setStage(checkpoint || (job.status === "queued" ? "Waiting for Alfie…" : "Still working in the background…"));
+        setTimeout(poll, 2500);
+        return;
+      }
+      if (job.status === "completed" && state.activeConversationId === conversationId && state.sending) {
+        setTimeout(poll, 1000);
+        return;
+      }
+      finishIndicator();
+      if (job.status === "awaiting_approval") {
+        if (assistantBody?.isConnected) {
+          assistantBody.textContent = job.artifact?.summary || "This task is waiting for your approval. Open Tools & access to review the action.";
+          const card = document.createElement("section");
+          card.className = "chat-approval-card";
+          const heading = document.createElement("strong");
+          heading.textContent = "Your approval is needed";
+          const review = document.createElement("button");
+          review.type = "button";
+          review.className = "secondary-button";
+          review.textContent = "Review in Tools & access";
+          review.addEventListener("click", () => { setView("tools"); loadToolsAndApprovals().catch((error) => toast(error.message)); });
+          card.append(heading, review);
+          assistantBody.closest(".message")?.appendChild(card);
+        }
+        toast("Background task is waiting for your approval.");
+        await loadToolsAndApprovals();
+        return;
+      }
+      if (job.status === "completed") {
+        if (state.activeConversationId === conversationId && state.sending) {
+          setTimeout(poll, 1000);
+          return;
+        }
+        if (state.activeConversationId === conversationId) await loadConversation(conversationId);
+        toast("Alfie finished the background task.");
+        window.alfieSoul?.pulse("completed", 1800, "idle", "purple");
+        return;
+      }
+      const failure = job.error || `Background task ${job.status}.`;
+      if (assistantBody?.isConnected) {
+        renderMarkdown(assistantBody, "I could not complete that background task. " + failure);
+        assistantBody.dataset.rawContent = assistantBody.textContent || failure;
+      }
+      toast(failure);
+    } catch (error) {
+      indicator?.setStage("Reconnecting to background task…");
+      setTimeout(poll, 5000);
+    }
+  };
+  setTimeout(poll, 1200);
 }
 
 async function sendMessage(rawText) {
@@ -4304,6 +4394,46 @@ async function sendMessage(rawText) {
 
     if (!state.activeConversationId) await newConversation({ fromSend: true });
     const conversationId = state.activeConversationId;
+    if ($("#background-task-toggle")?.checked) {
+      const turnId = crypto.randomUUID();
+      const outgoingMessages = [];
+      if (state.activeConversation?.handoffContext) {
+        outgoingMessages.push({ role: "user", content: "[Carried-over context from previous conversation]\n" + state.activeConversation.handoffContext });
+      }
+      const recentSlice = state.messages.slice(outgoingMessages.length ? -14 : -15).map(({ role, content: text, reaction }) => ({ role, content: text, ...(reaction ? { reaction } : {}) }));
+      outgoingMessages.push(...recentSlice, { role: "user", content });
+      const activeProjectId = getConversationProjectId(state.activeConversation);
+      const activeProject = findProjectById(activeProjectId);
+      const dashboardState = activeProject?.description ? { attachedContext: `Project: ${activeProject.name}\n${activeProject.description}` } : {};
+      const selectedAgentProvider = $("#agent-provider")?.value || state.selectedAgentProvider || "local";
+      const workingMode = $("#working-mode-select")?.value || state.workingMode || "companion";
+      await persistMessage("user", content, conversationId, null, null, turnId);
+      renderMessages();
+      assistantBody = appendMessageElement({ role: "assistant", content: "" });
+      thinking = createThinkingIndicator();
+      assistantBody.appendChild(thinking.element);
+      thinking.setStage("Submitting background task…");
+      chatAutoScrollEnabled = true;
+      scrollChatToBottom({ force: true });
+      const submitted = await api("/api/core/chat/tasks", {
+        method: "POST",
+        body: JSON.stringify({
+          conversationId, turnId, messages: outgoingMessages,
+          mode: $("#model-mode").value, workingMode,
+          projectId: activeProject?.id || null,
+          agentProvider: selectedAgentProvider, dashboardState
+        })
+      });
+      const backgroundToggle = $("#background-task-toggle");
+      if (backgroundToggle) backgroundToggle.checked = false;
+      const backgroundIndicator = thinking;
+      thinking = null;
+      backgroundIndicator?.setStage("Alfie is working in the background…");
+      window.alfieSoul?.setState("working", "amber");
+      toast("Task started. Alfie will keep working if you leave this chat.");
+      watchBackgroundChatTask(submitted.job.id, conversationId, assistantBody, backgroundIndicator);
+      return;
+    }
     await persistMessage("user", content, conversationId);
     renderMessages();
     assistantBody = appendMessageElement({ role: "assistant", content: "" });
@@ -8434,7 +8564,7 @@ async function loadWorkshop() {
       head.className = "workshop-job-head";
       const titleWrap = document.createElement("div");
       const title = document.createElement("strong");
-      const roleLabel = job.role || job.roleId || "specialist";
+      const roleLabel = job.kind === "chat_turn" ? "Chat task" : (job.role || job.roleId || "specialist");
       title.textContent = job.title || roleLabel;
       const meta = document.createElement("p");
       meta.className = "muted workshop-job-meta";
