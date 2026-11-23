@@ -425,7 +425,10 @@ export class ConversationStore {
         ...(provenance ? { provenance } : {}),
         ...(reaction ? { reaction, reactedAt: this.now() } : {})
       };
-      conversation.messages.push(message);
+      const afterTaskId = CONVERSATION_ID_PATTERN.test(String(input.afterTaskId || "")) ? String(input.afterTaskId) : null;
+      const afterIndex = afterTaskId ? conversation.messages.findIndex((item) => item.taskId === afterTaskId && item.role === "user") : -1;
+      if (afterIndex >= 0 && role === "assistant") conversation.messages.splice(afterIndex + 1, 0, message);
+      else conversation.messages.push(message);
       conversation.updatedAt = message.createdAt;
       if (role === "user" && conversation.title === "New conversation") {
         conversation.title = content.replace(/\s+/g, " ").slice(0, 80);
