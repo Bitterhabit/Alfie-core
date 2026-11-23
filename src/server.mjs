@@ -375,7 +375,7 @@ export function createAlfieCoreServer({
           "deterministic-watcher-framework", "attention-budget-router", "dry-run-simulation-receipts",
           "workflow-learning-profile", "context-capsules", "knowledge-graph",
           "sqlite-wal-storage", "fts5-workspace-search", "hybrid-semantic-retrieval",
-          "modular-integration-suite", "async-job-engine", "bounded-multi-agent-workshop", "background-workshop-worker", "queued-job-recovery-on-reconnect", "safe-interruption-after-core-restart",
+          "modular-integration-suite", "async-job-engine", "bounded-multi-agent-workshop", "background-workshop-worker", "queued-job-recovery-on-reconnect", "safe-interruption-after-core-restart", "background-chat-task-submission", "task-linked-conversation-persistence", "background-task-approval-resolution",
           "local-hybrid-voice-loop", "life-continuity-reflections", "ambient-hardware-bridges",
           "optional-virtual-room", "sovereign-encrypted-vault", "workspace-self-audit-diagnostics",
           "scoped-peer-client-tokens", "peer-quick-capture-api", "deterministic-playbooks",
