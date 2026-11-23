@@ -1788,21 +1788,34 @@ export function createAlfieCoreServer({
           ensureStreamHeaders(200);
           writeStreamEvent(res, event);
         };
+        // Keep reverse proxies (including Cloudflare) aware that a long model turn is alive.
+        // Heartbeats carry no model content and do not alter the conversation transcript.
+        const heartbeat = setInterval(() => {
+          if (controller.signal.aborted || res.destroyed) return;
+          ensureStreamHeaders(200);
+          writeStreamEvent(res, { type: "heartbeat", at: new Date().toISOString() });
+        }, 15_000);
+        heartbeat.unref?.();
 
         const agentProvider = ["local", "gemini", "openai"].includes(body.agentProvider) ? body.agentProvider : "local";
         const workingMode = resolveWorkingMode(body.workingMode).id;
         const projectId = typeof body.projectId === "string" && /^[a-f0-9-]{36}$/i.test(body.projectId) ? body.projectId : null;
         const { config: userProviders } = await resolvedProviderStore.getEffectiveConfig(identity.userId);
-        const result = await agentLoop.run({
-          userId: identity.userId, messages: cleanMessages(body.messages),
-          dashboardState: body.dashboardState || {},
-          mode: ["auto", "light", "standard", "work"].includes(body.mode) ? body.mode : userProviders.mode,
-          workingMode,
-          projectId,
-          agentProvider,
-          turnId: body.turnId || randomUUID(), signal: controller.signal,
-          onProgress
-        });
+        let result;
+        try {
+          result = await agentLoop.run({
+            userId: identity.userId, messages: cleanMessages(body.messages),
+            dashboardState: body.dashboardState || {},
+            mode: ["auto", "light", "standard", "work"].includes(body.mode) ? body.mode : userProviders.mode,
+            workingMode,
+            projectId,
+            agentProvider,
+            turnId: body.turnId || randomUUID(), signal: controller.signal,
+            onProgress
+          });
+        } finally {
+          clearInterval(heartbeat);
+        }
         if (controller.signal.aborted) return;
         ensureStreamHeaders(result.status === "awaiting_user_approval" ? 202 : 200);
         writeStreamEvent(res, { type: "meta", status: result.status, steps: result.steps, ...(result.privacyReport ? { privacyReport: result.privacyReport } : {}), ...(result.provenance ? { provenance: result.provenance } : {}) });
