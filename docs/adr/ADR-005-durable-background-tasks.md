@@ -7,7 +7,7 @@
 
 A long-running task must not be coupled to the lifetime of the browser tab, chat HTTP request, or streaming connection. Raising request timeouts solves only slow interactive inference while the connection remains open. It does not allow a user to close Alfie, return later, inspect progress, or retrieve a completed result.
 
-The `AsyncJobStore` persists job records and bounded typed payloads. The single in-process worker now dispatches allow-listed `subagent_delegation` and `chat_turn` tasks outside the HTTP request. Chat turns are linked to their original conversation and turn ID; user/assistant message writes are idempotent, results survive browser disconnects, and explicit tool approvals resolve the paused task. An authenticated conversation or jobs request after reconnect re-dispatches persisted queued tasks and marks tasks found running after a Core restart as `interrupted` rather than replaying them. This is not yet the completed durable execution architecture: atomic cross-process leases, autonomous startup scanning, persisted cancellation requests, and restart-safe resumable checkpoints remain outstanding.
+The `AsyncJobStore` persists job records and bounded typed payloads. Provider chat requests now use the same 30-minute ceiling as the agent loop (with the existing 35-minute client transport allowance), rather than a hidden 30-second provider timeout. The single in-process worker now dispatches allow-listed `subagent_delegation` and `chat_turn` tasks outside the HTTP request. Chat turns are linked to their original conversation and turn ID; user/assistant message writes are idempotent, results survive browser disconnects, and explicit tool approvals resolve the paused task. An authenticated conversation or jobs request after reconnect re-dispatches persisted queued tasks and marks tasks found running after a Core restart as `interrupted` rather than replaying them. This is not yet the completed durable execution architecture: atomic cross-process leases, autonomous startup scanning, persisted cancellation requests, and restart-safe resumable checkpoints remain outstanding.
 
 ## Decision
 
@@ -39,7 +39,7 @@ Task payloads must be bounded and validated at submission. Sensitive prompt cont
 - The worker propagates an AbortSignal to provider and tool work and stops at safe checkpoints.
 - [x] Owner-scoped polling returns persisted status, checkpoints, and completed artifacts after reconnect.
 - [x] Background chat tasks preserve the original conversation association and attach the assistant result exactly once by task ID.
-- [x] The UI offers an explicit background-run toggle and polls job state while the chat remains open. Streaming progress is an optional transport over the same persisted state, not the source of truth.
+- [x] The UI offers an explicit background-run toggle, polls job state while the chat remains open, and restores task status when a conversation is reopened. Streaming progress is an optional transport over the same persisted state, not the source of truth.
 
 ### 3. Restart recovery and execution safety
 
