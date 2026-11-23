@@ -4358,6 +4358,44 @@ async function sendMessage(rawText) {
 
     if (!state.activeConversationId) await newConversation({ fromSend: true });
     const conversationId = state.activeConversationId;
+    if ($("#background-task-toggle")?.checked) {
+      const turnId = crypto.randomUUID();
+      const outgoingMessages = [];
+      if (state.activeConversation?.handoffContext) {
+        outgoingMessages.push({ role: "user", content: "[Carried-over context from previous conversation]\n" + state.activeConversation.handoffContext });
+      }
+      const recentSlice = state.messages.slice(outgoingMessages.length ? -15 : -16).map(({ role, content: text, reaction }) => ({ role, content: text, ...(reaction ? { reaction } : {}) }));
+      outgoingMessages.push(...recentSlice, { role: "user", content });
+      const activeProjectId = getConversationProjectId(state.activeConversation);
+      const activeProject = findProjectById(activeProjectId);
+      const dashboardState = activeProject?.description ? { attachedContext: `Project: ${activeProject.name}\n${activeProject.description}` } : {};
+      const selectedAgentProvider = $("#agent-provider")?.value || state.selectedAgentProvider || "local";
+      const workingMode = $("#working-mode-select")?.value || state.workingMode || "companion";
+      await persistMessage("user", content, conversationId, null, null, turnId);
+      renderMessages();
+      assistantBody = appendMessageElement({ role: "assistant", content: "" });
+      thinking = createThinkingIndicator();
+      assistantBody.appendChild(thinking.element);
+      thinking.setStage("Submitting background task…");
+      chatAutoScrollEnabled = true;
+      scrollChatToBottom({ force: true });
+      const submitted = await api("/api/core/chat/tasks", {
+        method: "POST",
+        body: JSON.stringify({
+          conversationId, turnId, messages: outgoingMessages,
+          mode: $("#model-mode").value, workingMode,
+          projectId: activeProject?.id || null,
+          agentProvider: selectedAgentProvider, dashboardState
+        })
+      });
+      const backgroundIndicator = thinking;
+      thinking = null;
+      backgroundIndicator?.setStage("Alfie is working in the background…");
+      window.alfieSoul?.setState("working", "amber");
+      toast("Task started. Alfie will keep working if you leave this chat.");
+      watchBackgroundChatTask(submitted.job.id, conversationId, assistantBody, backgroundIndicator);
+      return;
+    }
     await persistMessage("user", content, conversationId);
     renderMessages();
     assistantBody = appendMessageElement({ role: "assistant", content: "" });
