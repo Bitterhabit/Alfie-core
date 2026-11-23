@@ -393,7 +393,7 @@ export function createAlfieCoreServer({
           "intent-based-context-assembly", "strict-json-schema-tool-validation",
           "read-draft-write-risk-tiers", "persistent-pending-actions", "explicit-approve-reject",
           "untrusted-data-envelopes", "tool-call-deduplication", "four-step-turn-budget",
-          "30-minute-wall-clock-budget", "35-minute-chat-transport-timeout", "15-second-stream-heartbeats", "tool-output-truncation", "signed-identity-provider-contract",
+          "30-minute-wall-clock-budget", "35-minute-chat-transport-timeout", "15-second-stream-heartbeats", "30-minute-provider-request-timeout", "tool-output-truncation", "signed-identity-provider-contract",
           "conversation-persistence", "conversation-snapshot-migration", "projects", "context-handoff",
           "vram-monitoring", "memory-crud", "memory-provenance", "ranked-memory-retrieval",
           "untrusted-memory-context", "memory-search-tool", "memory-read-tool",
