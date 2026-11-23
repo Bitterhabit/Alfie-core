@@ -253,3 +253,17 @@ export async function createWorkshopTask({
 
   return { job, steps };
 }
+
+
+/**
+ * Compatibility path for deterministic playbooks that intentionally await
+ * their bounded specialist delegation. HTTP workshop submissions use the
+ * background worker instead.
+ */
+export async function runWorkshopDelegation(options) {
+  const task = await createWorkshopTask({
+    ...options,
+    stores: { ...(options.stores || {}), jobStore: options.jobEngine.jobStore }
+  });
+  return options.jobEngine.execute(options.userId, task.job, task.steps);
+}
