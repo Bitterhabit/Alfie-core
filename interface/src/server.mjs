@@ -570,8 +570,16 @@ export function createAlfieInterfaceServer({
         if (method === "GET" && url.pathname === "/api/core/integrations/status") {
           return json(res, 200, await coreClient.getIntegrationsStatus(userId));
         }
+        if (method === "POST" && url.pathname === "/api/core/chat/tasks") {
+          requireCsrf(req, session);
+          return json(res, 202, await coreClient.createChatTask(userId, await readJson(req)));
+        }
         if (method === "GET" && url.pathname === "/api/core/jobs") {
           return json(res, 200, await coreClient.listJobs(userId, url.searchParams.toString()));
+        }
+        const jobMatch = /^\/api\/core\/jobs\/([a-f0-9-]{36})$/.exec(url.pathname);
+        if (method === "GET" && jobMatch) {
+          return json(res, 200, await coreClient.getJob(userId, jobMatch[1]));
         }
         if (method === "POST" && url.pathname === "/api/core/jobs") {
           requireCsrf(req, session);
@@ -587,7 +595,7 @@ export function createAlfieInterfaceServer({
         }
         if (method === "POST" && url.pathname === "/api/core/workshop/delegate") {
           requireCsrf(req, session);
-          return json(res, 201, await coreClient.delegateWorkshopTask(userId, await readJson(req)));
+          return json(res, 202, await coreClient.delegateWorkshopTask(userId, await readJson(req)));
         }
         if (method === "POST" && url.pathname === "/api/core/privacy/airlock/preview") {
           requireCsrf(req, session);
