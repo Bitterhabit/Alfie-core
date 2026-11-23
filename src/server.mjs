@@ -1767,15 +1767,15 @@ export function createAlfieCoreServer({
 
     if (req.method === "POST" && url.pathname === "/v1/chat/stream") {
       const controller = new AbortController();
+      let streamHeadersSent = false;
       req.on("aborted", () => controller.abort());
       res.on("close", () => { if (!res.writableEnded) controller.abort(); });
       try {
         const identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search });
         const body = await readJsonBody(req);
-        let headersSent = false;
         const ensureStreamHeaders = (status = 200) => {
-          if (headersSent || res.headersSent) return;
-          headersSent = true;
+          if (streamHeadersSent || res.headersSent) return;
+          streamHeadersSent = true;
           res.writeHead(status, {
             "content-type": "application/x-ndjson; charset=utf-8",
             "cache-control": "no-cache, no-transform",
@@ -1827,7 +1827,13 @@ export function createAlfieCoreServer({
         res.end();
       } catch (error) {
         if (controller.signal.aborted) return;
-        return json(res, Number.isInteger(error.status) ? error.status : 502, { error: error.message || "Alfie could not complete the response.", ...(error.code ? { code: error.code } : {}) });
+        const message = error.message || "Alfie could not complete the response.";
+        if (streamHeadersSent || res.headersSent) {
+          writeStreamEvent(res, { type: "error", error: message, ...(error.code ? { code: error.code } : {}) });
+          res.end();
+          return;
+        }
+        return json(res, Number.isInteger(error.status) ? error.status : 502, { error: message, ...(error.code ? { code: error.code } : {}) });
       }
       return;
     }
