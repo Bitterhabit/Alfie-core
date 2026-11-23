@@ -4409,6 +4409,7 @@ async function sendMessage(rawText) {
           }
           updateScrollToBottomIndicator();
         }
+        if (event.type === "error") throw new Error(event.error || "Alfie could not complete the response.");
         if (event.type === "done") finalEvent = event;
       }
       if (done) break;
