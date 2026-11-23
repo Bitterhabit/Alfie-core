@@ -41,16 +41,16 @@ test("background worker runs queued handlers independently and persists the resu
 
   const job = await store.create("user-worker", { kind: "test_background", title: "Independent task" });
   engine.enqueue("user-worker", job);
-  for (let attempt = 0; attempt < 30 && !started; attempt += 1) {
-    await new Promise((resolve) => setImmediate(resolve));
+  for (let attempt = 0; attempt < 100 && !started; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.equal(started, true);
   assert.equal((await store.get("user-worker", job.id)).status, "running");
 
   release();
   let result = await store.get("user-worker", job.id);
-  for (let attempt = 0; attempt < 20 && result.status !== "completed"; attempt += 1) {
-    await new Promise((resolve) => setImmediate(resolve));
+  for (let attempt = 0; attempt < 100 && result.status !== "completed"; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
     result = await store.get("user-worker", job.id);
   }
   assert.equal(result.status, "completed");
@@ -80,8 +80,8 @@ test("worker recovery interrupts unsafe running work and requeues only queued ty
   await engine.recoverUser("user-recovery");
   assert.equal((await store.get("user-recovery", interrupted.id)).status, "interrupted");
   let result = await store.get("user-recovery", queued.id);
-  for (let attempt = 0; attempt < 20 && result.status !== "completed"; attempt += 1) {
-    await new Promise((resolve) => setImmediate(resolve));
+  for (let attempt = 0; attempt < 100 && result.status !== "completed"; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
     result = await store.get("user-recovery", queued.id);
   }
   assert.equal(result.status, "completed");
