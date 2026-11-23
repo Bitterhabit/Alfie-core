@@ -1823,7 +1823,7 @@ export function createAlfieCoreServer({
         if (projectId) await projectStore.get(identity.userId, projectId);
         const task = await jobStore.create(identity.userId, {
           kind: "chat_turn",
-          title: lastMessage.content.replace(/\\s+/g, " ").slice(0, 72) || "Background chat task",
+          title: lastMessage.content.replace(/\s+/g, " ").slice(0, 72) || "Background chat task",
           objective: lastMessage.content.slice(0, 1200),
           conversationId,
           turnId,
