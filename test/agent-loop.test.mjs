@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AgentLoop } from "../src/agent/loop.mjs";
+import { AgentLoop, WALL_CLOCK_TIMEOUT, MAX_WALL_CLOCK_TIMEOUT } from "../src/agent/loop.mjs";
 import { ContextAssembler } from "../src/agent/contextAssembler.mjs";
 import { ToolRegistry } from "../src/tools/registry.mjs";
 
@@ -215,4 +215,18 @@ test("tool selection understands calendar, mail and memory language without wide
   assert.deepEqual(assembler.selectTools("Recall what I saved in my Garden about Petrio", registry, scopes).map((tool) => tool.id), ["memory.search"]);
   assert.deepEqual(assembler.selectTools("What's the weather tomorrow?", registry, scopes), []);
   assert.deepEqual(assembler.selectTools("What meetings do I have next week?", registry, ["mail:read"]), []);
+});
+
+
+test("interactive turns allow up to 30 minutes while retaining the four-step cap", () => {
+  assert.equal(WALL_CLOCK_TIMEOUT, 30 * 60 * 1000);
+  assert.equal(MAX_WALL_CLOCK_TIMEOUT, 30 * 60 * 1000);
+  const loop = new AgentLoop({
+    providerRegistry: { complete: async () => ({ result: { content: '{"type":"final","message":"ok"}' }, endpoint: { model: "test", provider: "ollama" } }) },
+    providerConfig: {}, toolRegistry: new ToolRegistry(),
+    dispatcher: { permissionStore: { list: async () => [] }, resetTurn() {}, dispatch: async () => ({}) },
+    contextAssembler: new ContextAssembler(), wallClockTimeout: 60 * 60 * 1000
+  });
+  assert.equal(loop.wallClockTimeout, 30 * 60 * 1000);
+  assert.equal(loop.maxSteps, 4);
 });

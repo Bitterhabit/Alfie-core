@@ -4377,6 +4377,9 @@ async function sendMessage(rawText) {
             if (host) host.scrollTop = host.scrollHeight;
           }
         }
+        if (event.type === "heartbeat" && thinking) {
+          thinking.setStage("Still working…");
+        }
         if (event.type === "meta" && event.steps > 1 && !event.toolId) {
           thinking?.setStage("processing step " + event.steps + "…");
           window.alfieSoul?.setState("working", "amber");
@@ -4406,6 +4409,7 @@ async function sendMessage(rawText) {
           }
           updateScrollToBottomIndicator();
         }
+        if (event.type === "error") throw new Error(event.error || "Alfie could not complete the response.");
         if (event.type === "done") finalEvent = event;
       }
       if (done) break;

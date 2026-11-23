@@ -2,6 +2,8 @@ function configurationError(message) {
   return Object.assign(new Error(message), { status: 503 });
 }
 
+export const CHAT_REQUEST_TIMEOUT_MS = 35 * 60 * 1000;
+
 export function createAlfieCoreClient({
   baseUrl = process.env.ALFIE_CORE_URL || "http://alfie-core:8780",
   serviceToken = process.env.ALFIE_CORE_SERVICE_TOKEN || "",
@@ -25,7 +27,7 @@ export function createAlfieCoreClient({
 
   const root = base.toString().replace(/\/$/, "");
 
-  async function request(userId, route, { method = "GET", body, signal, stream = false } = {}) {
+  async function request(userId, route, { method = "GET", body, signal, stream = false, timeoutMs: requestTimeoutMs = timeoutMs } = {}) {
     if (typeof route !== "string" || !route.startsWith("/v1/") || route.length > 2048 || /\s/.test(route)) {
       throw new TypeError("Alfie Core client routes must be versioned /v1 paths.");
     }
@@ -38,7 +40,7 @@ export function createAlfieCoreClient({
       ...identity
     };
     if (body !== undefined) headers["content-type"] = "application/json";
-    const timeout = AbortSignal.timeout(timeoutMs);
+    const timeout = AbortSignal.timeout(requestTimeoutMs);
     const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
     const response = await fetchImpl(url, {
       method: requestMethod,
@@ -68,9 +70,9 @@ export function createAlfieCoreClient({
     linkIdentity(userId, code) { return request(userId, "/v1/identity/link", { method: "POST", body: { code } }); },
     createStandaloneWorkspace(userId) { return request(userId, "/v1/identity/standalone", { method: "POST", body: {} }); },
     unlinkIdentity(userId) { return request(userId, "/v1/identity/unlink", { method: "POST", body: {} }); },
-    chat(userId, body, options = {}) { return request(userId, "/v1/chat", { method: "POST", body, ...options }); },
-    runAgent(userId, body, options = {}) { return request(userId, "/v1/agent/run", { method: "POST", body, ...options }); },
-    stream(userId, body, options = {}) { return request(userId, "/v1/chat/stream", { method: "POST", body, stream: true, ...options }); },
+    chat(userId, body, options = {}) { return request(userId, "/v1/chat", { method: "POST", body, ...options, timeoutMs: options.timeoutMs ?? CHAT_REQUEST_TIMEOUT_MS }); },
+    runAgent(userId, body, options = {}) { return request(userId, "/v1/agent/run", { method: "POST", body, ...options, timeoutMs: options.timeoutMs ?? CHAT_REQUEST_TIMEOUT_MS }); },
+    stream(userId, body, options = {}) { return request(userId, "/v1/chat/stream", { method: "POST", body, stream: true, ...options, timeoutMs: options.timeoutMs ?? CHAT_REQUEST_TIMEOUT_MS }); },
     conversationsDatabase(userId) { return request(userId, "/v1/conversations/database"); },
     saveConversationsDatabase(userId, database, expectedRevision = null) {
       return request(userId, "/v1/conversations/database", { method: "PUT", body: { database, expectedRevision } });

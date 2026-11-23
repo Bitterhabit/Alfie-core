@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createAlfieCoreClient } from "../src/client.mjs";
+import { createAlfieCoreClient, CHAT_REQUEST_TIMEOUT_MS } from "../src/client.mjs";
 import { createSignedIdentityAuth } from "../src/auth/signedIdentity.mjs";
 
 const serviceToken = "test-service-token-with-at-least-32-characters";
@@ -104,4 +104,19 @@ test("Node client implements every conversation, Garden and access route used by
   ]);
   assert.equal(calls[4].search, "?q=hello");
   assert.equal(JSON.parse(calls[1].body).title, "Test");
+});
+
+
+test("chat and streaming calls use the long request budget while ordinary calls keep the short default", async () => {
+  const originalTimeout = AbortSignal.timeout;
+  const observed = [];
+  AbortSignal.timeout = (ms) => { observed.push(ms); return new AbortController().signal; };
+  try {
+    const client = createAlfieCoreClient({ serviceToken, identityAuth: identityAuth(), fetchImpl: async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }) });
+    await client.whoami("user-1");
+    await client.stream("user-1", { messages: [] });
+    await client.chat("user-1", { messages: [] });
+    assert.deepEqual(observed, [30_000, CHAT_REQUEST_TIMEOUT_MS, CHAT_REQUEST_TIMEOUT_MS]);
+    assert.equal(CHAT_REQUEST_TIMEOUT_MS, 35 * 60 * 1000);
+  } finally { AbortSignal.timeout = originalTimeout; }
 });

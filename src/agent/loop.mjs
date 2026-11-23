@@ -6,7 +6,8 @@ import { resolveWorkingMode } from "./workingModes.mjs";
 import { resolveLearningMode } from "../profile/store.mjs";
 
 export const MAX_STEPS = 4;
-export const WALL_CLOCK_TIMEOUT = 30_000;
+export const WALL_CLOCK_TIMEOUT = 30 * 60 * 1000;
+export const MAX_WALL_CLOCK_TIMEOUT = 30 * 60 * 1000;
 
 function awaitWithAbort(promise, signal) {
   if (!signal) return promise;
@@ -146,7 +147,7 @@ export class AgentLoop {
     this.cloudAdapters = cloudAdapters;
     this.now = now;
     this.maxSteps = Math.min(MAX_STEPS, Math.max(1, maxSteps));
-    this.wallClockTimeout = Math.min(WALL_CLOCK_TIMEOUT, Math.max(1000, wallClockTimeout));
+    this.wallClockTimeout = Math.min(MAX_WALL_CLOCK_TIMEOUT, Math.max(1000, wallClockTimeout));
     this.assetMiddleware = assetMiddleware || dispatcher?.assetMiddleware || createAssetInterceptorMiddleware({
       assetsDirectory,
       filePathPrefix,
@@ -160,7 +161,8 @@ export class AgentLoop {
     const abortFromParent = () => controller.abort(parentSignal?.reason || new Error("Client disconnected."));
     if (parentSignal?.aborted) abortFromParent();
     else parentSignal?.addEventListener("abort", abortFromParent, { once: true });
-    const timer = setTimeout(() => controller.abort(new Error("Alfie turn exceeded the 30-second execution budget.")), this.wallClockTimeout);
+    const timer = setTimeout(() => controller.abort(new Error("Alfie turn exceeded its configured execution budget.")), this.wallClockTimeout);
+    timer.unref?.();
 
     const requestedProvider = ["gemini", "openai"].includes(agentProvider) ? agentProvider : "local";
     let cloudAgent = null;
@@ -230,7 +232,7 @@ export class AgentLoop {
       while (steps < this.maxSteps) {
         if (controller.signal.aborted || this.now() - started >= this.wallClockTimeout) {
           this.dispatcher.resetTurn(turnId);
-          return { status: "timeout", message: "I reached the 30-second processing limit. Please try a smaller request.", steps };
+          return { status: "timeout", message: `I reached the ${Math.ceil(this.wallClockTimeout / 60000)}-minute processing limit. Please ask me to continue or split the task.`, steps };
         }
         const grantedScopes = await this.dispatcher.permissionStore.list(userId, { projectId: activeProject?.id || null });
         let effectiveDashboardState = dashboardState;
@@ -437,7 +439,7 @@ export class AgentLoop {
       return { status: "step_limit", message: "I reached the four-step limit for this request. Ask me to continue if more work is needed.", steps };
     } catch (error) {
       this.dispatcher.resetTurn(turnId);
-      if (controller.signal.aborted) return { status: "timeout", message: "I reached the 30-second processing limit.", steps };
+      if (controller.signal.aborted) return { status: "timeout", message: `I reached the ${Math.ceil(this.wallClockTimeout / 60000)}-minute processing limit.`, steps };
       throw error;
     } finally {
       clearTimeout(timer);
