@@ -89,3 +89,22 @@ test("worker recovery interrupts unsafe running work and requeues only queued ty
   assert.equal(result.status, "completed");
   assert.equal(executions, 1);
 });
+
+test("chat task payloads are bounded, private to the owner, and idempotent by turn key", async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-chat-job-payload-"));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const store = new AsyncJobStore({ dataDirectory: directory });
+  const input = {
+    kind: "chat_turn", title: "Build a page", objective: "Create an HTML page",
+    conversationId: "11111111-1111-4111-8111-111111111111",
+    turnId: "22222222-2222-4222-8222-222222222222",
+    idempotencyKey: "22222222-2222-4222-8222-222222222222",
+    payload: { messages: [{ role: "user", content: "Create an HTML page" }], mode: "work" }
+  };
+  const first = await store.create("chat-user", input);
+  const retry = await store.create("chat-user", { ...input, title: "Duplicate submission", payload: { messages: [] } });
+  assert.equal(retry.id, first.id);
+  assert.deepEqual(retry.payload, input.payload);
+  assert.equal((await store.list("other-user")).length, 0);
+  await assert.rejects(() => store.create("chat-user", { title: "Oversized", kind: "chat_turn", payload: { text: "x".repeat(300 * 1024) } }), { status: 413 });
+});
