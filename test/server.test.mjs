@@ -604,3 +604,19 @@ test("Core registers scoped memory tools and keeps write tools approval-gated", 
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+
+test("status reports the active long-running chat transport budgets", async () => {
+  const token = "service-token-".repeat(3);
+  await withServer({ serviceToken: token }, async (base) => {
+    const response = await fetch(`${base}/v1/status`, {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    assert.equal(response.status, 200);
+    const implemented = (await response.json()).implemented;
+    assert.ok(implemented.includes("30-minute-wall-clock-budget"));
+    assert.ok(implemented.includes("35-minute-chat-transport-timeout"));
+    assert.ok(implemented.includes("15-second-stream-heartbeats"));
+    assert.ok(!implemented.includes("30-second-wall-clock-budget"));
+  });
+});
