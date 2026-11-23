@@ -170,6 +170,7 @@ export class AsyncJobStore {
       return {
         ...job,
         status: "cancelled",
+        pendingActionId: null,
         error: cleanString(reason, 200),
         checkpoints: [
           ...job.checkpoints.slice(-24),
