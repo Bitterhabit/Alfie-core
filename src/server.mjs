@@ -72,6 +72,16 @@ function createDefaultIdentityAuth() {
   return createIdentityAuthRegistry(providers);
 }
 
+function publicJob(job) {
+  if (!job || typeof job !== "object") return job;
+  const { payload, ...safe } = job;
+  if (safe.kind === "chat_turn") {
+    safe.objective = "";
+    safe.title = "Background chat task";
+  }
+  return safe;
+}
+
 function json(res, statusCode, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(statusCode, {
@@ -1001,19 +1011,19 @@ export function createAlfieCoreServer({
             status: url.searchParams.get("status") || "",
             limit: url.searchParams.get("limit") || 40
           });
-          return json(res, 200, { jobs });
+          return json(res, 200, { jobs: jobs.map(publicJob) });
         }
         if (url.pathname === "/v1/jobs" && req.method === "POST") {
           return json(res, 400, { error: "Submit a typed task through its dedicated endpoint. Arbitrary job kinds are not executable." });
         }
         if (jobMatch && req.method === "GET") {
           await jobEngine.recoverUser(identity.userId);
-          return json(res, 200, { job: await jobStore.get(identity.userId, jobMatch[1]) });
+          return json(res, 200, { job: publicJob(await jobStore.get(identity.userId, jobMatch[1])) });
         }
         if (jobCancelMatch && req.method === "POST") {
           const body = await readJsonBody(req);
           const cancelled = await jobEngine.cancel(identity.userId, jobCancelMatch[1], body.reason || "Cancelled by user");
-          return json(res, 200, { job: cancelled });
+          return json(res, 200, { job: publicJob(cancelled) });
         }
       } catch (error) {
         return json(res, error.status || 500, { error: error.message || "Job operation failed.", ...(error.code ? { code: error.code } : {}) });
@@ -1842,8 +1852,8 @@ export function createAlfieCoreServer({
         if (projectId) await projectStore.get(identity.userId, projectId);
         const task = await jobStore.create(identity.userId, {
           kind: "chat_turn",
-          title: lastMessage.content.replace(/\s+/g, " ").slice(0, 72) || "Background chat task",
-          objective: lastMessage.content.slice(0, 1200),
+          title: "Background chat task",
+          objective: "",
           conversationId,
           turnId,
           idempotencyKey: turnId,
@@ -1860,7 +1870,7 @@ export function createAlfieCoreServer({
         });
         if (task.status === "queued") jobEngine.enqueue(identity.userId, task);
         const terminal = ["completed", "failed", "cancelled", "interrupted"].includes(task.status);
-        return json(res, terminal ? 200 : 202, { job: task });
+        return json(res, terminal ? 200 : 202, { job: publicJob(task) });
       } catch (error) {
         return json(res, error.status || 500, { error: error.message || "Background chat task could not be submitted.", ...(error.code ? { code: error.code } : {}) });
       }
