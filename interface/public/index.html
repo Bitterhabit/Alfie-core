@@ -1129,7 +1129,7 @@
             <div class="providers-panel-header">
               <div>
                 <h3 id="settings-providers-heading">Model Providers &amp; Endpoints</h3>
-                <p class="muted">Configure Ollama and OpenAI-compatible endpoints, test connections, discover installed models, and set routing priority.</p>
+                <p class="muted">Connect local model servers or cloud APIs using OpenAI-compatible chat endpoints (including Gemini), test connections, discover models, and set routing priority.</p>
               </div>
               <div class="providers-header-actions">
                 <button id="providers-refresh-btn" class="secondary-button" type="button">Refresh status</button>
@@ -1178,6 +1178,7 @@
                   <label class="provider-field-wide">Endpoint URL
                     <input id="provider-field-url" name="baseUrl" type="url" maxlength="1024" placeholder="http://127.0.0.1:11434" required>
                   </label>
+                  <p class="muted provider-field-wide">Gemini: https://generativelanguage.googleapis.com/v1beta/openai · OpenAI: https://api.openai.com/v1. Add the matching API key below. For a PC on your network, enter its reachable IP/hostname and port.</p>
                   <label>Routing tier
                     <select id="provider-field-mode" name="mode">
                       <option value="light">Light (Fast)</option>
