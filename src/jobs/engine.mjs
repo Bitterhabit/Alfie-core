@@ -238,6 +238,19 @@ export class AsyncJobEngine {
     });
   }
 
+  async reportProgress(userId, jobId, progress, summary = "Working") {
+    const safeProgress = Math.max(0, Math.min(99, Math.floor(Number(progress) || 0)));
+    const safeSummary = cleanString(summary, 240) || "Working";
+    return this.jobStore.update(userId, jobId, (job, nowIso) => {
+      if (job.status !== "running") return job;
+      return {
+        ...job,
+        progress: Math.max(job.progress || 0, safeProgress),
+        checkpoints: [...job.checkpoints.slice(-24), { at: nowIso, step: job.stepsCompleted, status: "running", summary: safeSummary }]
+      };
+    });
+  }
+
   async recoverUser(userId) {
     const jobs = await this.jobStore.list(userId, { status: "all", limit: 100 });
     for (const job of jobs) {
@@ -353,6 +366,7 @@ export class AsyncJobEngine {
             ...cur,
             status: "awaiting_approval",
             pendingActionId: stepResult.pendingActionId || null,
+            artifact: stepResult.artifact || cur.artifact,
             stepsCompleted: i + 1,
             progress: Math.round(((i + 1) / Math.max(1, boundedSteps.length)) * 100),
             lowestTrustTouched: context.lowestTrustTouched,
