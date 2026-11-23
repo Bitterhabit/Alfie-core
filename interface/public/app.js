@@ -4192,9 +4192,14 @@ async function persistMessage(role, content, conversationId = state.activeConver
   return payload.message;
 }
 
+const activeBackgroundTaskPolls = new Set();
+
 async function watchBackgroundChatTask(jobId, conversationId, assistantBody, indicator) {
+  if (activeBackgroundTaskPolls.has(jobId)) return;
+  activeBackgroundTaskPolls.add(jobId);
   const finishIndicator = () => {
     if (indicator) { indicator.stop(); indicator.element.remove(); }
+    activeBackgroundTaskPolls.delete(jobId);
   };
   const poll = async () => {
     try {
@@ -4204,6 +4209,10 @@ async function watchBackgroundChatTask(jobId, conversationId, assistantBody, ind
         const checkpoint = job.checkpoints?.[job.checkpoints.length - 1]?.summary;
         indicator?.setStage(checkpoint || (job.status === "queued" ? "Waiting for Alfie…" : "Still working in the background…"));
         setTimeout(poll, 2500);
+        return;
+      }
+      if (job.status === "completed" && state.activeConversationId === conversationId && state.sending) {
+        setTimeout(poll, 1000);
         return;
       }
       finishIndicator();
