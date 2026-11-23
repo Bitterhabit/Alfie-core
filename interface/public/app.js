@@ -9635,7 +9635,7 @@ function initProviderManagement() {
     const type = event.target.value;
     const urlInput = $("#provider-field-url");
     if (!urlInput) return;
-    urlInput.placeholder = type === "ollama" ? "http://127.0.0.1:11434" : "http://127.0.0.1:1234/v1";
+    urlInput.placeholder = type === "ollama" ? "http://127.0.0.1:11434" : "https://api.example.com/v1 or a custom API root";
     if (!providerPanelState.editingId) {
       if (type === "ollama" && (!urlInput.value || urlInput.value === "http://127.0.0.1:1234/v1")) {
         urlInput.value = "http://127.0.0.1:11434";
