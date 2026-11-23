@@ -398,8 +398,9 @@ export function endpointFor(endpoint, purpose = "chat") {
   // Treat a supplied path as the provider's API root. This supports standard
   // /v1 endpoints and vendor compatibility roots such as Google's
   // /v1beta/openai without accidentally inserting a second /v1 segment.
-  const base = String(endpoint.baseUrl || "").replace(/\\/+$/, "");
-  const pathname = new URL(base).pathname.replace(/\\/+$/, "");
+  let base = String(endpoint.baseUrl || "");
+  while (base.endsWith("/")) base = base.slice(0, -1);
+  const pathname = new URL(base).pathname;
   const apiRoot = pathname && pathname !== "/"
     ? base
     : `${base}/v1`;
