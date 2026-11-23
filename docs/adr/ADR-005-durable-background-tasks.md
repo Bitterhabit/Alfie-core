@@ -1,13 +1,13 @@
 # ADR-005: Durable Background Tasks & Resumable Chat Work
 
-- **Status:** Partially implemented — bounded workshop worker only
+- **Status:** Partially implemented — bounded workshop and chat-turn workers
 - **Target Phase:** Phase 4 (durable execution)
 
 ## Context
 
 A long-running task must not be coupled to the lifetime of the browser tab, chat HTTP request, or streaming connection. Raising request timeouts solves only slow interactive inference while the connection remains open. It does not allow a user to close Alfie, return later, inspect progress, or retrieve a completed result.
 
-The `AsyncJobStore` persists job records. The first worker implementation now dispatches only the allow-listed `subagent_delegation` task kind outside the HTTP request, with one in-process worker slot. A reconnect/list request re-dispatches persisted queued tasks and marks tasks found running after a Core restart as `interrupted` rather than replaying them. This is a safe first slice, not the completed durable execution architecture: atomic cross-process leases, autonomous startup scanning, generic long-running chat tasks, persisted cancellation requests, conversation attachment, and restart-safe resumable checkpoints remain outstanding.
+The `AsyncJobStore` persists job records and bounded typed payloads. The single in-process worker now dispatches allow-listed `subagent_delegation` and `chat_turn` tasks outside the HTTP request. Chat turns are linked to their original conversation and turn ID; user/assistant message writes are idempotent, results survive browser disconnects, and explicit tool approvals resolve the paused task. A reconnect/list request re-dispatches persisted queued tasks and marks tasks found running after a Core restart as `interrupted` rather than replaying them. This is not yet the completed durable execution architecture: atomic cross-process leases, autonomous startup scanning, persisted cancellation requests, and restart-safe resumable checkpoints remain outstanding.
 
 ## Decision
 
@@ -28,8 +28,8 @@ Task payloads must be bounded and validated at submission. Sensitive prompt cont
 
 ### 2. Worker lifecycle
 
-- [x] Workshop submission persists a `queued` task and returns HTTP 202 without waiting for execution.
-- [x] A Core-owned in-process worker dispatches allow-listed queued workshop work with a single execution slot.
+- [x] Workshop and background chat submissions persist a `queued` task and return HTTP 202 without waiting for execution.
+- [x] A Core-owned in-process worker dispatches allow-listed queued workshop and chat-turn work with a single execution slot.
 - [ ] Add an atomic compare-and-set/transactional lease before supporting multiple Core worker processes.
 - [x] Persist step progress/checkpoints and reconcile stale `running` tasks to `interrupted` on authenticated reconnect.
 - [ ] Add renewable worker leases and autonomous startup scanning.
@@ -38,7 +38,8 @@ Task payloads must be bounded and validated at submission. Sensitive prompt cont
 - [ ] Persist cancellation intent independently of the worker process.
 - The worker propagates an AbortSignal to provider and tool work and stops at safe checkpoints.
 - [x] Owner-scoped polling returns persisted status, checkpoints, and completed artifacts after reconnect.
-- [ ] Add chat task UI and original-conversation attachment. Streaming progress is an optional transport over the same persisted state, not the source of truth.
+- [x] Background chat tasks preserve the original conversation association and attach the assistant result exactly once by task ID.
+- [x] The UI offers an explicit background-run toggle and polls job state while the chat remains open. Streaming progress is an optional transport over the same persisted state, not the source of truth.
 
 ### 3. Restart recovery and execution safety
 
