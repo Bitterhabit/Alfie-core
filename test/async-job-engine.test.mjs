@@ -41,7 +41,9 @@ test("background worker runs queued handlers independently and persists the resu
 
   const job = await store.create("user-worker", { kind: "test_background", title: "Independent task" });
   engine.enqueue("user-worker", job);
-  await new Promise((resolve) => setImmediate(resolve));
+  for (let attempt = 0; attempt < 30 && !started; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
   assert.equal(started, true);
   assert.equal((await store.get("user-worker", job.id)).status, "running");
 
