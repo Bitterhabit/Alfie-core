@@ -4198,7 +4198,7 @@ async function restoreBackgroundTaskNotice(conversationId) {
     const response = await api("/api/core/jobs?limit=100");
     const jobs = (response.jobs || []).filter((job) => job.kind === "chat_turn" && job.conversationId === conversationId);
     for (const job of jobs) {
-      if (job.status === "completed" || job.status === "cancelled") continue;
+      if (job.status === "completed") continue;
       const hasAssistantResult = state.messages.some((message) => message.taskId === job.id && message.role === "assistant");
       if (hasAssistantResult && job.status !== "awaiting_approval") continue;
       let notice = "Alfie is still working on this background task.";
@@ -4206,6 +4206,7 @@ async function restoreBackgroundTaskNotice(conversationId) {
       else if (job.status === "awaiting_approval") notice = "This background task is waiting for your approval.";
       else if (job.status === "interrupted") notice = "This task was interrupted when Alfie Core restarted. It was not automatically repeated; send the request again if you want to retry.";
       else if (job.status === "failed") notice = "This background task failed: " + (job.error || "No error details were recorded.");
+      else if (job.status === "cancelled") notice = "This background task was cancelled.";
       const body = appendMessageElement({ role: "assistant", content: notice });
       if (job.status === "queued" || job.status === "running" || job.status === "awaiting_approval") {
         watchBackgroundChatTask(job.id, conversationId, body, null);
