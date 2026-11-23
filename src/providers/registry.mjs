@@ -394,10 +394,17 @@ export function endpointFor(endpoint, purpose = "chat") {
   if (endpoint.provider === "ollama") {
     return `${endpoint.baseUrl}${purpose === "models" ? "/api/tags" : "/api/chat"}`;
   }
-  const base = endpoint.baseUrl.replace(/\/v1\/?$/, "");
-  return `${base}/v1/${purpose === "models" ? "models" : "chat/completions"}`;
-}
 
+  // Treat a supplied path as the provider's API root. This supports standard
+  // /v1 endpoints and vendor compatibility roots such as Google's
+  // /v1beta/openai without accidentally inserting a second /v1 segment.
+  const base = String(endpoint.baseUrl || "").replace(/\\/+$/, "");
+  const pathname = new URL(base).pathname.replace(/\\/+$/, "");
+  const apiRoot = pathname && pathname !== "/"
+    ? base
+    : `${base}/v1`;
+  return `${apiRoot}/${purpose === "models" ? "models" : "chat/completions"}`;
+}
 export function headersFor(endpoint) {
   const headers = { Accept: "application/json", "Content-Type": "application/json" };
   if (endpoint.apiKey) headers.Authorization = `Bearer ${endpoint.apiKey}`;
