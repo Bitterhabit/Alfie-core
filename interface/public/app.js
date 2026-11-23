@@ -4196,7 +4196,7 @@ async function persistMessage(role, content, conversationId = state.activeConver
 async function restoreBackgroundTaskNotice(conversationId) {
   try {
     const response = await api("/api/core/jobs?limit=100");
-    const jobs = (response.jobs || []).filter((job) => job.kind === "chat_turn" && job.conversationId === conversationId);
+    const jobs = (response.jobs || []).filter((job) => job.kind === "chat_turn" && job.conversationId === conversationId).slice(0, 3);
     for (const job of jobs) {
       if (job.status === "completed") continue;
       const hasAssistantResult = state.messages.some((message) => message.taskId === job.id && message.role === "assistant");
