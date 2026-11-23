@@ -4399,7 +4399,7 @@ async function sendMessage(rawText) {
       if (state.activeConversation?.handoffContext) {
         outgoingMessages.push({ role: "user", content: "[Carried-over context from previous conversation]\n" + state.activeConversation.handoffContext });
       }
-      const recentSlice = state.messages.slice(outgoingMessages.length ? -15 : -16).map(({ role, content: text, reaction }) => ({ role, content: text, ...(reaction ? { reaction } : {}) }));
+      const recentSlice = state.messages.slice(outgoingMessages.length ? -14 : -15).map(({ role, content: text, reaction }) => ({ role, content: text, ...(reaction ? { reaction } : {}) }));
       outgoingMessages.push(...recentSlice, { role: "user", content });
       const activeProjectId = getConversationProjectId(state.activeConversation);
       const activeProject = findProjectById(activeProjectId);
