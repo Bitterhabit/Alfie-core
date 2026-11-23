@@ -162,6 +162,7 @@ export class AgentLoop {
     if (parentSignal?.aborted) abortFromParent();
     else parentSignal?.addEventListener("abort", abortFromParent, { once: true });
     const timer = setTimeout(() => controller.abort(new Error("Alfie turn exceeded its configured execution budget.")), this.wallClockTimeout);
+    timer.unref?.();
 
     const requestedProvider = ["gemini", "openai"].includes(agentProvider) ? agentProvider : "local";
     let cloudAgent = null;
