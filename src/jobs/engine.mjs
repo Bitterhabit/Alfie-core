@@ -13,6 +13,8 @@ export const JOB_STATUSES = Object.freeze([
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const MAX_JOBS = 120;
+export const MAX_JOB_DURATION_MS = 30 * 60 * 1000;
+export const DEFAULT_JOB_DURATION_MS = 30 * 60 * 1000;
 const UUID_PATTERN = /^[a-f0-9-]{36}$/i;
 
 function cleanString(value, maxLen = 200) {
@@ -76,7 +78,7 @@ export class AsyncJobStore {
     if (!title) throw Object.assign(new Error("A job title is required."), { status: 400 });
     const kind = cleanString(input.kind || "workflow", 48).toLowerCase();
     const maxSteps = Math.max(1, Math.min(20, Math.floor(Number(input.maxSteps) || 6)));
-    const maxDurationMs = Math.max(5000, Math.min(300000, Math.floor(Number(input.maxDurationMs) || 60000)));
+    const maxDurationMs = Math.max(5000, Math.min(MAX_JOB_DURATION_MS, Math.floor(Number(input.maxDurationMs) || DEFAULT_JOB_DURATION_MS)));
     const tokenBudget = Math.max(500, Math.min(32000, Math.floor(Number(input.tokenBudget) || 4000)));
 
     return this.exclusive(userId, async () => {
@@ -175,7 +177,7 @@ export class AsyncJobEngine {
 
     const startedMs = Date.now();
     const maxSteps = job.budget?.maxSteps || 6;
-    const maxDurationMs = job.budget?.maxDurationMs || 60000;
+    const maxDurationMs = Math.min(MAX_JOB_DURATION_MS, Math.max(5000, Number(job.budget?.maxDurationMs) || DEFAULT_JOB_DURATION_MS));
 
     // VRAM-aware scheduling gate (ADR-004 #3)
     if (this.vramMonitor && typeof this.vramMonitor.inspect === "function") {
