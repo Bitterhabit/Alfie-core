@@ -266,6 +266,7 @@ export function createAlfieCoreServer({
         role: "assistant",
         content: assistantMessage,
         taskId: job.id,
+        afterTaskId: job.turnId,
         metrics: result.metrics,
         provenance: result.provenance
       });
