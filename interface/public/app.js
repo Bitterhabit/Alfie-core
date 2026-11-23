@@ -3055,6 +3055,7 @@ async function loadConversation(id) {
     state.activeConversation = payload.conversation || null;
     state.messages = payload.conversation?.messages || [];
     renderMessages();
+    await restoreBackgroundTaskNotice(id);
     syncChatContextBar();
     renderVramWarningBanner();
     const list = await api("/api/core/conversations");
@@ -4190,6 +4191,27 @@ async function persistMessage(role, content, conversationId = state.activeConver
     syncChatContextBar();
   }
   return payload.message;
+}
+
+async function restoreBackgroundTaskNotice(conversationId) {
+  try {
+    const response = await api("/api/core/jobs?limit=100");
+    const jobs = (response.jobs || []).filter((job) => job.kind === "chat_turn" && job.conversationId === conversationId);
+    for (const job of jobs) {
+      if (job.status === "completed" || job.status === "cancelled") continue;
+      const hasAssistantResult = state.messages.some((message) => message.taskId === job.id && message.role === "assistant");
+      if (hasAssistantResult && job.status !== "awaiting_approval") continue;
+      let notice = "Alfie is still working on this background task.";
+      if (job.status === "queued") notice = "Your background task is queued and will start shortly.";
+      else if (job.status === "awaiting_approval") notice = "This background task is waiting for your approval.";
+      else if (job.status === "interrupted") notice = "This task was interrupted when Alfie Core restarted. It was not automatically repeated; send the request again if you want to retry.";
+      else if (job.status === "failed") notice = "This background task failed: " + (job.error || "No error details were recorded.");
+      const body = appendMessageElement({ role: "assistant", content: notice });
+      if (job.status === "queued" || job.status === "running" || job.status === "awaiting_approval") {
+        watchBackgroundChatTask(job.id, conversationId, body, null);
+      }
+    }
+  } catch {}
 }
 
 const activeBackgroundTaskPolls = new Set();
