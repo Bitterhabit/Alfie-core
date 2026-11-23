@@ -4180,16 +4180,70 @@ function renderMessages() {
   scrollChatToBottom({ force: true });
 }
 
-async function persistMessage(role, content, conversationId = state.activeConversationId, metrics = null, provenance = null) {
+async function persistMessage(role, content, conversationId = state.activeConversationId, metrics = null, provenance = null, taskId = null) {
   const payload = await api("/api/core/conversations/" + encodeURIComponent(conversationId) + "/messages", {
     method: "POST",
-    body: JSON.stringify({ role, content, ...(metrics ? { metrics } : {}), ...(provenance ? { provenance } : {}) })
+    body: JSON.stringify({ role, content, ...(metrics ? { metrics } : {}), ...(provenance ? { provenance } : {}), ...(taskId ? { taskId } : {}) })
   });
   if (conversationId === state.activeConversationId) {
     state.messages.push(payload.message || { role, content, ...(metrics ? { metrics } : {}), ...(provenance ? { provenance } : {}) });
     syncChatContextBar();
   }
   return payload.message;
+}
+
+async function watchBackgroundChatTask(jobId, conversationId, assistantBody, indicator) {
+  const finishIndicator = () => {
+    if (indicator) { indicator.stop(); indicator.element.remove(); }
+  };
+  const poll = async () => {
+    try {
+      const response = await api("/api/core/jobs/" + encodeURIComponent(jobId));
+      const job = response.job;
+      if (job.status === "queued" || job.status === "running") {
+        const checkpoint = job.checkpoints?.[job.checkpoints.length - 1]?.summary;
+        indicator?.setStage(checkpoint || (job.status === "queued" ? "Waiting for Alfie…" : "Still working in the background…"));
+        setTimeout(poll, 2500);
+        return;
+      }
+      finishIndicator();
+      if (job.status === "awaiting_approval") {
+        if (assistantBody?.isConnected) {
+          assistantBody.textContent = job.artifact?.summary || "This task is waiting for your approval. Open Tools & access to review the action.";
+          const card = document.createElement("section");
+          card.className = "chat-approval-card";
+          const heading = document.createElement("strong");
+          heading.textContent = "Your approval is needed";
+          const review = document.createElement("button");
+          review.type = "button";
+          review.className = "secondary-button";
+          review.textContent = "Review in Tools & access";
+          review.addEventListener("click", () => { setView("tools"); loadToolsAndApprovals().catch((error) => toast(error.message)); });
+          card.append(heading, review);
+          assistantBody.closest(".message")?.appendChild(card);
+        }
+        toast("Background task is waiting for your approval.");
+        await loadToolsAndApprovals();
+        return;
+      }
+      if (job.status === "completed") {
+        if (state.activeConversationId === conversationId && !state.sending) await loadConversation(conversationId);
+        toast("Alfie finished the background task.");
+        window.alfieSoul?.pulse("completed", 1800, "idle", "purple");
+        return;
+      }
+      const failure = job.error || `Background task ${job.status}.`;
+      if (assistantBody?.isConnected) {
+        renderMarkdown(assistantBody, "I could not complete that background task. " + failure);
+        assistantBody.dataset.rawContent = assistantBody.textContent || failure;
+      }
+      toast(failure);
+    } catch (error) {
+      indicator?.setStage("Reconnecting to background task…");
+      setTimeout(poll, 5000);
+    }
+  };
+  setTimeout(poll, 1200);
 }
 
 async function sendMessage(rawText) {
