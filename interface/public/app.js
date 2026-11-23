@@ -8409,7 +8409,10 @@ async function loadVirtualRoom() {
   }
 }
 
+let workshopPollTimer = null;
+
 async function loadWorkshop() {
+  if (workshopPollTimer) { clearTimeout(workshopPollTimer); workshopPollTimer = null; }
   const host = $("#workshop-job-list");
   if (!host) return;
   try {
@@ -8469,6 +8472,25 @@ async function loadWorkshop() {
       }
       head.append(titleWrap, badges);
       card.appendChild(head);
+      if (job.status === "queued" || job.status === "running") {
+        const progress = document.createElement("div");
+        progress.className = "workshop-job-progress";
+        const track = document.createElement("div");
+        track.className = "workshop-job-progress-track";
+        const fill = document.createElement("span");
+        fill.style.width = `${Math.max(0, Math.min(100, Number(job.progress) || 0))}%`;
+        track.appendChild(fill);
+        const label = document.createElement("span");
+        label.textContent = job.status === "queued" ? "Waiting for worker" : `Working · ${Math.max(0, Math.min(100, Number(job.progress) || 0))}%`;
+        progress.append(track, label);
+        card.appendChild(progress);
+      }
+      if (job.error && ["failed", "interrupted", "cancelled"].includes(job.status)) {
+        const error = document.createElement("p");
+        error.className = "muted workshop-job-error";
+        error.textContent = job.error;
+        card.appendChild(error);
+      }
 
       const artifact = job.artifact || job.output || null;
       if (artifact?.summary) {
@@ -8494,6 +8516,12 @@ async function loadWorkshop() {
         card.appendChild(rec);
       }
       host.appendChild(card);
+    }
+    if (jobs.some((job) => job.status === "queued" || job.status === "running")) {
+      workshopPollTimer = setTimeout(() => {
+        workshopPollTimer = null;
+        loadWorkshop();
+      }, 2500);
     }
   } catch (error) {
     host.textContent = error.message || "Workshop jobs unavailable.";

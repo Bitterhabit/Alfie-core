@@ -8,10 +8,11 @@ export const JOB_STATUSES = Object.freeze([
   "awaiting_approval",
   "completed",
   "failed",
-  "cancelled"
+  "cancelled",
+  "interrupted"
 ]);
 
-const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const MAX_JOBS = 120;
 export const MAX_JOB_DURATION_MS = 30 * 60 * 1000;
 export const DEFAULT_JOB_DURATION_MS = 30 * 60 * 1000;
@@ -164,6 +165,77 @@ export class AsyncJobEngine {
     this.vramMonitor = vramMonitor;
     this.auditStore = auditStore;
     this.activeControllers = new Map();
+    this.handlers = new Map();
+    this.pending = [];
+    this.activeJobs = new Set();
+    this.maxConcurrency = 1;
+    this.pumping = false;
+  }
+
+  registerHandler(kind, handler) {
+    const key = cleanString(kind, 48).toLowerCase();
+    if (!key || typeof handler !== "function") throw new TypeError("A task kind and handler are required.");
+    if (this.handlers.has(key)) throw new Error(`A handler is already registered for task kind "${key}".`);
+    this.handlers.set(key, handler);
+  }
+
+  enqueue(userId, job) {
+    const key = safeUserKey(userId) + ":" + job.id;
+    if (this.activeJobs.has(key)) return job;
+    const handler = this.handlers.get(job.kind);
+    if (!handler) throw Object.assign(new Error(`No background handler is registered for job kind "${job.kind}".`), { status: 400, code: "UNSUPPORTED_JOB_KIND" });
+    if (job.status !== "queued") throw Object.assign(new Error("Only queued jobs can be submitted to the worker."), { status: 409, code: "JOB_NOT_QUEUED" });
+    this.activeJobs.add(key);
+    this.pending.push({ userId, job, key, handler });
+    this.pump();
+    return job;
+  }
+
+  pump() {
+    if (this.pumping) return;
+    this.pumping = true;
+    queueMicrotask(async () => {
+      try {
+        while (this.pending.length && this.activeControllers.size < this.maxConcurrency) {
+          const item = this.pending.shift();
+          try {
+            const latest = await this.jobStore.get(item.userId, item.job.id);
+            if (latest.status !== "queued") continue;
+            const steps = await item.handler({ userId: item.userId, job: latest });
+            if (!Array.isArray(steps)) throw new Error("Background task handler did not return a step list.");
+            await this.execute(item.userId, latest, steps);
+          } catch (error) {
+            try {
+              await this.jobStore.update(item.userId, item.job.id, (current, nowIso) => {
+                if (TERMINAL_STATUSES.has(current.status)) return current;
+                return { ...current, status: "failed", error: cleanString(error?.message || "Background task failed.", 240), checkpoints: [...current.checkpoints.slice(-24), { at: nowIso, step: current.stepsCompleted, status: "failed", summary: cleanString(error?.message || "Background task failed.", 240) }] };
+              });
+            } catch {}
+          } finally {
+            this.activeJobs.delete(item.key);
+          }
+        }
+      } finally {
+        this.pumping = false;
+        if (this.pending.length && this.activeControllers.size < this.maxConcurrency) this.pump();
+      }
+    });
+  }
+
+  async recoverUser(userId) {
+    const jobs = await this.jobStore.list(userId, { status: "all", limit: 100 });
+    for (const job of jobs) {
+      const key = safeUserKey(userId) + ":" + job.id;
+      const controllerKey = safeUserKey(userId) + ":" + job.id;
+      if (job.status === "running" && !this.activeJobs.has(key) && !this.activeControllers.has(controllerKey)) {
+        await this.jobStore.update(userId, job.id, (current, nowIso) => current.status !== "running" ? current : ({
+          ...current, status: "interrupted", error: "Core restarted while this task was running. It was not replayed automatically because its last operation may not be safe to repeat.",
+          checkpoints: [...current.checkpoints.slice(-24), { at: nowIso, step: current.stepsCompleted, status: "interrupted", summary: "Execution interrupted by Core restart; manual review required before retry." }]
+        }));
+      } else if (job.status === "queued" && this.handlers.has(job.kind)) {
+        this.enqueue(userId, job);
+      }
+    }
   }
 
   /**

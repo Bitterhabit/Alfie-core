@@ -69,14 +69,14 @@ export function computeSubAgentScopes(roleId, userGrantedScopes = []) {
   return role.allowedScopes.filter((scope) => grantedSet.has(scope));
 }
 
-export async function runWorkshopDelegation({
+export async function createWorkshopTask({
   userId,
   roleId,
   objective,
   projectId = null,
   stores,
-  jobEngine,
-  dataDirectory
+  dataDirectory,
+  existingJob = null
 }) {
   const cleanRoleId = String(roleId || "").trim().toLowerCase();
   const role = SPECIALIST_ROLES[cleanRoleId];
@@ -94,9 +94,12 @@ export async function runWorkshopDelegation({
   const grantedScopes = stores.permissionStore
     ? await stores.permissionStore.list(userId, { projectId })
     : [];
-  const effectiveScopes = computeSubAgentScopes(cleanRoleId, grantedScopes);
+  const grantedRoleScopes = computeSubAgentScopes(cleanRoleId, grantedScopes);
+  const effectiveScopes = existingJob
+    ? grantedRoleScopes.filter((scope) => (existingJob.capabilityCeiling || []).includes(scope))
+    : grantedRoleScopes;
 
-  const job = await jobEngine.jobStore.create(userId, {
+  const job = existingJob || await stores.jobStore.create(userId, {
     kind: "subagent_delegation",
     role: role.id,
     title: `${role.label}: ${cleanObjective.slice(0, 72)}`,
@@ -248,5 +251,19 @@ export async function runWorkshopDelegation({
     }
   ];
 
-  return jobEngine.execute(userId, job, steps);
+  return { job, steps };
+}
+
+
+/**
+ * Compatibility path for deterministic playbooks that intentionally await
+ * their bounded specialist delegation. HTTP workshop submissions use the
+ * background worker instead.
+ */
+export async function runWorkshopDelegation(options) {
+  const task = await createWorkshopTask({
+    ...options,
+    stores: { ...(options.stores || {}), jobStore: options.jobEngine.jobStore }
+  });
+  return options.jobEngine.execute(options.userId, task.job, task.steps);
 }

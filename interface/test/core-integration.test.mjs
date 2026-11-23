@@ -9,6 +9,11 @@ import { createPetrioIdentityAuth } from "../../src/auth/petrioIdentity.mjs";
 import { createIdentityAuthRegistry, createSignedIdentityAuth } from "../../src/auth/signedIdentity.mjs";
 import { IdentityLinkStore } from "../../src/auth/identityLinkStore.mjs";
 import { ConversationStore } from "../../src/conversations/store.mjs";
+import { ProjectStore } from "../../src/projects/store.mjs";
+import { IdeaStore } from "../../src/ideas/store.mjs";
+import { WatcherStore } from "../../src/watchers/store.mjs";
+import { WorkflowProfileStore } from "../../src/profile/store.mjs";
+import { ContextCapsuleStore } from "../../src/capsules/store.mjs";
 import { MemoryStore } from "../../src/memory/store.mjs";
 import { AuditStore } from "../../src/audit/store.mjs";
 import { PermissionStore } from "../../src/permissions/store.mjs";
@@ -127,5 +132,53 @@ test("standalone interface links to Core and uses the same conversations and Gar
     await close(ui);
     await close(core);
     await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("workshop delegation returns immediately and completes in the background worker", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-workshop-worker-e2e-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const serviceToken = "workshop-worker-service-token-with-more-than-32-characters";
+  const identityAuth = createPetrioIdentityAuth({ secret: "workshop-worker-identity-secret-with-more-than-32-characters" });
+  const stores = {
+    memoryStore: new MemoryStore({ dataDirectory: root }),
+    projectStore: new ProjectStore({ dataDirectory: root }),
+    ideaStore: new IdeaStore({ dataDirectory: root }),
+    watcherStore: new WatcherStore({ dataDirectory: root }),
+    profileStore: new WorkflowProfileStore({ dataDirectory: root }),
+    capsuleStore: new ContextCapsuleStore({ dataDirectory: root }),
+    permissionStore: new PermissionStore({ dataDirectory: root }),
+    auditStore: new AuditStore({ dataDirectory: root })
+  };
+  const core = createAlfieCoreServer({ serviceToken, identityAuth, ...stores, petrioHarnessClient: { enabled: false } });
+  try {
+    const base = await listen(core);
+    const submitPath = "/v1/workshop/delegate";
+    const submit = await fetch(base + submitPath, {
+      method: "POST",
+      headers: { authorization: "Bearer " + serviceToken, "content-type": "application/json", ...identityAuth.sign("worker-user", { method: "POST", path: submitPath }) },
+      body: JSON.stringify({ role: "auditor", objective: "Check the current workspace state" })
+    });
+    assert.equal(submit.status, 202);
+    const { job } = await submit.json();
+    assert.ok(job.id);
+    assert.ok(["queued", "running", "completed"].includes(job.status));
+
+    const jobPath = "/v1/jobs/" + job.id;
+    let result = null;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const response = await fetch(base + jobPath, {
+        headers: { authorization: "Bearer " + serviceToken, ...identityAuth.sign("worker-user", { method: "GET", path: jobPath }) }
+      });
+      assert.equal(response.status, 200);
+      result = (await response.json()).job;
+      if (["completed", "failed", "interrupted"].includes(result.status)) break;
+    }
+    assert.equal(result.status, "completed", result.error || "Workshop job did not complete.");
+    assert.equal(result.progress, 100);
+    assert.ok(result.artifact?.summary);
+  } finally {
+    await close(core);
   }
 });
