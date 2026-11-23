@@ -228,6 +228,42 @@ export function createAlfieCoreServer({
   });
   const toolDispatcher = new ToolDispatcher({ registry: toolRegistry, permissionStore, pendingActionStore, auditStore, assetsDirectory });
   const agentLoop = new AgentLoop({ providerRegistry, providerConfig: providers, providerStore: resolvedProviderStore, toolRegistry, dispatcher: toolDispatcher, contextAssembler, memoryStore, projectStore, watcherStore, profileStore, imageGenerator, cloudAgentStore, cloudAdapters, assetsDirectory });
+  jobEngine.registerHandler("chat_turn", async ({ userId, job }) => [{
+    name: "Run background chat turn",
+    async run({ context, signal }) {
+      const input = job.payload || {};
+      const result = await agentLoop.run({
+        userId,
+        messages: cleanMessages(input.messages),
+        dashboardState: input.dashboardState || {},
+        mode: ["auto", "light", "standard", "work"].includes(input.mode) ? input.mode : "auto",
+        workingMode: resolveWorkingMode(input.workingMode).id,
+        projectId: input.projectId || null,
+        agentProvider: ["local", "gemini", "openai"].includes(input.agentProvider) ? input.agentProvider : "local",
+        turnId: job.turnId || job.id,
+        signal,
+        onProgress: (event) => {
+          const progress = event?.type === "tool_start" ? 35 : 15;
+          const detail = event?.toolName ? `Using ${String(event.toolName).slice(0, 80)}` : "Working on your request";
+          jobEngine.reportProgress(userId, job.id, progress, detail).catch(() => {});
+        }
+      });
+      if (result.status === "timeout") throw Object.assign(new Error(result.message || "Chat task exceeded its processing budget."), { code: "CHAT_TASK_TIMEOUT" });
+      const assistantMessage = String(result.message || "The background task finished without a response.").slice(0, 12000);
+      await conversationStore.appendMessage(userId, job.conversationId, {
+        role: "assistant",
+        content: assistantMessage,
+        taskId: job.id,
+        metrics: result.metrics,
+        provenance: result.provenance
+      });
+      context.summary = assistantMessage;
+      if (result.status === "awaiting_user_approval") {
+        return { awaitingApproval: true, pendingActionId: result.actionId, summary: "Paused for explicit user approval.", artifact: { summary: assistantMessage, status: "awaiting_approval", actionId: result.actionId || null } };
+      }
+      return { summary: assistantMessage };
+    }
+  }]);
 
   const hasIdentityHeaders = (headers = {}) => Boolean(
     headers["x-alfie-identity-signature"] ||
