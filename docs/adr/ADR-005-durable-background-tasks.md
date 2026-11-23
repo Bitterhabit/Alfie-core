@@ -35,7 +35,7 @@ Task payloads must be bounded and validated at submission. Sensitive prompt cont
 - [ ] Add renewable worker leases and autonomous startup scanning.
 - The worker resolves a handler only from a fixed registry keyed by the validated task kind.
 - [x] Browser disconnects do not cancel in-process workshop or chat-turn execution; cancellation remains authenticated and owner-scoped.
-- [ ] Persist cancellation intent independently of the worker process.
+- [x] Persist owner-scoped cancellation as a terminal job state and propagate AbortSignal to active provider/tool work; cancelling an approval-paused task also rejects its pending action.
 - The worker propagates an AbortSignal to provider and tool work and stops at safe checkpoints.
 - [x] Owner-scoped polling returns persisted status, checkpoints, and completed artifacts after reconnect.
 - [x] Background chat tasks preserve the original conversation association and attach the assistant result exactly once by task ID.
