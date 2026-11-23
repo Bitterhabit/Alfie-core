@@ -8526,7 +8526,7 @@ async function loadWorkshop() {
       head.className = "workshop-job-head";
       const titleWrap = document.createElement("div");
       const title = document.createElement("strong");
-      const roleLabel = job.role || job.roleId || "specialist";
+      const roleLabel = job.kind === "chat_turn" ? "Chat task" : (job.role || job.roleId || "specialist");
       title.textContent = job.title || roleLabel;
       const meta = document.createElement("p");
       meta.className = "muted workshop-job-meta";
