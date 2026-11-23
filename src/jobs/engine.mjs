@@ -319,6 +319,10 @@ export class AsyncJobEngine {
       };
     });
     if (controller.signal.aborted || current.status === "cancelled") return current;
+    const heartbeat = setInterval(() => {
+      this.jobStore.update(userId, job.id, (cur, nowIso) => cur.status !== "running" ? cur : ({ ...cur, heartbeatAt: nowIso })).catch(() => {});
+    }, 15_000);
+    heartbeat.unref?.();
 
     const context = {
       lowestTrustTouched: "user_authored",
@@ -485,6 +489,7 @@ export class AsyncJobEngine {
       });
       return current;
     } finally {
+      clearInterval(heartbeat);
       this.activeControllers.delete(controllerKey);
     }
   }
