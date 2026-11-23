@@ -35,7 +35,7 @@ import { getUserStorageStatus, migrateUserStorageToSqlite, resolveStorageBackend
 import { hybridSearchWorkspace } from "./retrieval/hybrid.mjs";
 import { registerModularConnectorTools, getModularIntegrationsStatus } from "./integrations/modularConnectors.mjs";
 import { AsyncJobStore, AsyncJobEngine } from "./jobs/engine.mjs";
-import { listSpecialistRoles, runWorkshopDelegation } from "./agents/workshop.mjs";
+import { listSpecialistRoles, createWorkshopTask } from "./agents/workshop.mjs";
 import { sanitizeForCloud, rehydrateFromCloud } from "./privacy/broker.mjs";
 import { getVoiceStatus, transcribeAudio, synthesizeSpeech } from "./voice/service.mjs";
 import { buildContinuityReflection, ReflectionStore } from "./reflections/generator.mjs";
@@ -220,6 +220,12 @@ export function createAlfieCoreServer({
     petrioHarnessClient
   });
   const jobEngine = new AsyncJobEngine({ jobStore, vramMonitor, auditStore });
+  const workshopStores = { projectStore, memoryStore, ideaStore, watcherStore, capsuleStore, profileStore, permissionStore, jobStore };
+  const workshopDataDirectory = memoryStore.dataDirectory || projectStore.dataDirectory || process.env.ALFIE_CORE_DATA_DIR || "/data";
+  jobEngine.registerHandler("subagent_delegation", async ({ userId, job }) => {
+    const task = await createWorkshopTask({ userId, roleId: job.role, objective: job.objective, projectId: job.projectId, existingJob: job, stores: workshopStores, dataDirectory: workshopDataDirectory });
+    return task.steps;
+  });
   const toolDispatcher = new ToolDispatcher({ registry: toolRegistry, permissionStore, pendingActionStore, auditStore, assetsDirectory });
   const agentLoop = new AgentLoop({ providerRegistry, providerConfig: providers, providerStore: resolvedProviderStore, toolRegistry, dispatcher: toolDispatcher, contextAssembler, memoryStore, projectStore, watcherStore, profileStore, imageGenerator, cloudAgentStore, cloudAdapters, assetsDirectory });
 
@@ -935,6 +941,7 @@ export function createAlfieCoreServer({
       catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
       try {
         if (url.pathname === "/v1/jobs" && req.method === "GET") {
+          await jobEngine.recoverUser(identity.userId);
           const jobs = await jobStore.list(identity.userId, {
             status: url.searchParams.get("status") || "",
             limit: url.searchParams.get("limit") || 40
@@ -942,11 +949,10 @@ export function createAlfieCoreServer({
           return json(res, 200, { jobs });
         }
         if (url.pathname === "/v1/jobs" && req.method === "POST") {
-          const body = await readJsonBody(req);
-          const created = await jobStore.create(identity.userId, body);
-          return json(res, 201, { job: created });
+          return json(res, 400, { error: "Submit a typed task through its dedicated endpoint. Arbitrary job kinds are not executable." });
         }
         if (jobMatch && req.method === "GET") {
+          await jobEngine.recoverUser(identity.userId);
           return json(res, 200, { job: await jobStore.get(identity.userId, jobMatch[1]) });
         }
         if (jobCancelMatch && req.method === "POST") {
@@ -971,16 +977,16 @@ export function createAlfieCoreServer({
         if (url.pathname === "/v1/workshop/delegate" && req.method === "POST") {
           const body = await readJsonBody(req);
           const storageDataDir = memoryStore.dataDirectory || projectStore.dataDirectory || process.env.ALFIE_CORE_DATA_DIR || "/data";
-          const job = await runWorkshopDelegation({
+          const task = await createWorkshopTask({
             userId: identity.userId,
             roleId: body.role || body.roleId,
             objective: body.objective,
             projectId: body.projectId || null,
-            stores: { projectStore, memoryStore, ideaStore, watcherStore, capsuleStore, profileStore, permissionStore },
-            jobEngine,
+            stores: workshopStores,
             dataDirectory: storageDataDir
           });
-          return json(res, 201, { job });
+          jobEngine.enqueue(identity.userId, task.job);
+          return json(res, 202, { job: task.job });
         }
       } catch (error) {
         return json(res, error.status || 500, { error: error.message || "Workshop delegation failed.", ...(error.code ? { code: error.code } : {}) });
