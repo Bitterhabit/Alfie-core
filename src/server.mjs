@@ -242,6 +242,7 @@ export function createAlfieCoreServer({
     name: "Run background chat turn",
     async run({ context, signal }) {
       const input = job.payload || {};
+      await jobEngine.reportProgress(userId, job.id, 5, "Preparing your request");
       const result = await agentLoop.run({
         userId,
         messages: cleanMessages(input.messages),
@@ -260,6 +261,7 @@ export function createAlfieCoreServer({
       });
       if (result.status === "timeout") throw Object.assign(new Error(result.message || "Chat task exceeded its processing budget."), { code: "CHAT_TASK_TIMEOUT" });
       const assistantMessage = String(result.message || "The background task finished without a response.").slice(0, 12000);
+      await jobEngine.reportProgress(userId, job.id, 90, "Saving the response to your conversation");
       await conversationStore.appendMessage(userId, job.conversationId, {
         role: "assistant",
         content: assistantMessage,
