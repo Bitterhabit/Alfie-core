@@ -219,12 +219,14 @@ test("background chat tasks survive the submit request and attach one result to 
     const { job } = await submit.json();
     assert.equal(job.kind, "chat_turn");
     assert.equal(job.conversationId, conversation.id);
+    assert.equal(Object.hasOwn(job, "payload"), false);
     let current = job;
     for (let attempt = 0; attempt < 100 && !["completed", "failed", "interrupted"].includes(current.status); attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10));
       current = await (await fetch(base + "/v1/jobs/" + job.id, { headers: { authorization: "Bearer " + serviceToken, ...identityAuth.sign("chat-task-user", { method: "GET", path: "/v1/jobs/" + job.id }) } })).json().then((payload) => payload.job);
     }
     assert.equal(current.status, "completed", current.error || "Background chat did not complete.");
+    assert.equal(Object.hasOwn(current, "payload"), false);
     const saved = await conversationStore.get("chat-task-user", conversation.id);
     assert.equal(saved.messages.length, 2);
     assert.equal(saved.messages[0].taskId, turnId);
