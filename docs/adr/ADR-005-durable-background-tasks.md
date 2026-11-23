@@ -1,17 +1,17 @@
 # ADR-005: Durable Background Tasks & Resumable Chat Work
 
-- **Status:** Accepted — implementation pending
+- **Status:** Partially implemented — bounded workshop worker only
 - **Target Phase:** Phase 4 (durable execution)
 
 ## Context
 
 A long-running task must not be coupled to the lifetime of the browser tab, chat HTTP request, or streaming connection. Raising request timeouts solves only slow interactive inference while the connection remains open. It does not allow a user to close Alfie, return later, inspect progress, or retrieve a completed result.
 
-The current `AsyncJobStore` persists job records, but `AsyncJobEngine.execute()` is called inline by the workshop route. Its cancellation controllers are process-local, and no worker claims queued jobs or reconciles jobs left running after a restart. The generic `POST /v1/jobs` endpoint creates a record but does not schedule work. This ADR defines the required execution contract before the implementation is expanded.
+The `AsyncJobStore` persists job records. The first worker implementation now dispatches only the allow-listed `subagent_delegation` task kind outside the HTTP request, with one in-process worker slot. A reconnect/list request re-dispatches persisted queued tasks and marks tasks found running after a Core restart as `interrupted` rather than replaying them. This is a safe first slice, not the completed durable execution architecture: atomic cross-process leases, autonomous startup scanning, generic long-running chat tasks, persisted cancellation requests, conversation attachment, and restart-safe resumable checkpoints remain outstanding.
 
 ## Decision
 
-Build one durable task lifecycle around a persisted, typed task envelope and an allow-listed handler registry. Do not persist executable callbacks, model-generated code, arbitrary shell commands, or dynamically selected module paths.
+Build one durable task lifecycle around a persisted, typed task envelope and an allow-listed handler registry. The current implementation is a single-process worker and must not be described as multi-worker or exactly-once. Do not persist executable callbacks, model-generated code, arbitrary shell commands, or dynamically selected module paths.
 
 ### 1. Persisted task envelope
 
@@ -28,13 +28,17 @@ Task payloads must be bounded and validated at submission. Sensitive prompt cont
 
 ### 2. Worker lifecycle
 
-- Submission persists a `queued` task and returns its ID promptly; it does not wait for execution.
-- A Core-owned worker claims queued work using an atomic compare-and-set/transactional lease. Only one worker may own a live lease for a task.
-- The worker periodically renews its lease and writes progress/checkpoints. Lease expiry is detectable after process loss.
+- [x] Workshop submission persists a `queued` task and returns HTTP 202 without waiting for execution.
+- [x] A Core-owned in-process worker dispatches allow-listed queued workshop work with a single execution slot.
+- [ ] Add an atomic compare-and-set/transactional lease before supporting multiple Core worker processes.
+- [x] Persist step progress/checkpoints and reconcile stale `running` tasks to `interrupted` on authenticated reconnect.
+- [ ] Add renewable worker leases and autonomous startup scanning.
 - The worker resolves a handler only from a fixed registry keyed by the validated task kind.
-- Browser disconnects do not cancel a task. Only an authenticated, owner-scoped cancellation request does.
+- [x] Browser disconnects do not cancel in-process workshop execution; cancellation remains authenticated and owner-scoped.
+- [ ] Persist cancellation intent independently of the worker process.
 - The worker propagates an AbortSignal to provider and tool work and stops at safe checkpoints.
-- Polling by task ID returns status and progress; completed output is retrievable after reconnect. Streaming progress is an optional transport over the same persisted state, not the source of truth.
+- [x] Owner-scoped polling returns persisted status, checkpoints, and completed artifacts after reconnect.
+- [ ] Add chat task UI and original-conversation attachment. Streaming progress is an optional transport over the same persisted state, not the source of truth.
 
 ### 3. Restart recovery and execution safety
 
@@ -79,6 +83,6 @@ Tool side effects must continue to use the existing registered-tool, permission,
 ## Consequences
 
 - Durable tasks become independent of the browser connection and can be observed after reconnect.
-- A Core process restart can recover queued work and safely reconcile interrupted work without pretending that arbitrary in-flight execution is exactly-once.
+- A Core process restart is reconciled on the user's next authenticated jobs request: queued typed work can be dispatched, while in-flight work is marked interrupted and never replayed automatically. Autonomous startup recovery and safe checkpoint resume remain future work.
 - The implementation is intentionally stricter than a generic in-memory queue: safety, provenance, approval, and per-user isolation remain properties of the harness.
 - The existing job engine is a persistence/state-machine foundation only until the worker, leases, recovery, and chat integration meet these acceptance criteria.
