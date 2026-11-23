@@ -1847,9 +1847,18 @@ export function createAlfieCoreServer({
         if (lastMessage.role !== "user") throw Object.assign(new Error("The final chat message must be a user message."), { status: 400 });
         await conversationStore.get(identity.userId, conversationId);
         const turnId = /^[a-f0-9-]{36}$/i.test(String(body.turnId || "")) ? String(body.turnId) : randomUUID();
-        await conversationStore.appendMessage(identity.userId, conversationId, { role: "user", content: lastMessage.content, taskId: turnId });
         const projectId = typeof body.projectId === "string" && /^[a-f0-9-]{36}$/i.test(body.projectId) ? body.projectId : null;
         if (projectId) await projectStore.get(identity.userId, projectId);
+        const taskPayload = {
+          messages,
+          dashboardState: body.dashboardState && typeof body.dashboardState === "object" && !Array.isArray(body.dashboardState) ? body.dashboardState : {},
+          mode: ["auto", "light", "standard", "work"].includes(body.mode) ? body.mode : "auto",
+          workingMode: resolveWorkingMode(body.workingMode).id,
+          projectId,
+          agentProvider: ["local", "gemini", "openai"].includes(body.agentProvider) ? body.agentProvider : "local"
+        };
+        if (Buffer.byteLength(JSON.stringify(taskPayload), "utf8") > 256 * 1024) throw Object.assign(new Error("Background chat input exceeds the 256 KB limit."), { status: 413 });
+        await conversationStore.appendMessage(identity.userId, conversationId, { role: "user", content: lastMessage.content, taskId: turnId });
         const task = await jobStore.create(identity.userId, {
           kind: "chat_turn",
           title: "Background chat task",
@@ -1859,14 +1868,7 @@ export function createAlfieCoreServer({
           idempotencyKey: turnId,
           projectId,
           maxSteps: 4,
-          payload: {
-            messages,
-            dashboardState: body.dashboardState && typeof body.dashboardState === "object" && !Array.isArray(body.dashboardState) ? body.dashboardState : {},
-            mode: ["auto", "light", "standard", "work"].includes(body.mode) ? body.mode : "auto",
-            workingMode: resolveWorkingMode(body.workingMode).id,
-            projectId,
-            agentProvider: ["local", "gemini", "openai"].includes(body.agentProvider) ? body.agentProvider : "local"
-          }
+          payload: taskPayload
         });
         if (task.status === "queued") jobEngine.enqueue(identity.userId, task);
         const terminal = ["completed", "failed", "cancelled", "interrupted"].includes(task.status);
