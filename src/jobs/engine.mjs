@@ -94,7 +94,12 @@ export class AsyncJobStore {
       const store = await this.load(userId);
       if (idempotencyKey) {
         const existing = store.jobs.find((item) => item.idempotencyKey === idempotencyKey);
-        if (existing) return existing;
+        if (existing) {
+          const sameTask = existing.kind === kind && existing.conversationId === conversationId && existing.turnId === turnId
+            && JSON.stringify(existing.payload || null) === JSON.stringify(payload || null);
+          if (!sameTask) throw Object.assign(new Error("This idempotency key was already used for a different task."), { status: 409, code: "JOB_IDEMPOTENCY_CONFLICT" });
+          return existing;
+        }
       }
       const nowIso = this.now();
       const job = {
