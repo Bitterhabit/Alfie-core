@@ -1532,6 +1532,7 @@ export function createAlfieCoreServer({
           return json(res, 200, await conversationStore.importLegacy(identity.userId, body.database || body, body.sourceKey || "petrio-server"));
         }
         if (isConversationCollection && req.method === "GET") {
+          await jobEngine.recoverUser(identity.userId);
           const projectId = url.searchParams.get("projectId") || undefined;
           return json(res, 200, { conversations: await conversationStore.list(identity.userId, { projectId }) });
         }
@@ -1573,6 +1574,7 @@ export function createAlfieCoreServer({
           return json(res, 201, { conversation, handoff: brief });
         }
         if (conversationMatch && req.method === "GET") {
+          await jobEngine.recoverUser(identity.userId);
           const conversation = await conversationStore.get(identity.userId, conversationMatch[1]);
           return json(res, 200, { conversation });
         }
