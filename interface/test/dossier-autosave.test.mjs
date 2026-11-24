@@ -149,11 +149,13 @@ test("createDossierAutoSaver isolates sessions on reset and reports errors clean
   const timers = createManualTimers();
   let shouldFail = true;
   let staleResolve;
+  const attempts = [];
   const saver = createDossierAutoSaver({
     debounceMs: 400,
     setTimer: timers.setTimer,
     clearTimer: timers.clearTimer,
-    persist: (projectId) => {
+    persist: (projectId, payload) => {
+      attempts.push({ projectId, payload });
       if (projectId === "proj-stale") {
         return new Promise((resolve) => { staleResolve = resolve; });
       }
@@ -172,15 +174,24 @@ test("createDossierAutoSaver isolates sessions on reset and reports errors clean
   assert.equal(saver.getStatus().projectId, "proj-fresh");
   assert.equal(saver.getStatus().state, "idle");
 
-  // Error transitions cleanly to error state and recovers on next valid edit
+  // A failed save must retain its draft so closing the modal can retry it.
   saver.schedule({ name: "Duplicate" });
   timers.fireAll();
   await Promise.resolve();
   await Promise.resolve();
   assert.equal(saver.getStatus().state, "error");
   assert.match(saver.getStatus().error, /already exists/i);
+  assert.equal(saver.getStatus().dirty, true);
+  assert.equal(attempts.at(-1).payload.name, "Duplicate");
 
+  // flush() is an explicit retry path; it must resend the retained failed draft.
   shouldFail = false;
+  await saver.flush();
+  assert.equal(attempts.at(-1).payload.name, "Duplicate");
+  assert.equal(saver.getStatus().state, "saved");
+  assert.equal(saver.getStatus().dirty, false);
+
+  // New edits continue to save normally after the failed draft is recovered.
   saver.schedule({ name: "Unique Name" });
   timers.fireAll();
   await Promise.resolve();
