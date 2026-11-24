@@ -560,14 +560,16 @@ export function createAlfieCoreServer({
             for (const job of waitingJobs.filter((item) => item.pendingActionId === error.actionId)) {
               await jobStore.update(identity.userId, job.id, (current, nowIso) => current.status !== "awaiting_approval" ? current : ({
                 ...current,
-                status: "failed",
+                status: error.actionCompleted === true ? "interrupted" : "failed",
                 pendingActionId: null,
                 error: String(error.message || "The approved action failed. Check the destination before retrying.").slice(0, 500),
                 checkpoints: [...current.checkpoints.slice(-24), {
                   at: nowIso,
                   step: current.stepsCompleted,
-                  status: "failed",
-                  summary: "Approval was consumed but the action did not complete; verify the destination before creating a new proposal."
+                  status: error.actionCompleted === true ? "interrupted" : "failed",
+                  summary: error.actionCompleted === true
+                    ? "The action may have completed but its receipt could not be saved; verify the destination before creating a new proposal."
+                    : "Approval was consumed but the action did not complete; verify the destination before creating a new proposal."
                 }]
               }));
             }
@@ -576,7 +578,7 @@ export function createAlfieCoreServer({
         return json(res, error.status || 500, {
           error: error.message || "Tool permission operation failed.",
           ...(error.code ? { code: error.code } : {}),
-          ...(error.actionConsumed ? { actionConsumed: true, retryable: false, actionId: error.actionId, toolId: error.toolId } : {})
+          ...(error.actionConsumed ? { actionConsumed: true, retryable: false, actionId: error.actionId, toolId: error.toolId, ...(error.actionCompleted === true ? { actionCompleted: true } : {}) } : {})
         });
       }
       return json(res, 405, { error: "Method not allowed." });
