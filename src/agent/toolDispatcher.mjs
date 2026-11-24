@@ -215,6 +215,19 @@ export class ToolDispatcher {
 
   async approve(userId, actionId) {
     const action = await this.pendingActionStore.take(userId, actionId);
+    try {
+      return await this.executeConsumedApproval(userId, actionId, action);
+    } catch (error) {
+      // The pending record is deliberately consumed before validation/execution.
+      // Never invite a second click: a failing integration may have partially acted.
+      error.actionConsumed = true;
+      error.actionId = actionId;
+      error.toolId = action.toolId;
+      throw error;
+    }
+  }
+
+  async executeConsumedApproval(userId, actionId, action) {
     const tool = this.registry.tools.get(action.toolId);
     if (!tool) throw Object.assign(new Error("The approved tool is no longer registered."), { status: 404 });
     if (hashCall(action.toolId, action.arguments) !== action.argumentsHash) {
