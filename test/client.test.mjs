@@ -120,3 +120,26 @@ test("chat and streaming calls use the long request budget while ordinary calls 
     assert.equal(CHAT_REQUEST_TIMEOUT_MS, 35 * 60 * 1000);
   } finally { AbortSignal.timeout = originalTimeout; }
 });
+
+test("Core client preserves consumed-approval metadata for safe interface recovery", async () => {
+  const client = createAlfieCoreClient({
+    serviceToken,
+    identityAuth: identityAuth(),
+    fetchImpl: async () => new Response(JSON.stringify({
+      error: "Approved action failed; check its destination before proposing it again.",
+      code: "APPROVED_ACTION_EXECUTION_FAILED",
+      actionConsumed: true,
+      retryable: false,
+      actionId: "action-123",
+      toolId: "web.search"
+    }), { status: 502, headers: { "content-type": "application/json" } })
+  });
+  await assert.rejects(client.approveAction("user-1", "action-123"), {
+    status: 502,
+    code: "APPROVED_ACTION_EXECUTION_FAILED",
+    actionConsumed: true,
+    retryable: false,
+    actionId: "action-123",
+    toolId: "web.search"
+  });
+});
