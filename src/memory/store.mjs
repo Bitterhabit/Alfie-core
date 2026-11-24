@@ -28,9 +28,10 @@ function cleanKind(value, fallbackType = "note") {
 function deriveTrust(origin, requestedTrust) {
   // ADR-003 invariant: integration-imported records can never be silently marked trusted.
   if (origin === "integration-imported") return "external_untrusted";
+  // User-provided assertions cannot be elevated by a caller-supplied trust flag.
+  if (origin === "user-seeded" || origin === "conversation-captured") return "user_authored";
   const candidate = cleanString(requestedTrust, 40).toLowerCase();
   if (MEMORY_TRUST_SET.has(candidate)) return candidate;
-  if (origin === "user-seeded" || origin === "conversation-captured") return "user_authored";
   return "system_verified";
 }
 
