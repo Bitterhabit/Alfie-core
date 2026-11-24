@@ -184,7 +184,7 @@ export class ToolDispatcher {
     // The registry is the single source of truth for baseline approval policy.
     // Add the contextual gate for non-read tools handling untrusted content.
     const requiresApproval = Boolean(tool.requiresApproval) ||
-      (Boolean(tool.approvalWhenUntrusted) && untrustedContext && tool.risk !== "read");
+      (Boolean(tool.approvalWhenUntrusted) && untrustedContext);
     if (requiresApproval) {
       const preview = tool.approvalPreview
         ? String(await tool.approvalPreview(args, { userId, toolId })).slice(0, 500)
