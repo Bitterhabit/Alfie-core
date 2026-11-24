@@ -46,8 +46,9 @@ import { runWorkspaceSelfAudit, applySafeRemediation } from "./diagnostics/selfA
 import { PeerTokenStore, PEER_TOKEN_SCOPES } from "./clients/tokenStore.mjs";
 import { PlaybookStore, PLAYBOOK_TRIGGERS, PLAYBOOK_ACTIONS, runPlaybook } from "./playbooks/store.mjs";
 import { buildContinuityTimeline, exportMarkdownDigest } from "./timeline/builder.mjs";
+import packageJson from "../package.json" with { type: "json" };
 
-const SERVICE_VERSION = "0.3.0";
+const SERVICE_VERSION = packageJson.version;
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_VAULT_BODY_BYTES = 8 * 1024 * 1024;
 
@@ -546,6 +547,32 @@ export function createAlfieCoreServer({
           return json(res, 410, { error: "Direct tool execution is disabled. Use plan, then explicit user approval." });
         }
       } catch (error) {
+        if (error.actionConsumed && error.actionId) {
+          const failureDetail = "This approval was consumed and cannot be retried. Check the destination before proposing the action again.";
+          try {
+            await conversationStore.updateActionCardState(identity.userId, error.actionId, {
+              state: "failed",
+              detail: failureDetail
+            });
+          } catch {}
+          try {
+            const waitingJobs = await jobStore.list(identity.userId, { status: "awaiting_approval", limit: 100 });
+            for (const job of waitingJobs.filter((item) => item.pendingActionId === error.actionId)) {
+              await jobStore.update(identity.userId, job.id, (current, nowIso) => current.status !== "awaiting_approval" ? current : ({
+                ...current,
+                status: "failed",
+                pendingActionId: null,
+                error: String(error.message || "The approved action failed. Check the destination before retrying.").slice(0, 500),
+                checkpoints: [...current.checkpoints.slice(-24), {
+                  at: nowIso,
+                  step: current.stepsCompleted,
+                  status: "failed",
+                  summary: "Approval was consumed but the action did not complete; verify the destination before creating a new proposal."
+                }]
+              }));
+            }
+          } catch {}
+        }
         return json(res, error.status || 500, {
           error: error.message || "Tool permission operation failed.",
           ...(error.code ? { code: error.code } : {}),
