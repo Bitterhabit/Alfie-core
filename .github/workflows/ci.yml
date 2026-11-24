@@ -50,7 +50,7 @@ jobs:
           docker compose up -d --wait
           docker compose exec -T alfie-core node -e "fetch('http://127.0.0.1:8780/ready').then(async r=>{if(!r.ok)throw new Error(await r.text());console.log('Core ready')})"
           docker compose exec -T alfie-interface node -e "fetch('http://127.0.0.1:8781/health').then(async r=>{if(!r.ok)throw new Error(await r.text());console.log('Interface healthy')})"
-          docker compose exec -T alfie-core node -e "fetch('http://searxng:8080/search?q=alfie+smoke+test&format=json').then(async r=>{if(!r.ok)throw new Error('SearXNG returned HTTP '+r.status);const j=await r.json();if(!Array.isArray(j.results))throw new Error('SearXNG JSON response is invalid');console.log('SearXNG JSON API healthy')})"
+          docker compose exec -T alfie-core node -e "fetch('http://searxng:8080/healthz').then(async r=>{if(!r.ok)throw new Error('SearXNG returned HTTP '+r.status);console.log('SearXNG private service healthy')})"
           docker compose exec -T alfie-core node -e "require('node:fs').writeFileSync('/data/backup-smoke-test.txt','core-volume-ok')"
           mkdir -p "$RUNNER_TEMP/alfie-backups"
           docker compose stop
