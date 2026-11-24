@@ -2,7 +2,7 @@ name: Alfie Core CI
 
 on:
   push:
-    branches: [main, development]
+    branches: [main, development, "release/**"]
   pull_request:
     branches: [main, development]
 
