@@ -96,7 +96,7 @@ export function createSignedIdentityAuth({
       providerId,
       userId,
       nonce,
-      expiresAt: issuedAt + maxSkewSeconds,
+      expiresAt: issuedAt + maxSkewSeconds + 1,
       now: current,
       maxEntries: maxReplayEntries
     });
