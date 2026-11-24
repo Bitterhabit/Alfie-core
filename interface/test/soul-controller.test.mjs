@@ -214,5 +214,6 @@ test("Soul observer ignores controller-originated mood mutations to prevent dupl
   const observer = app.slice(observerStart, observerEnd);
   assert.match(observer, /const isExternalMoodChange = nextMood !== this\._mood/);
   assert.match(observer, /if \(isExternalMoodChange && nextMood && SOUL_MOODS\.includes\(nextMood\)\)/);
+  assert.match(observer, /this\._mood = nextMood/);
   assert.match(observer, /if \(isExternalMoodChange && oldMood && nextMood && oldMood !== nextMood\)/);
 });
