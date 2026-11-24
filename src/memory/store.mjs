@@ -372,7 +372,7 @@ export class MemoryStore {
         metadata: cleanMetadata(input.metadata),
         provenance: {
           source: origin,
-          capturedBy: origin === "user-seeded" ? "user" : origin === "alfie-created" ? "alfie" : "integration",
+          capturedBy: origin === "user-seeded" ? "user" : origin === "alfie-created" ? "alfie" : origin === "conversation-captured" ? "conversation" : "integration",
           trust
         }
       };
