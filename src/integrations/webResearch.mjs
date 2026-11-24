@@ -4,7 +4,7 @@ import { isIP } from "node:net";
 const SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
 const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_PAGE_BYTES = 1_000_000;
-const MAX_TEXT_CHARS = 12_000;
+const MAX_TEXT_CHARS = 1_300;
 
 function fail(message, status = 400) {
   throw Object.assign(new Error(message), { status });
@@ -149,7 +149,7 @@ export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetc
     tags: ["web", "internet", "search", "research", "news", "sources"],
     inputSchema: { type: "object", properties: {
       query: { type: "string", minLength: 2, maxLength: 300 },
-      count: { type: "integer", minimum: 1, maximum: 8 }
+      count: { type: "integer", minimum: 1, maximum: 4 }
     }, required: ["query"], additionalProperties: false },
     async handler(args) {
       const results = await searchWeb(args.query.trim(), args.count || 6);
@@ -180,13 +180,13 @@ export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetc
       sources: { type: "integer", minimum: 1, maximum: 3 }
     }, required: ["question"], additionalProperties: false },
     async handler(args) {
-      const results = await searchWeb(args.question.trim(), Math.max(3, (args.sources || 3) * 2));
+      const results = await searchWeb(args.question.trim(), Math.max(3, (args.sources || 3) + 1));
       const pages = [];
       for (const result of results) {
         if (pages.length >= (args.sources || 3)) break;
         try {
           const page = await openWebPage(result.url);
-          pages.push({ title: page.title || result.title, url: page.url, description: page.description || result.description, excerpt: page.text.slice(0, 6500), searchDate: result.age });
+          pages.push({ title: page.title || result.title, url: page.url, description: page.description || result.description, excerpt: page.text.slice(0, 350), searchDate: result.age });
         } catch (error) {
           pages.push({ title: result.title, url: result.url, description: result.description, excerpt: "", readError: String(error.message || "Unable to read page.").slice(0, 180) });
         }
