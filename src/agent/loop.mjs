@@ -343,7 +343,11 @@ export class AgentLoop {
           workflowProfile
         });
         lastShortlistedTools = Array.isArray(context.tools) ? context.tools.map((tool) => tool.id) : [];
-        if (containsUntrustedData(context.messages)) {
+        if (
+          context.hasExternalUntrustedContext === true ||
+          (context.hasExternalUntrustedContext === undefined && containsUntrustedData(context.messages)) ||
+          containsUntrustedData(history)
+        ) {
           turnTainted = true;
         }
 
@@ -488,7 +492,7 @@ export class AgentLoop {
         let observation;
         try {
           observation = await this.dispatcher.dispatch({
-            userId, toolId: action.tool, args: action.arguments, turnId, contextMessages: context.messages, projectId: activeProject?.id || null, signal: controller.signal
+            userId, toolId: action.tool, args: action.arguments, turnId, contextMessages: context.messages, untrustedContext: turnTainted, projectId: activeProject?.id || null, signal: controller.signal
           });
         } catch (error) {
           observation = { status: "tool_error", error: error.message };

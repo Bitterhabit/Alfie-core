@@ -178,10 +178,33 @@ export const LEARNED_STYLE_TRAITS = Object.freeze([
 
 const TRAIT_KEYS = LEARNED_STYLE_TRAITS.map((t) => t.key);
 
+export const FEEDBACK_SENSITIVITIES = Object.freeze([
+  { id: "gentle", label: "Gentle", step: 1, threshold: 2, description: "Requires repeated feedback (score ±2) before shaping replies." },
+  { id: "balanced", label: "Balanced", step: 1, threshold: 1, description: "Adapts steadily from each thumbs-up or flag reaction." },
+  { id: "responsive", label: "Responsive", step: 2, threshold: 1, description: "Adapts quickly with stronger weight per reaction." }
+]);
+
+const SENSITIVITY_MAP = new Map(FEEDBACK_SENSITIVITIES.map((item) => [item.id, item]));
+
+export function resolveFeedbackSensitivity(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return SENSITIVITY_MAP.get(key) || SENSITIVITY_MAP.get("balanced");
+}
+
+function makeSignalId(reaction, label, at, idx = 0) {
+  const base = `${reaction}-${at || "t"}-${idx}-${String(label || "").slice(0, 16)}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 56);
+  return base || `sig-${idx}`;
+}
+
 export function createDefaultLearnedStyle() {
   return {
     likes: 0,
     flags: 0,
+    sensitivity: "balanced",
     traits: {
       concise: 0,
       detailed: 0,
@@ -189,6 +212,7 @@ export function createDefaultLearnedStyle() {
       codeExamples: 0,
       stepByStep: 0
     },
+    traitOverrides: {},
     recentSignals: []
   };
 }
@@ -198,19 +222,32 @@ export function normaliseLearnedStyle(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return base;
   base.likes = Number.isFinite(Number(raw.likes)) ? Math.max(0, Math.round(Number(raw.likes))) : 0;
   base.flags = Number.isFinite(Number(raw.flags)) ? Math.max(0, Math.round(Number(raw.flags))) : 0;
+  base.sensitivity = resolveFeedbackSensitivity(raw.sensitivity).id;
   for (const key of TRAIT_KEYS) {
     const val = Number(raw.traits?.[key]);
     base.traits[key] = Number.isFinite(val) ? Math.max(-10, Math.min(10, Math.round(val))) : 0;
+    const rawOverride = raw.traitOverrides?.[key];
+    if (typeof rawOverride === "string") {
+      const cleaned = rawOverride.replace(/\s+/g, " ").trim().slice(0, 220);
+      if (cleaned) base.traitOverrides[key] = cleaned;
+    }
   }
   if (Array.isArray(raw.recentSignals)) {
+    const seenIds = new Set();
     base.recentSignals = raw.recentSignals
       .filter((item) => item && typeof item === "object" && typeof item.label === "string")
       .slice(0, 12)
-      .map((item) => ({
-        reaction: item.reaction === "flag" ? "flag" : "like",
-        label: String(item.label).trim().slice(0, 80),
-        at: typeof item.at === "string" ? item.at.slice(0, 40) : ""
-      }))
+      .map((item, idx) => {
+        const reaction = item.reaction === "flag" ? "flag" : "like";
+        const label = String(item.label).trim().slice(0, 80);
+        const at = typeof item.at === "string" ? item.at.slice(0, 40) : "";
+        let id = typeof item.id === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(item.id)
+          ? item.id
+          : makeSignalId(reaction, label, at, idx);
+        while (seenIds.has(id)) id = `${id.slice(0, 58)}-${idx}`;
+        seenIds.add(id);
+        return { id, reaction, label, at };
+      })
       .filter((item) => item.label);
   }
   return base;
@@ -262,7 +299,8 @@ export function applyReactionDelta(currentStyle, { reaction = null, previousReac
   if (reaction === "flag") next.flags += 1;
 
   const detectedTraits = analyzeResponseStyle(content);
-  const delta = nextW - prevW;
+  const sensitivityConfig = resolveFeedbackSensitivity(next.sensitivity);
+  const delta = (nextW - prevW) * sensitivityConfig.step;
   for (const key of detectedTraits) {
     if (key in next.traits) {
       next.traits[key] = Math.max(-10, Math.min(10, next.traits[key] + delta));
@@ -274,7 +312,8 @@ export function applyReactionDelta(currentStyle, { reaction = null, previousReac
 
   if (reaction && signals.length) {
     const label = `${reaction === "like" ? "Liked" : "Flagged"}: ${signals.slice(0, 3).join(", ")}`;
-    next.recentSignals = [{ reaction, label, at: nowIso }, ...next.recentSignals].slice(0, 12);
+    const id = `sig_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    next.recentSignals = [{ id, reaction, label, at: nowIso }, ...next.recentSignals].slice(0, 12);
   }
 
   return { learnedStyle: next, detectedTraits, signals };
@@ -282,27 +321,49 @@ export function applyReactionDelta(currentStyle, { reaction = null, previousReac
 
 export function summarizeLearnedStyle(learnedStyle) {
   const safe = normaliseLearnedStyle(learnedStyle);
+  const sensitivityConfig = resolveFeedbackSensitivity(safe.sensitivity);
+  const threshold = sensitivityConfig.threshold;
   const chips = [];
   const promptHints = [];
+  const preferences = [];
 
   for (const trait of LEARNED_STYLE_TRAITS) {
     const score = safe.traits[trait.key] || 0;
-    if (score >= 1) {
-      chips.push({ key: trait.key, label: trait.label, score, direction: "prefer" });
-      promptHints.push(trait.preferHint);
-    } else if (score <= -1) {
-      chips.push({ key: trait.key, label: `Less ${trait.label.toLowerCase()}`, score, direction: "avoid" });
-      promptHints.push(trait.avoidHint);
+    const customHint = safe.traitOverrides?.[trait.key] || "";
+    const direction = score > 0 ? "prefer" : score < 0 ? "avoid" : "neutral";
+    const defaultHint = score < 0 ? trait.avoidHint : trait.preferHint;
+    const effectiveHint = customHint || defaultHint;
+    const active = Math.abs(score) >= threshold;
+
+    preferences.push({
+      key: trait.key,
+      label: trait.label,
+      score,
+      direction,
+      active,
+      defaultHint,
+      customHint,
+      effectiveHint
+    });
+
+    if (score >= threshold) {
+      chips.push({ key: trait.key, label: trait.label, score, direction: "prefer", customHint });
+      promptHints.push(effectiveHint);
+    } else if (score <= -threshold) {
+      chips.push({ key: trait.key, label: `Less ${trait.label.toLowerCase()}`, score, direction: "avoid", customHint });
+      promptHints.push(effectiveHint);
     }
   }
 
   // Resolve opposite concise/detailed signals so the stronger direction wins cleanly.
-  if (safe.traits.concise > 0 && safe.traits.detailed > 0) {
+  if (safe.traits.concise >= threshold && safe.traits.detailed >= threshold) {
+    const conciseHint = safe.traitOverrides?.concise || LEARNED_STYLE_TRAITS[0].preferHint;
+    const detailedHint = safe.traitOverrides?.detailed || LEARNED_STYLE_TRAITS[1].preferHint;
     if (safe.traits.concise >= safe.traits.detailed) {
-      const idx = promptHints.indexOf(LEARNED_STYLE_TRAITS[1].preferHint);
+      const idx = promptHints.indexOf(detailedHint);
       if (idx >= 0) promptHints.splice(idx, 1);
     } else {
-      const idx = promptHints.indexOf(LEARNED_STYLE_TRAITS[0].preferHint);
+      const idx = promptHints.indexOf(conciseHint);
       if (idx >= 0) promptHints.splice(idx, 1);
     }
   }
@@ -312,7 +373,10 @@ export function summarizeLearnedStyle(learnedStyle) {
   return {
     likes: safe.likes,
     flags: safe.flags,
+    sensitivity: safe.sensitivity,
+    threshold,
     chips,
+    preferences,
     promptHints: promptHints.slice(0, 4),
     recentSignals: safe.recentSignals
   };

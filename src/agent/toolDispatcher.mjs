@@ -164,7 +164,7 @@ export class ToolDispatcher {
     return dispatchStep(0);
   }
 
-  async dispatch({ userId, toolId, args = {}, turnId, contextMessages = [], projectId = null, signal }) {
+  async dispatch({ userId, toolId, args = {}, turnId, contextMessages = [], untrustedContext: explicitUntrustedContext, projectId = null, signal }) {
     const tool = this.registry.tools.get(toolId);
     if (!tool) throw Object.assign(new Error("Tool is not registered."), { status: 404 });
     const callHash = hashCall(toolId, args);
@@ -178,7 +178,9 @@ export class ToolDispatcher {
     if (!scopes.includes(tool.scope)) throw Object.assign(new Error("This user has not granted the required permission."), { status: 403 });
     this.validate(tool, args);
 
-    const untrustedContext = containsUntrustedData(contextMessages);
+    const untrustedContext = typeof explicitUntrustedContext === "boolean"
+      ? explicitUntrustedContext
+      : containsUntrustedData(contextMessages);
     const requiresApproval = tool.risk === "write" || tool.externalAction ||
       (untrustedContext && tool.risk !== "read") ||
       (tool.network && untrustedContext);

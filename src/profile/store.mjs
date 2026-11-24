@@ -2,10 +2,19 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { safeUserKey, userDataFile, UserMutex, readUserJsonDocument, writeUserJsonDocument } from "../storage/userJsonStore.mjs";
-import { applyReactionDelta, createDefaultLearnedStyle, normaliseLearnedStyle, summarizeLearnedStyle } from "../memory/autoMemory.mjs";
+import {
+  applyReactionDelta,
+  createDefaultLearnedStyle,
+  FEEDBACK_SENSITIVITIES,
+  LEARNED_STYLE_TRAITS,
+  normaliseLearnedStyle,
+  summarizeLearnedStyle
+} from "../memory/autoMemory.mjs";
 
 const TOPIC_ID_PATTERN = /^[a-f0-9-]{36}$/i;
 const MAX_TOPICS = 40;
+const TRAIT_KEY_SET = new Set(LEARNED_STYLE_TRAITS.map((item) => item.key));
+const SENSITIVITY_SET = new Set(FEEDBACK_SENSITIVITIES.map((item) => item.id));
 
 export const EXPLANATION_STYLES = Object.freeze([
   { id: "concise", label: "Concise", promptHint: "Lead with the direct answer and keep explanations compact unless asked to expand." },
@@ -219,10 +228,22 @@ export class WorkflowProfileStore {
     if (patch.learningMode !== undefined && !LEARNING_SET.has(String(patch.learningMode).toLowerCase())) {
       throw Object.assign(new Error("Unsupported learningMode value."), { status: 400 });
     }
+    if (patch.feedbackSensitivity !== undefined && !SENSITIVITY_SET.has(String(patch.feedbackSensitivity).toLowerCase())) {
+      throw Object.assign(new Error("Unsupported feedbackSensitivity value."), { status: 400 });
+    }
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
       const nowIso = this.now();
       const current = normaliseWorkflowProfile(store.profile, nowIso);
+      let nextLearnedStyle = patch.resetLearnedStyle === true
+        ? { ...createDefaultLearnedStyle(), sensitivity: current.learnedStyle?.sensitivity || "balanced" }
+        : current.learnedStyle;
+      if (patch.feedbackSensitivity !== undefined) {
+        nextLearnedStyle = normaliseLearnedStyle({
+          ...nextLearnedStyle,
+          sensitivity: String(patch.feedbackSensitivity).toLowerCase()
+        });
+      }
       const next = normaliseWorkflowProfile({
         ...current,
         ...(patch.explanationStyle !== undefined ? { explanationStyle: String(patch.explanationStyle).toLowerCase() } : {}),
@@ -233,12 +254,116 @@ export class WorkflowProfileStore {
         ...(typeof patch.customNotes === "string" ? { customNotes: cleanText(patch.customNotes, 400) } : {}),
         ...(typeof patch.autoMemoryEnabled === "boolean" ? { autoMemoryEnabled: patch.autoMemoryEnabled } : {}),
         ...(typeof patch.learnFromFeedbackEnabled === "boolean" ? { learnFromFeedbackEnabled: patch.learnFromFeedbackEnabled } : {}),
-        ...(patch.resetLearnedStyle === true ? { learnedStyle: createDefaultLearnedStyle() } : {}),
+        learnedStyle: nextLearnedStyle,
         updatedAt: nowIso
       }, nowIso);
       store.profile = next;
       await this.save(userId, store);
       return next;
+    });
+  }
+
+  async updateFeedbackPreference(userId, traitKey, patch = {}) {
+    const cleanKey = String(traitKey || "").trim();
+    if (!TRAIT_KEY_SET.has(cleanKey)) {
+      throw Object.assign(new Error("Unknown feedback preference trait."), { status: 404, code: "FEEDBACK_TRAIT_NOT_FOUND" });
+    }
+    if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+      throw Object.assign(new Error("Feedback preference update must be an object."), { status: 400 });
+    }
+    if (patch.score !== undefined) {
+      const numeric = Number(patch.score);
+      if (!Number.isFinite(numeric) || numeric < -10 || numeric > 10) {
+        throw Object.assign(new Error("Preference score must be a number between -10 and 10."), { status: 400 });
+      }
+    }
+    if (patch.customHint !== undefined && typeof patch.customHint !== "string") {
+      throw Object.assign(new Error("Custom instruction must be a string."), { status: 400 });
+    }
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      const nowIso = this.now();
+      const current = normaliseWorkflowProfile(store.profile, nowIso);
+      const nextStyle = normaliseLearnedStyle(current.learnedStyle);
+      if (patch.score !== undefined) {
+        nextStyle.traits[cleanKey] = Math.max(-10, Math.min(10, Math.round(Number(patch.score))));
+      }
+      if (patch.customHint !== undefined) {
+        const cleanedHint = patch.customHint.replace(/\s+/g, " ").trim().slice(0, 220);
+        if (cleanedHint) nextStyle.traitOverrides[cleanKey] = cleanedHint;
+        else delete nextStyle.traitOverrides[cleanKey];
+      }
+      const next = normaliseWorkflowProfile({
+        ...current,
+        learnedStyle: nextStyle,
+        updatedAt: nowIso
+      }, nowIso);
+      store.profile = next;
+      await this.save(userId, store);
+      return {
+        traitKey: cleanKey,
+        summary: summarizeLearnedStyle(next.learnedStyle),
+        profile: next
+      };
+    });
+  }
+
+  async deleteFeedbackPreference(userId, traitKey) {
+    const cleanKey = String(traitKey || "").trim();
+    if (!TRAIT_KEY_SET.has(cleanKey)) {
+      throw Object.assign(new Error("Unknown feedback preference trait."), { status: 404, code: "FEEDBACK_TRAIT_NOT_FOUND" });
+    }
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      const nowIso = this.now();
+      const current = normaliseWorkflowProfile(store.profile, nowIso);
+      const nextStyle = normaliseLearnedStyle(current.learnedStyle);
+      nextStyle.traits[cleanKey] = 0;
+      delete nextStyle.traitOverrides[cleanKey];
+      const next = normaliseWorkflowProfile({
+        ...current,
+        learnedStyle: nextStyle,
+        updatedAt: nowIso
+      }, nowIso);
+      store.profile = next;
+      await this.save(userId, store);
+      return {
+        deleted: true,
+        traitKey: cleanKey,
+        summary: summarizeLearnedStyle(next.learnedStyle),
+        profile: next
+      };
+    });
+  }
+
+  async deleteFeedbackSignal(userId, signalId) {
+    const cleanId = String(signalId || "").trim();
+    if (!cleanId || cleanId.length > 64) {
+      throw Object.assign(new Error("Feedback signal not found."), { status: 404 });
+    }
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      const nowIso = this.now();
+      const current = normaliseWorkflowProfile(store.profile, nowIso);
+      const nextStyle = normaliseLearnedStyle(current.learnedStyle);
+      const idx = nextStyle.recentSignals.findIndex((item) => item.id === cleanId);
+      if (idx < 0) {
+        throw Object.assign(new Error("Feedback signal not found."), { status: 404 });
+      }
+      const [removed] = nextStyle.recentSignals.splice(idx, 1);
+      const next = normaliseWorkflowProfile({
+        ...current,
+        learnedStyle: nextStyle,
+        updatedAt: nowIso
+      }, nowIso);
+      store.profile = next;
+      await this.save(userId, store);
+      return {
+        deleted: true,
+        signal: removed,
+        summary: summarizeLearnedStyle(next.learnedStyle),
+        profile: next
+      };
     });
   }
 

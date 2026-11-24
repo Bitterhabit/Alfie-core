@@ -4,7 +4,13 @@ import {
   formatRoleHeading,
   formatExportTimestamp,
   sanitizeExportFilename,
-  formatConversationMarkdown
+  formatConversationMarkdown,
+  parseDossierLines,
+  parseDossierDecisions,
+  sanitizeDossierExportFilename,
+  buildProjectDossierSnapshot,
+  formatProjectDossierJson,
+  formatProjectDossierMarkdown
 } from "../public/markdown-export.mjs";
 
 test("sanitizeExportFilename creates safe .md filenames from arbitrary conversation titles", () => {
@@ -115,3 +121,95 @@ test("formatConversationMarkdown exports UI like/flag reactions, working mode pr
   assert.match(md, /> _Mode: Engineer · Reaction: Helpful_/);
   assert.match(md, /> _Mode: Investigator · Reaction: Flagged_/);
 });
+
+test("sanitizeDossierExportFilename creates safe .md and .json filenames", () => {
+  const fixedDate = new Date("2026-11-24T14:20:00.000Z");
+  assert.equal(
+    sanitizeDossierExportFilename("Local Harness Refactor!", "json", fixedDate),
+    "local-harness-refactor-dossier-2026-11-24.json"
+  );
+  assert.equal(
+    sanitizeDossierExportFilename("Local Harness Refactor!", "md", fixedDate),
+    "local-harness-refactor-dossier-2026-11-24.md"
+  );
+  assert.equal(
+    sanitizeDossierExportFilename("../../secrets?raw=1", "json", fixedDate),
+    "secrets-raw-1-dossier-2026-11-24.json"
+  );
+  assert.equal(
+    sanitizeDossierExportFilename("   ", "md", fixedDate),
+    "project-dossier-2026-11-24.md"
+  );
+});
+
+test("parseDossierLines and parseDossierDecisions normalize textarea inputs cleanly", () => {
+  assert.deepEqual(
+    parseDossierLines("- Migrate to SQLite WAL\n* Verify adapters\nMigrate to SQLite WAL\n\n  • Add backup script  "),
+    ["Migrate to SQLite WAL", "Verify adapters", "Add backup script"]
+  );
+  assert.deepEqual(
+    parseDossierDecisions("Keep Core in Node.js — Single authoritative owner\nUse WAL mode | Better read concurrency\nSolo decision"),
+    [
+      { summary: "Keep Core in Node.js", rationale: "Single authoritative owner" },
+      { summary: "Use WAL mode", rationale: "Better read concurrency" },
+      { summary: "Solo decision", rationale: "" }
+    ]
+  );
+});
+
+test("formatProjectDossierJson and formatProjectDossierMarkdown export structured notes, architecture constraints, decisions, and action lists", () => {
+  const exportedAt = new Date("2026-11-24T15:00:00.000Z");
+  const sampleDossier = {
+    id: "proj-1234",
+    name: "Homelab Core",
+    status: "active",
+    color: "cyan",
+    createdAt: "2026-11-01T08:00:00.000Z",
+    updatedAt: "2026-11-24T14:30:00.000Z",
+    vision: "Zero-downtime local AI workspace with strict privacy boundaries.",
+    description: "Primary notes carried across all homelab chats.",
+    architecture: "Node.js Core on 127.0.0.1:8780; SQLite WAL storage; no external telemetry.",
+    decisions: "Keep Core in Node.js — Single runtime for memory and approvals\nSQLite WAL | Local-first durability",
+    nextActions: "Add automated snapshots\nVerify restore script",
+    blockers: "Waiting on UPS battery replacement",
+    postponed: "Cluster failover until single-node benchmarks finish"
+  };
+
+  const jsonText = formatProjectDossierJson(sampleDossier, { exportedAt });
+  assert.ok(jsonText.endsWith("\n"));
+  const parsed = JSON.parse(jsonText);
+  assert.equal(parsed.schema, "alfie.project-dossier.v1");
+  assert.equal(parsed.exportedAt, "2026-11-24T15:00:00.000Z");
+  assert.equal(parsed.project.id, "proj-1234");
+  assert.equal(parsed.project.name, "Homelab Core");
+  assert.equal(parsed.project.notes, "Primary notes carried across all homelab chats.");
+  assert.equal(parsed.project.architectureConstraints, "Node.js Core on 127.0.0.1:8780; SQLite WAL storage; no external telemetry.");
+  assert.equal(parsed.project.decisions.length, 2);
+  assert.deepEqual(parsed.project.decisions[0], {
+    summary: "Keep Core in Node.js",
+    rationale: "Single runtime for memory and approvals"
+  });
+  assert.deepEqual(parsed.project.nextActions, ["Add automated snapshots", "Verify restore script"]);
+  assert.deepEqual(parsed.project.blockers, ["Waiting on UPS battery replacement"]);
+  assert.deepEqual(parsed.project.postponed, ["Cluster failover until single-node benchmarks finish"]);
+
+  const md = formatProjectDossierMarkdown(sampleDossier, { exportedAt });
+  assert.match(md, /^# Homelab Core — Project Dossier\n/);
+  assert.match(md, /- \*\*Status:\*\* active/);
+  assert.match(md, /- \*\*Exported:\*\* 2026-11-24 15:00 UTC/);
+  assert.match(md, /- \*\*Project ID:\*\* `proj-1234`/);
+  assert.match(md, /## Vision & Objective\n\nZero-downtime local AI workspace/);
+  assert.match(md, /## Project Notes\n\nPrimary notes carried across all homelab chats\./);
+  assert.match(md, /## Architecture & Constraints\n\nNode\.js Core on 127\.0\.0\.1:8780/);
+  assert.match(md, /## Key Decisions\n\n- \*\*Keep Core in Node\.js\*\* — Single runtime for memory and approvals/);
+  assert.match(md, /## Next Actions\n\n- \[ \] Add automated snapshots\n- \[ \] Verify restore script/);
+  assert.match(md, /## Blockers\n\n- Waiting on UPS battery replacement/);
+  assert.match(md, /## Deliberately Postponed\n\n- Cluster failover until single-node benchmarks finish/);
+
+  // Empty dossier renders a graceful placeholder instead of broken sections
+  const emptySnapshot = buildProjectDossierSnapshot({ name: "Empty Project" }, { exportedAt });
+  assert.equal(emptySnapshot.project.name, "Empty Project");
+  const emptyMd = formatProjectDossierMarkdown({ name: "Empty Project" }, { exportedAt });
+  assert.match(emptyMd, /No dossier notes, architecture constraints, or decisions recorded yet/);
+});
+

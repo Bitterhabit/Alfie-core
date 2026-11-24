@@ -39,6 +39,7 @@ jobs:
       - name: Validate Docker Compose configuration
         run: |
           cp .env.example .env
+          sed -i "s/^SEARXNG_SECRET=.*/SEARXNG_SECRET=$(openssl rand -hex 32)/" .env
           docker compose -f compose.yaml config --quiet
       - name: Build both release images
         run: |
@@ -52,6 +53,7 @@ jobs:
           sed -i "s/^ALFIE_CORE_SERVICE_TOKEN=.*/ALFIE_CORE_SERVICE_TOKEN=$(openssl rand -hex 32)/" .env
           sed -i "s/^ALFIE_CORE_PETRIO_IDENTITY_SECRET=.*/ALFIE_CORE_PETRIO_IDENTITY_SECRET=$(openssl rand -hex 32)/" .env
           sed -i "s/^ALFIE_CORE_STANDALONE_IDENTITY_SECRET=.*/ALFIE_CORE_STANDALONE_IDENTITY_SECRET=$(openssl rand -hex 32)/" .env
+          sed -i "s/^SEARXNG_SECRET=.*/SEARXNG_SECRET=$(openssl rand -hex 32)/" .env
           sed -i "s/^ALFIE_UI_BOOTSTRAP_USERNAME=.*/ALFIE_UI_BOOTSTRAP_USERNAME=ci-admin/" .env
           sed -i "s/^ALFIE_UI_BOOTSTRAP_PASSWORD=.*/ALFIE_UI_BOOTSTRAP_PASSWORD=ci-bootstrap-password-2026/" .env
           docker compose up -d --wait

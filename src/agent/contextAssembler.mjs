@@ -23,7 +23,13 @@ const INTENT_FAMILIES = [
   new Set(["mail", "email", "emails", "inbox", "correspondence"]),
   new Set(["memory", "memories", "remember", "recall", "garden", "saved"]),
   new Set(["project", "projects", "roadmap", "milestone", "milestones", "task", "tasks", "goal", "goals"]),
-  new Set(["status", "health", "uptime", "system", "server", "servers", "homelab"])
+  new Set(["status", "health", "uptime", "system", "server", "servers", "homelab"]),
+  new Set([
+    "web", "internet", "online", "browse", "lookup", "research", "google",
+    "latest", "current", "recent", "news", "weather", "price", "pricing", "release",
+    "version", "docs", "documentation", "article", "website", "webpage", "url",
+    "link", "http", "https", "source", "sources", "verify", "fact", "facts", "compare"
+  ])
 ];
 
 function scoreTool(intentWords, tool) {
@@ -133,12 +139,23 @@ export class ContextAssembler {
         content
       };
     });
+    // Track whether genuinely external/untrusted content entered the turn.
+    // User-authored personal memories remain wrapped in <untrusted_data> for prompt-injection
+    // hygiene without falsely tainting benign web searches as externally compromised turns.
+    const hasUntrustedMemory = memoryContext.some((memory) => memory.trust === "external_untrusted");
+    const hasUntrustedDashboard = ["calendarSummary", "mailSummary", "journalSummary", "systemSummary", "systemHealth"]
+      .some((key) => Object.prototype.hasOwnProperty.call(summaryState, key));
+    const hasUntrustedHistory = recent.some((message) =>
+      String(message?.content || "").includes("<untrusted_data>")
+    );
+    const hasExternalUntrustedContext = hasUntrustedMemory || hasUntrustedDashboard || hasUntrustedHistory;
     return {
       messages: [{ role: "system", content: system }, ...recent],
       tools: selectedTools,
       workingMode: { id: resolvedMode.id, label: resolvedMode.label },
       learningMode: workflowProfile?.learningMode || null,
-      projectIncluded: Boolean(dossierText)
+      projectIncluded: Boolean(dossierText),
+      hasExternalUntrustedContext
     };
   }
 }

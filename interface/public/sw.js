@@ -6,6 +6,7 @@ const STATIC_ASSETS = [
   "/index.html",
   "/styles.css?v=alfie-workspace-0.10.1",
   "/markdown-export.mjs?v=alfie-workspace-0.10.1",
+  "/dossier-autosave.mjs?v=alfie-workspace-0.10.1",
   "/shortcuts.mjs?v=alfie-workspace-0.10.1",
   "/voice-waveform.mjs?v=alfie-workspace-0.10.1",
   "/knowledge-graph.mjs?v=alfie-workspace-0.10.1",

@@ -44,3 +44,15 @@ test("app.js implements scroll-lock protection and conditional auto-scrolling du
   // Jump to latest button listener
   assert.match(app, /\$\("#scroll-to-bottom"\)\?\.addEventListener\("click"/);
 });
+
+test("app.js attaches MutationObserver on #messages to auto-scroll streamed AI messages cleanly", async () => {
+  const app = await fs.readFile(new URL("app.js", publicDir), "utf8");
+
+  assert.match(app, /function attachChatMessagesObserver\(/);
+  assert.match(app, /new MutationObserver\(/);
+  assert.match(app, /childList:\s*true,\s*subtree:\s*true,\s*characterData:\s*true/);
+  assert.match(app, /function scheduleObservedAutoScroll\(/);
+  assert.match(app, /function isStreamedMessageMutation\(/);
+  assert.match(app, /attachChatMessagesObserver\(messagesHost\)/);
+  assert.match(app, /isObserving:\s*\(\)\s*=>\s*Boolean\(chatMessagesObserver\)/);
+});

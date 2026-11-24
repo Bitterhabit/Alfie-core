@@ -8,6 +8,27 @@ const MAX_CONVERSATIONS = 500;
 const MAX_MESSAGES = 500;
 const MAX_CONTENT_LENGTH = 50000;
 
+function cleanActionCard(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const safeCard = {
+    state: ["success", "read", "cancelled", "rejected", "error", "approval"].includes(raw.state) ? raw.state : "error",
+    label: String(raw.label || "Alfie Action").slice(0, 120),
+    detail: String(raw.detail || (["confirm", "working"].includes(raw.state) ? "This temporary action state expired when the conversation was restored." : "")).slice(0, 1000)
+  };
+  for (const key of ["actionId", "toolId", "risk", "target", "reason", "summary"]) {
+    if (typeof raw[key] === "string" && raw[key].trim()) {
+      safeCard[key] = raw[key].slice(0, key === "reason" || key === "summary" ? 400 : 160);
+    }
+  }
+  if (raw.arguments && typeof raw.arguments === "object" && !Array.isArray(raw.arguments)) {
+    try {
+      const serialised = JSON.stringify(raw.arguments);
+      if (serialised.length <= 12000) safeCard.arguments = JSON.parse(serialised);
+    } catch {}
+  }
+  return safeCard;
+}
+
 function cleanProvenance(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const workingMode = raw.workingMode && typeof raw.workingMode === "object"
@@ -121,22 +142,8 @@ export class ConversationStore {
           meta: String(rawMessage.meta || "").slice(0, 1000)
         };
         if (role === "assistant" && rawMessage.actionCard && typeof rawMessage.actionCard === "object") {
-          const card = rawMessage.actionCard;
-          const safeCard = {
-            state: ["success", "read", "cancelled", "rejected", "error", "approval"].includes(card.state) ? card.state : "error",
-            label: String(card.label || "Alfie Action").slice(0, 120),
-            detail: String(card.detail || (["confirm", "working"].includes(card.state) ? "This temporary action state expired when the conversation was restored." : "")).slice(0, 1000)
-          };
-          for (const key of ["actionId", "toolId", "risk", "target"]) {
-            if (typeof card[key] === "string") safeCard[key] = card[key].slice(0, 160);
-          }
-          if (card.arguments && typeof card.arguments === "object" && !Array.isArray(card.arguments)) {
-            try {
-              const serialised = JSON.stringify(card.arguments);
-              if (serialised.length <= 12000) safeCard.arguments = JSON.parse(serialised);
-            } catch {}
-          }
-          message.actionCard = safeCard;
+          const safeCard = cleanActionCard(rawMessage.actionCard);
+          if (safeCard) message.actionCard = safeCard;
         }
         if (rawMessage.metrics && typeof rawMessage.metrics === "object" && !Array.isArray(rawMessage.metrics)) {
           message.metrics = rawMessage.metrics;
@@ -377,6 +384,7 @@ export class ConversationStore {
         messages: []
       };
       store.conversations.push(conversation);
+      store.activeConversationId = conversation.id;
       await this.save(userId, store);
       return conversation;
     });
@@ -421,11 +429,15 @@ export class ConversationStore {
             latencyMs: Number.isFinite(Number(input.metrics.latencyMs)) ? Math.round(Number(input.metrics.latencyMs)) : null,
             totalTokens: Number.isFinite(Number(input.metrics.totalTokens)) ? Math.round(Number(input.metrics.totalTokens)) : null,
             completionTokens: Number.isFinite(Number(input.metrics.completionTokens)) ? Math.round(Number(input.metrics.completionTokens)) : null,
-            model: typeof input.metrics.model === "string" ? input.metrics.model.slice(0, 100) : undefined
+            model: typeof input.metrics.model === "string" ? input.metrics.model.slice(0, 100) : undefined,
+            ...(typeof input.metrics.privacyLabel === "string" && input.metrics.privacyLabel.trim()
+              ? { privacyLabel: input.metrics.privacyLabel.trim().slice(0, 80) }
+              : {})
           }
         : undefined;
       const reaction = (input.reaction && ["like", "flag"].includes(String(input.reaction))) ? String(input.reaction) : undefined;
       const provenance = role === "assistant" ? cleanProvenance(input.provenance) : undefined;
+      const actionCard = role === "assistant" ? cleanActionCard(input.actionCard) : undefined;
       const message = {
         id: this.uuid(),
         role,
@@ -434,6 +446,7 @@ export class ConversationStore {
         createdAt: this.now(),
         ...(metrics ? { metrics } : {}),
         ...(provenance ? { provenance } : {}),
+        ...(actionCard ? { actionCard } : {}),
         ...(reaction ? { reaction, reactedAt: this.now() } : {})
       };
       const afterTaskId = CONVERSATION_ID_PATTERN.test(String(input.afterTaskId || "")) ? String(input.afterTaskId) : null;
@@ -441,11 +454,50 @@ export class ConversationStore {
       if (afterIndex >= 0 && role === "assistant") conversation.messages.splice(afterIndex + 1, 0, message);
       else conversation.messages.push(message);
       conversation.updatedAt = message.createdAt;
+      store.activeConversationId = conversation.id;
       if (role === "user" && conversation.title === "New conversation") {
         conversation.title = content.replace(/\s+/g, " ").slice(0, 80);
       }
       await this.save(userId, store);
       return message;
+    });
+  }
+
+  async updateActionCardState(userId, actionId, patch = {}) {
+    const targetActionId = String(actionId || "").trim();
+    if (!targetActionId) return { updated: false, conversationId: null, messageId: null };
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      let updatedConversationId = null;
+      let updatedMessageId = null;
+      for (const conversation of store.conversations) {
+        if (!Array.isArray(conversation.messages)) continue;
+        for (const message of conversation.messages) {
+          if (message?.actionCard?.actionId === targetActionId) {
+            const nextState = ["success", "read", "cancelled", "rejected", "error", "approval"].includes(patch.state)
+              ? patch.state
+              : message.actionCard.state;
+            message.actionCard = {
+              ...message.actionCard,
+              state: nextState,
+              ...(typeof patch.detail === "string" && patch.detail.trim()
+                ? { detail: patch.detail.trim().slice(0, 1000) }
+                : {})
+            };
+            conversation.updatedAt = this.now();
+            updatedConversationId = conversation.id;
+            updatedMessageId = message.id;
+          }
+        }
+      }
+      if (updatedConversationId) {
+        await this.save(userId, store);
+      }
+      return {
+        updated: Boolean(updatedConversationId),
+        conversationId: updatedConversationId,
+        messageId: updatedMessageId
+      };
     });
   }
 
@@ -562,6 +614,9 @@ export class ConversationStore {
       const index = store.conversations.findIndex((item) => item.id === conversationId);
       if (index < 0) throw Object.assign(new Error("Conversation not found."), { status: 404 });
       store.conversations.splice(index, 1);
+      if (store.activeConversationId === conversationId) {
+        store.activeConversationId = store.conversations[0]?.id || null;
+      }
       await this.save(userId, store);
       return { deleted: true };
     });

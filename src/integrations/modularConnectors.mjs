@@ -46,7 +46,7 @@ function notesDirectoryForUser(dataDirectory, userId) {
     : path.join(path.resolve(dataDirectory), "users", safeUserKey(userId), "notes");
 }
 
-export function getModularIntegrationsStatus({ petrioHarnessClient = null } = {}) {
+export function getModularIntegrationsStatus({ petrioHarnessClient = null, env = process.env } = {}) {
   return [
     {
       id: "local_notes",
@@ -73,8 +73,8 @@ export function getModularIntegrationsStatus({ petrioHarnessClient = null } = {}
       id: "github",
       name: "GitHub Repositories & Issues",
       category: "developer",
-      configured: Boolean(process.env.ALFIE_GITHUB_TOKEN),
-      mode: process.env.ALFIE_GITHUB_TOKEN ? "token-configured" : "public-read-only",
+      configured: Boolean(env.ALFIE_GITHUB_TOKEN),
+      mode: env.ALFIE_GITHUB_TOKEN ? "token-configured" : "public-read-only",
       requiredEnv: ["ALFIE_GITHUB_TOKEN"],
       scopes: ["github:read", "github:draft"],
       tools: ["github.repo.inspect", "github.issue.draft"],
@@ -84,8 +84,8 @@ export function getModularIntegrationsStatus({ petrioHarnessClient = null } = {}
       id: "proxmox",
       name: "Proxmox / Homelab Cluster",
       category: "homelab",
-      configured: Boolean(process.env.ALFIE_PROXMOX_API_URL && process.env.ALFIE_PROXMOX_API_TOKEN),
-      mode: (process.env.ALFIE_PROXMOX_API_URL && process.env.ALFIE_PROXMOX_API_TOKEN) ? "connected" : "awaiting-env",
+      configured: Boolean(env.ALFIE_PROXMOX_API_URL && env.ALFIE_PROXMOX_API_TOKEN),
+      mode: (env.ALFIE_PROXMOX_API_URL && env.ALFIE_PROXMOX_API_TOKEN) ? "connected" : "awaiting-env",
       requiredEnv: ["ALFIE_PROXMOX_API_URL", "ALFIE_PROXMOX_API_TOKEN"],
       scopes: ["homelab:read"],
       tools: ["proxmox.cluster.status"],
@@ -95,12 +95,19 @@ export function getModularIntegrationsStatus({ petrioHarnessClient = null } = {}
       id: "web_research",
       name: "Web Search & Research",
       category: "research",
-      configured: Boolean(process.env.ALFIE_BRAVE_SEARCH_API_KEY),
-      mode: process.env.ALFIE_BRAVE_SEARCH_API_KEY ? "configured" : "awaiting-api-key",
-      requiredEnv: ["ALFIE_BRAVE_SEARCH_API_KEY"],
+      configured: Boolean(String(env.ALFIE_SEARXNG_URL || "").trim() || String(env.ALFIE_BRAVE_SEARCH_API_KEY || "").trim()),
+      mode: (() => {
+        const hasSearxng = Boolean(String(env.ALFIE_SEARXNG_URL || "").trim());
+        const hasBrave = Boolean(String(env.ALFIE_BRAVE_SEARCH_API_KEY || "").trim());
+        if (hasSearxng && hasBrave) return "searxng+brave";
+        if (hasSearxng) return "searxng";
+        if (hasBrave) return "configured";
+        return "awaiting-api-key";
+      })(),
+      requiredEnv: ["ALFIE_SEARXNG_URL", "ALFIE_BRAVE_SEARCH_API_KEY"],
       scopes: ["web:read"],
       tools: ["web.search", "web.open", "web.research"],
-      description: "Search the public web and read HTTPS pages with private-network protections and untrusted-source handling."
+      description: "Search the public web via private SearXNG or Brave Search and read HTTPS pages with private-network protections and untrusted-source handling."
     }
   ];
 }
@@ -431,7 +438,7 @@ export function registerModularConnectorTools(
       const timer = setTimeout(() => controller.abort(), CONNECTOR_TIMEOUT_MS);
       try {
         const url = new URL(`/repos/${repo}`, "https://api.github.com");
-        const res = await fetchImpl(url, { headers, signal: controller.signal });
+        const res = await fetchImpl(url, { headers, redirect: "error", signal: controller.signal });
         if (!res.ok) throw Object.assign(new Error(`GitHub API returned ${res.status}.`), { status: 502 });
         const data = await res.json();
         return {
@@ -508,6 +515,7 @@ export function registerModularConnectorTools(
             "user-agent": "alfie-core/0.3"
           },
           body: JSON.stringify({ title: args.title, body: args.body }),
+          redirect: "error",
           signal: controller.signal
         });
         if (!res.ok) throw Object.assign(new Error(`GitHub issue creation failed (${res.status}).`), { status: 502 });
@@ -547,14 +555,19 @@ export function registerModularConnectorTools(
         );
       }
       const target = new URL("/api2/json/cluster/resources", baseUrl);
-      if (!["http:", "https:"].includes(target.protocol)) {
-        throw Object.assign(new Error("Invalid Proxmox API URL scheme."), { status: 400 });
+      const targetHost = target.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+      if (!["http:", "https:"].includes(target.protocol) || target.username || target.password) {
+        throw Object.assign(new Error("Invalid Proxmox API URL scheme or embedded credentials."), { status: 400 });
+      }
+      if (["169.254.169.254", "100.100.100.200", "metadata.google.internal", "metadata.goog"].includes(targetHost)) {
+        throw Object.assign(new Error("Proxmox API URL cannot target cloud metadata endpoints."), { status: 400 });
       }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), CONNECTOR_TIMEOUT_MS);
       try {
         const res = await fetchImpl(target, {
           headers: { authorization: `PVEAPIToken=${token}` },
+          redirect: "error",
           signal: controller.signal
         });
         if (!res.ok) throw Object.assign(new Error(`Proxmox API returned ${res.status}.`), { status: 502 });

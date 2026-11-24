@@ -17,6 +17,7 @@
   <script src="/vendor/prop-types.min.js"></script>
   <script src="/vendor/recharts.js"></script>
   <script type="module" src="/markdown-export.mjs?v=alfie-workspace-0.10.1"></script>
+  <script type="module" src="/dossier-autosave.mjs?v=alfie-workspace-0.10.1"></script>
   <script type="module" src="/shortcuts.mjs?v=alfie-workspace-0.10.1"></script>
   <script type="module" src="/voice-waveform.mjs?v=alfie-workspace-0.10.1"></script>
   <script type="module" src="/knowledge-graph.mjs?v=alfie-workspace-0.10.1"></script>
@@ -1819,27 +1820,12 @@
                   <input id="wf-auto-memory" name="autoMemoryEnabled" type="checkbox" checked>
                   <span>Auto-remember durable facts, preferences &amp; decisions from chat</span>
                 </label>
-                <label class="workflow-toggle-label">
-                  <input id="wf-learn-feedback" name="learnFromFeedbackEnabled" type="checkbox" checked>
-                  <span>Learn response style from 👍 Like / 🚩 Flag feedback across sessions</span>
-                </label>
               </div>
               <div class="watcher-form-footer">
                 <span class="muted watcher-form-note">Injected transparently into prompt assembly and visible in Turn Provenance.</span>
                 <button class="primary-button" type="submit">Save workflow profile</button>
               </div>
             </form>
-
-            <div class="learned-style-block" id="learned-style-block">
-              <div class="learned-style-head">
-                <div>
-                  <h4 class="watchers-subhead">Learned Response Preferences</h4>
-                  <p class="muted workflow-topics-sub" id="learned-style-summary">Automatically adapts tone and formatting from your 👍 Like and 🚩 Flag reactions across conversations.</p>
-                </div>
-                <button id="learned-style-reset-btn" class="secondary-button" type="button">Reset learned style</button>
-              </div>
-              <div id="learned-style-chips" class="learned-style-chips" aria-live="polite"></div>
-            </div>
 
             <div class="learning-topics-block">
               <h4 class="watchers-subhead">Developing Expertise &amp; Learning Topics</h4>
@@ -1855,6 +1841,70 @@
                 <button class="secondary-button" type="submit">Add topic</button>
               </form>
               <div id="learning-topic-list" class="item-list"></div>
+            </div>
+          </section>
+
+          <section class="surface surface-span-2 feedback-learning-surface" id="settings-feedback-learning-surface" aria-labelledby="settings-feedback-learning-heading">
+            <div class="feedback-learning-head">
+              <div>
+                <p class="eyebrow">Feedback Learning</p>
+                <h3 id="settings-feedback-learning-heading">Feedback Learning &amp; Response Preferences</h3>
+                <p class="muted">Tune how Alfie adapts from your 👍 Like and 🚩 Flag reactions. Inspect, edit, or delete any learned style preference or captured signal.</p>
+              </div>
+              <div class="feedback-learning-head-actions">
+                <span class="status-pill" id="feedback-learning-stats">0 reactions</span>
+                <button id="learned-style-reset-btn" class="secondary-button" type="button">Reset all learned</button>
+              </div>
+            </div>
+
+            <div class="feedback-learning-controls">
+              <label class="workflow-toggle-label feedback-toggle-card">
+                <input id="wf-learn-feedback" name="learnFromFeedbackEnabled" type="checkbox" checked>
+                <span>
+                  <strong>Learn response style from 👍 Like / 🚩 Flag feedback</strong>
+                  <small class="muted">Automatically tracks preferred style signals across conversations. Saves immediately.</small>
+                </span>
+              </label>
+
+              <label class="feedback-sensitivity-field">
+                <span>Learning sensitivity</span>
+                <select id="feedback-sensitivity-select" name="feedbackSensitivity" aria-label="Feedback learning sensitivity">
+                  <option value="gentle">Gentle (requires repeated feedback, ±2)</option>
+                  <option value="balanced" selected>Balanced (steady adaptation, ±1)</option>
+                  <option value="responsive">Responsive (faster weight per reaction, 2×)</option>
+                </select>
+                <small class="muted" id="feedback-sensitivity-hint">Adapts steadily from each thumbs-up or flag reaction.</small>
+              </label>
+            </div>
+
+            <div class="learned-style-block" id="learned-style-block">
+              <div class="learned-style-head">
+                <div>
+                  <h4 class="watchers-subhead">Active Learned Style Summary</h4>
+                  <p class="muted workflow-topics-sub" id="learned-style-summary">Automatically adapts tone and formatting from your 👍 Like and 🚩 Flag reactions across conversations.</p>
+                </div>
+              </div>
+              <div id="learned-style-chips" class="learned-style-chips" aria-live="polite"></div>
+            </div>
+
+            <div class="feedback-prefs-section">
+              <div class="feedback-subhead-row">
+                <div>
+                  <h4 class="watchers-subhead">Response Style Preferences</h4>
+                  <p class="muted workflow-topics-sub">Edit any trait's weight (−10 to +10) or add a custom prompt rule, or delete a learned trait to reset it to neutral.</p>
+                </div>
+              </div>
+              <div id="feedback-preferences-list" class="feedback-pref-list" role="list" aria-label="Learned response style preferences"></div>
+            </div>
+
+            <div class="feedback-signals-section">
+              <div class="feedback-subhead-row">
+                <div>
+                  <h4 class="watchers-subhead">Recent Captured Feedback Signals</h4>
+                  <p class="muted workflow-topics-sub">Individual 👍 Like and 🚩 Flag signals recorded from assistant messages. Delete any entry you don't want kept in your log.</p>
+                </div>
+              </div>
+              <div id="feedback-signals-list" class="feedback-signal-list" role="list" aria-label="Captured feedback signals"></div>
             </div>
           </section>
 
@@ -2098,7 +2148,10 @@
     <div class="project-modal-backdrop" data-project-modal-close="backdrop"></div>
     <form id="project-form" class="project-modal-card project-dossier-modal">
       <div class="project-modal-header">
-        <h2 id="project-modal-title">New project</h2>
+        <div class="project-modal-title-group">
+          <h2 id="project-modal-title">New project</h2>
+          <span id="project-autosave-status" class="project-autosave-status" role="status" aria-live="polite" hidden></span>
+        </div>
         <button type="button" id="project-modal-close" class="icon-button" aria-label="Close project dialog">×</button>
       </div>
       <input type="hidden" name="projectId" value="">
@@ -2155,6 +2208,16 @@
           <button type="button" class="project-color-btn" data-project-color="rose" aria-label="Rose accent"></button>
         </div>
       </fieldset>
+      <div class="project-dossier-export-bar" id="project-dossier-export-bar">
+        <div class="project-dossier-export-copy">
+          <span class="project-dossier-export-title">Local Dossier Backup</span>
+          <span class="muted project-dossier-export-sub">Export notes, architecture constraints, decisions &amp; action items</span>
+        </div>
+        <div class="project-dossier-export-actions">
+          <button type="button" id="project-export-md-btn" class="secondary-button project-export-btn" title="Download Project Dossier as a structured Markdown file">Export Markdown</button>
+          <button type="button" id="project-export-json-btn" class="secondary-button project-export-btn" title="Download Project Dossier as a structured JSON backup">Export JSON</button>
+        </div>
+      </div>
       <p id="project-form-error" class="error-message" role="alert"></p>
       <div class="project-modal-actions">
         <button type="button" id="project-cancel-btn" class="secondary-button">Cancel</button>

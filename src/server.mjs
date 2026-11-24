@@ -23,6 +23,7 @@ import { ProjectStore } from "./projects/store.mjs";
 import { IdeaStore } from "./ideas/store.mjs";
 import { WatcherStore } from "./watchers/store.mjs";
 import { WorkflowProfileStore, EXPLANATION_STYLES, CHANGE_PRESENTATIONS, INTERRUPTION_TOLERANCES, CHUNK_SIZES, LEARNING_MODES, TOPIC_CONFIDENCE_LEVELS } from "./profile/store.mjs";
+import { FEEDBACK_SENSITIVITIES, LEARNED_STYLE_TRAITS, summarizeLearnedStyle } from "./memory/autoMemory.mjs";
 import { ContextCapsuleStore, PRIVACY_POSTURES } from "./capsules/store.mjs";
 import { listWorkingModes, resolveWorkingMode } from "./agent/workingModes.mjs";
 import { buildHandoffBrief } from "./conversations/handoff.mjs";
@@ -504,6 +505,14 @@ export function createAlfieCoreServer({
           const body = await readJsonBody(req);
           const actionId = body.actionId || body.approvalId;
           const result = await toolDispatcher.approve(identity.userId, actionId);
+          let linkedConversationId = null;
+          try {
+            const cardUpdate = await conversationStore.updateActionCardState(identity.userId, actionId, {
+              state: "success",
+              detail: result?.toolId ? `Approved and executed ${result.toolId}.` : "Approved and executed."
+            });
+            linkedConversationId = cardUpdate?.conversationId || null;
+          } catch {}
           const waitingJobs = await jobStore.list(identity.userId, { status: "awaiting_approval", limit: 100 });
           for (const job of waitingJobs.filter((item) => item.pendingActionId === actionId)) {
             await jobStore.update(identity.userId, job.id, (current, nowIso) => current.status !== "awaiting_approval" ? current : ({
@@ -512,12 +521,18 @@ export function createAlfieCoreServer({
               checkpoints: [...current.checkpoints.slice(-24), { at: nowIso, step: current.stepsCompleted, status: "completed", summary: "User approved the pending action." }]
             }));
           }
-          return json(res, 200, result);
+          return json(res, 200, linkedConversationId ? { ...result, conversationId: linkedConversationId } : result);
         }
         if (isToolRejection && req.method === "POST") {
           const body = await readJsonBody(req);
           const actionId = body.actionId;
           const result = await toolDispatcher.reject(identity.userId, actionId);
+          try {
+            await conversationStore.updateActionCardState(identity.userId, actionId, {
+              state: "rejected",
+              detail: "Rejected by user."
+            });
+          } catch {}
           const waitingJobs = await jobStore.list(identity.userId, { status: "awaiting_approval", limit: 100 });
           for (const job of waitingJobs.filter((item) => item.pendingActionId === actionId)) {
             await jobStore.update(identity.userId, job.id, (current, nowIso) => current.status !== "awaiting_approval" ? current : ({
@@ -808,28 +823,34 @@ export function createAlfieCoreServer({
     const isProfileRoot = url.pathname === "/v1/profile";
     const isProfileTopics = url.pathname === "/v1/profile/topics";
     const profileTopicMatch = /^\/v1\/profile\/topics\/([a-f0-9-]{36})$/i.exec(url.pathname);
-    if (isProfileRoot || isProfileTopics || profileTopicMatch) {
+    const profileFeedbackSignalMatch = /^\/v1\/profile\/feedback\/signals\/([a-zA-Z0-9_-]{1,64})$/.exec(url.pathname);
+    const profileFeedbackTraitMatch = /^\/v1\/profile\/feedback\/([a-zA-Z]{2,32})$/.exec(url.pathname);
+    if (isProfileRoot || isProfileTopics || profileTopicMatch || profileFeedbackSignalMatch || profileFeedbackTraitMatch) {
       let identity;
       try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
       catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
       try {
         if (isProfileRoot && req.method === "GET") {
+          const profile = await profileStore.get(identity.userId);
           return json(res, 200, {
-            profile: await profileStore.get(identity.userId),
+            profile,
+            learnedSummary: summarizeLearnedStyle(profile.learnedStyle),
             options: {
               explanationStyles: EXPLANATION_STYLES,
               changePresentations: CHANGE_PRESENTATIONS,
               interruptionTolerances: INTERRUPTION_TOLERANCES,
               chunkSizes: CHUNK_SIZES,
               learningModes: LEARNING_MODES,
-              confidenceLevels: TOPIC_CONFIDENCE_LEVELS
+              confidenceLevels: TOPIC_CONFIDENCE_LEVELS,
+              feedbackTraits: LEARNED_STYLE_TRAITS,
+              feedbackSensitivities: FEEDBACK_SENSITIVITIES
             }
           });
         }
         if (isProfileRoot && (req.method === "PUT" || req.method === "PATCH")) {
           const body = await readJsonBody(req);
           const profile = await profileStore.update(identity.userId, body);
-          return json(res, 200, { profile });
+          return json(res, 200, { profile, learnedSummary: summarizeLearnedStyle(profile.learnedStyle) });
         }
         if (isProfileTopics && req.method === "POST") {
           const body = await readJsonBody(req);
@@ -841,6 +862,19 @@ export function createAlfieCoreServer({
         }
         if (profileTopicMatch && req.method === "DELETE") {
           return json(res, 200, await profileStore.removeTopic(identity.userId, profileTopicMatch[1]));
+        }
+        if (profileFeedbackSignalMatch && req.method === "DELETE") {
+          const result = await profileStore.deleteFeedbackSignal(identity.userId, profileFeedbackSignalMatch[1]);
+          return json(res, 200, { ...result, learnedSummary: summarizeLearnedStyle(result.profile.learnedStyle) });
+        }
+        if (profileFeedbackTraitMatch && req.method === "PATCH") {
+          const body = await readJsonBody(req);
+          const result = await profileStore.updateFeedbackPreference(identity.userId, profileFeedbackTraitMatch[1], body);
+          return json(res, 200, { ...result, learnedSummary: summarizeLearnedStyle(result.profile.learnedStyle) });
+        }
+        if (profileFeedbackTraitMatch && req.method === "DELETE") {
+          const result = await profileStore.deleteFeedbackPreference(identity.userId, profileFeedbackTraitMatch[1]);
+          return json(res, 200, { ...result, learnedSummary: summarizeLearnedStyle(result.profile.learnedStyle) });
         }
       } catch (error) {
         return json(res, error.status || 500, {

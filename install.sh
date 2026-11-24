@@ -88,12 +88,17 @@ cp .env.example .env
 chmod 600 .env
 
 write_env() {
-  local key="$1" value="$2"
-  if grep -q "^$key=" .env; then
-    sed -i "s|^$key=.*|$key=$value|" .env
-  else
-    printf '%s=%s\n' "$key" "$value" >> .env
-  fi
+  local key="$1" value="$2" tmp
+  tmp="$(mktemp .env.tmp.XXXXXX)"
+  chmod 600 "$tmp"
+  KEY="$key" VAL="$value" awk '
+    BEGIN { found = 0; k = ENVIRON["KEY"]; v = ENVIRON["VAL"] }
+    index($0, k "=") == 1 { print k "=" v; found = 1; next }
+    { print }
+    END { if (!found) print k "=" v }
+  ' .env > "$tmp"
+  mv "$tmp" .env
+  chmod 600 .env
 }
 write_env ALFIE_CORE_SERVICE_TOKEN "$SERVICE_TOKEN"
 write_env ALFIE_CORE_STANDALONE_IDENTITY_SECRET "$IDENTITY_SECRET"

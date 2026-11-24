@@ -546,6 +546,20 @@ export function createAlfieInterfaceServer({
           requireCsrf(req, session);
           return json(res, 200, await coreClient.deleteLearningTopic(userId, profileTopicMatch[1]));
         }
+        const profileFeedbackSignalMatch = /^\/api\/core\/profile\/feedback\/signals\/([a-zA-Z0-9_-]{1,64})$/.exec(url.pathname);
+        if (method === "DELETE" && profileFeedbackSignalMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.deleteFeedbackSignal(userId, profileFeedbackSignalMatch[1]));
+        }
+        const profileFeedbackTraitMatch = /^\/api\/core\/profile\/feedback\/([a-zA-Z]{2,32})$/.exec(url.pathname);
+        if (method === "PATCH" && profileFeedbackTraitMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.updateFeedbackPreference(userId, profileFeedbackTraitMatch[1], await readJson(req)));
+        }
+        if (method === "DELETE" && profileFeedbackTraitMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.deleteFeedbackPreference(userId, profileFeedbackTraitMatch[1]));
+        }
         if (method === "GET" && url.pathname === "/api/core/capsules") {
           return json(res, 200, await coreClient.listCapsules(userId));
         }
@@ -889,6 +903,7 @@ export function createAlfieInterfaceServer({
       "index.html": "text/html; charset=utf-8",
       "app.js": "text/javascript; charset=utf-8",
       "markdown-export.mjs": "text/javascript; charset=utf-8",
+      "dossier-autosave.mjs": "text/javascript; charset=utf-8",
       "shortcuts.mjs": "text/javascript; charset=utf-8",
       "voice-waveform.mjs": "text/javascript; charset=utf-8",
       "knowledge-graph.mjs": "text/javascript; charset=utf-8",

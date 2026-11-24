@@ -545,3 +545,67 @@ test("workspace includes automatic memory disclosure and learned response style 
   assert.match(app, /learnedFeedback/);
 });
 
+test("settings includes dedicated Feedback Learning & Response Preferences tuning section", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+
+  for (const id of [
+    "settings-feedback-learning-surface",
+    "settings-feedback-learning-heading",
+    "feedback-learning-stats",
+    "feedback-sensitivity-select",
+    "feedback-sensitivity-hint",
+    "feedback-preferences-list",
+    "feedback-signals-list"
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`), `Missing #${id} in index.html`);
+  }
+
+  assert.match(css, /\.feedback-learning-surface/);
+  assert.match(css, /\.feedback-pref-card/);
+  assert.match(css, /\.feedback-pref-editor/);
+  assert.match(css, /\.feedback-signal-row/);
+  assert.match(app, /renderFeedbackLearningSection/);
+  assert.match(app, /\/api\/core\/profile\/feedback\//);
+  assert.match(app, /\/api\/core\/profile\/feedback\/signals\//);
+  assert.match(app, /feedbackSensitivity/);
+});
+
+test("Project Dossier modal includes structured JSON and Markdown local backup export controls", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+
+  for (const id of [
+    "project-dossier-export-bar",
+    "project-export-md-btn",
+    "project-export-json-btn"
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`), `Missing #${id} in index.html`);
+  }
+
+  assert.match(css, /\.project-dossier-export-bar/);
+  assert.match(css, /\.project-export-btn/);
+  assert.match(app, /collectProjectDossierFormState/);
+  assert.match(app, /exportProjectDossier/);
+  assert.match(app, /formatProjectDossierJson/);
+  assert.match(app, /formatProjectDossierMarkdown/);
+});
+
+test("Project Dossier modal wires debounced auto-save module and live status feedback", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+
+  assert.match(html, /\/dossier-autosave\.mjs/);
+  assert.match(html, /id="project-autosave-status"/);
+  assert.match(css, /\.project-autosave-status/);
+  assert.match(app, /AlfieDossierAutoSave/);
+  assert.match(app, /scheduleProjectDossierAutoSave/);
+  assert.match(app, /getProjectDossierAutoSaver/);
+});
+
+
+
+

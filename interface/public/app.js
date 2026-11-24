@@ -35,7 +35,8 @@ const state = {
   view: "chat",
   sending: false,
   conversationLoadToken: 0,
-  conversationLoading: false
+  conversationLoading: false,
+  pendingApprovalConversations: new Map()
 };
 
 let pendingApiCalls = 0;
@@ -1353,8 +1354,10 @@ async function logout() {
   state.linked = false;
   state.activeConversationId = null;
   state.activeConversation = null;
+  state.conversations = [];
   state.projects = [];
   state.selectedProjectId = "all";
+  state.pendingApprovalConversations.clear();
   state.vram = null;
   state.vramDismissedKey = null;
   state.vramLastAlerted = false;
@@ -1363,6 +1366,8 @@ async function logout() {
   state.conversationLoadToken += 1;
   state.conversationLoading = false;
   state.messages = [];
+  renderConversations([]);
+  renderMessages();
   renderVramStatus();
   syncAgentSelector();
   showLogin();
@@ -1394,8 +1399,10 @@ $("#password-form").addEventListener("submit", async (event) => {
     state.linked = false;
     state.activeConversationId = null;
     state.activeConversation = null;
+    state.conversations = [];
     state.projects = [];
     state.selectedProjectId = "all";
+    state.pendingApprovalConversations.clear();
     state.vram = null;
     state.vramDismissedKey = null;
     state.vramLastAlerted = false;
@@ -1404,6 +1411,8 @@ $("#password-form").addEventListener("submit", async (event) => {
     state.conversationLoadToken += 1;
     state.conversationLoading = false;
     state.messages = [];
+    renderConversations([]);
+    renderMessages();
     renderVramStatus();
     syncAgentSelector();
     showLogin();
@@ -1824,12 +1833,107 @@ function formatDecisionsForInput(decisions) {
 }
 
 let lastFocusBeforeProjectModal = null;
+let projectDossierAutoSaver = null;
+
+function renderProjectAutoSaveStatus(snap) {
+  const el = $("#project-autosave-status");
+  if (!el) return;
+  if (!snap || snap.state === "disabled") {
+    el.hidden = true;
+    el.textContent = "";
+    el.dataset.state = "disabled";
+    return;
+  }
+  el.hidden = false;
+  el.dataset.state = snap.state;
+  if (snap.state === "saving") {
+    el.textContent = "Saving…";
+  } else if (snap.state === "pending") {
+    el.textContent = "Unsaved changes…";
+  } else if (snap.state === "saved") {
+    const stamp = snap.savedAt ? new Date(snap.savedAt) : new Date();
+    const label = Number.isNaN(stamp.getTime())
+      ? "Saved"
+      : `Saved ${stamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    el.textContent = label;
+  } else if (snap.state === "invalid") {
+    el.textContent = snap.error || "Project name required";
+  } else if (snap.state === "error") {
+    el.textContent = snap.error || "Auto-save failed";
+  } else {
+    el.textContent = "Auto-save on";
+  }
+}
+
+function collectProjectDossierPayload() {
+  const form = $("#project-form");
+  if (!form) return null;
+  return {
+    name: String(form.elements.name?.value || "").trim(),
+    status: String(form.elements.status?.value || "active").trim(),
+    vision: String(form.elements.vision?.value || "").trim(),
+    description: String(form.elements.description?.value || "").trim(),
+    architecture: String(form.elements.architecture?.value || "").trim(),
+    nextActions: String(form.elements.nextActions?.value || ""),
+    blockers: String(form.elements.blockers?.value || ""),
+    decisions: String(form.elements.decisions?.value || ""),
+    postponed: String(form.elements.postponed?.value || ""),
+    color: projectModalColor
+  };
+}
+
+function syncUpdatedProjectInState(updatedProject) {
+  if (!updatedProject?.id) return;
+  const idx = state.projects.findIndex((item) => item.id === updatedProject.id);
+  if (idx >= 0) {
+    state.projects[idx] = updatedProject;
+  } else {
+    state.projects.unshift(updatedProject);
+  }
+  state.projects.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+  renderProjects();
+  renderConversations(state.conversations);
+}
+
+function getProjectDossierAutoSaver() {
+  if (projectDossierAutoSaver) return projectDossierAutoSaver;
+  const factory = window.AlfieDossierAutoSave?.createDossierAutoSaver;
+  if (typeof factory !== "function") return null;
+  projectDossierAutoSaver = factory({
+    debounceMs: 650,
+    persist: async (projectId, payload) => {
+      const errEl = $("#project-form-error");
+      const res = await api("/api/core/projects/" + encodeURIComponent(projectId), {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+      if (errEl) errEl.textContent = "";
+      if (res?.project) syncUpdatedProjectInState(res.project);
+      return res;
+    },
+    onStateChange: (snap) => {
+      renderProjectAutoSaveStatus(snap);
+    }
+  });
+  return projectDossierAutoSaver;
+}
+
+function scheduleProjectDossierAutoSave() {
+  const form = $("#project-form");
+  if (!form) return;
+  const projectId = String(form.elements.projectId?.value || "").trim();
+  if (!projectId) return;
+  const payload = collectProjectDossierPayload();
+  if (!payload) return;
+  getProjectDossierAutoSaver()?.schedule(payload);
+}
 
 function openProjectModal(project = null) {
   const modal = $("#project-modal");
   const form = $("#project-form");
   const title = $("#project-modal-title");
   const submit = $("#project-submit-btn");
+  const cancelBtn = $("#project-cancel-btn");
   const err = $("#project-form-error");
   if (!modal || !form) return;
   lastFocusBeforeProjectModal = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -1848,14 +1952,31 @@ function openProjectModal(project = null) {
   setProjectModalColor(project?.color || "purple");
   if (title) title.textContent = project ? "Edit project dossier" : "New project";
   if (submit) submit.textContent = project ? "Save dossier" : "Create project";
+  if (cancelBtn) cancelBtn.textContent = project ? "Close" : "Cancel";
+
+  const saver = getProjectDossierAutoSaver();
+  if (saver) {
+    saver.reset(project?.id || "", project ? collectProjectDossierPayload() : null);
+  } else {
+    renderProjectAutoSaveStatus({ state: "disabled" });
+  }
+
   modal.hidden = false;
   $("#mobile-history-sheet").hidden = true;
   $("#project-name-input")?.focus();
 }
 
-function closeProjectModal() {
+function closeProjectModal({ flush = true } = {}) {
   const modal = $("#project-modal");
   if (!modal || modal.hidden) return;
+  const saver = getProjectDossierAutoSaver();
+  if (saver) {
+    if (flush) {
+      void saver.flush();
+    } else {
+      saver.cancel();
+    }
+  }
   modal.hidden = true;
   if (lastFocusBeforeProjectModal && document.contains(lastFocusBeforeProjectModal)) {
     try { lastFocusBeforeProjectModal.focus(); } catch {}
@@ -1888,26 +2009,110 @@ $("#chat-project-dossier-btn")?.addEventListener("click", () => {
   const project = findProjectById(activeProjectId);
   if (project) openProjectModal(project);
 });
-$("#project-modal-close")?.addEventListener("click", closeProjectModal);
-$("#project-cancel-btn")?.addEventListener("click", closeProjectModal);
-$("#project-modal")?.querySelector("[data-project-modal-close='backdrop']")?.addEventListener("click", closeProjectModal);
+$("#project-modal-close")?.addEventListener("click", () => closeProjectModal({ flush: true }));
+$("#project-cancel-btn")?.addEventListener("click", () => closeProjectModal({ flush: true }));
+$("#project-modal")?.querySelector("[data-project-modal-close='backdrop']")?.addEventListener("click", () => closeProjectModal({ flush: true }));
 document.querySelectorAll("#project-color-choices .project-color-btn").forEach((btn) => {
-  btn.addEventListener("click", () => setProjectModalColor(btn.dataset.projectColor));
+  btn.addEventListener("click", () => {
+    setProjectModalColor(btn.dataset.projectColor);
+    scheduleProjectDossierAutoSave();
+  });
+});
+
+$("#project-form")?.addEventListener("input", scheduleProjectDossierAutoSave);
+$("#project-form")?.addEventListener("change", scheduleProjectDossierAutoSave);
+
+function collectProjectDossierFormState() {
+  const form = $("#project-form");
+  if (!form) return null;
+  const projectId = String(form.elements.projectId?.value || "").trim();
+  const existing = projectId ? findProjectById(projectId) : null;
+  return {
+    ...(existing?.id ? { id: existing.id } : {}),
+    ...(existing?.createdAt ? { createdAt: existing.createdAt } : {}),
+    ...(existing?.updatedAt ? { updatedAt: existing.updatedAt } : {}),
+    name: String(form.elements.name?.value || "").trim(),
+    status: String(form.elements.status?.value || "active").trim(),
+    color: projectModalColor || existing?.color || "purple",
+    vision: String(form.elements.vision?.value || ""),
+    description: String(form.elements.description?.value || ""),
+    architecture: String(form.elements.architecture?.value || ""),
+    nextActions: String(form.elements.nextActions?.value || ""),
+    blockers: String(form.elements.blockers?.value || ""),
+    decisions: String(form.elements.decisions?.value || ""),
+    postponed: String(form.elements.postponed?.value || "")
+  };
+}
+
+function exportProjectDossier(format = "md") {
+  const dossier = collectProjectDossierFormState();
+  if (!dossier) return false;
+
+  const hasAnyContent = Boolean(
+    dossier.name ||
+    dossier.vision.trim() ||
+    dossier.description.trim() ||
+    dossier.architecture.trim() ||
+    dossier.nextActions.trim() ||
+    dossier.blockers.trim() ||
+    dossier.decisions.trim() ||
+    dossier.postponed.trim()
+  );
+  if (!hasAnyContent) {
+    toast("Add a project name or dossier notes before exporting.");
+    return false;
+  }
+
+  const normalizedFormat = format === "json" ? "json" : "md";
+  const exporter = window.AlfieMarkdownExport;
+  const exportedAt = new Date();
+
+  let content;
+  let mimeType;
+  if (normalizedFormat === "json") {
+    content = exporter?.formatProjectDossierJson
+      ? exporter.formatProjectDossierJson(dossier, { exportedAt })
+      : JSON.stringify({ schema: "alfie.project-dossier.v1", exportedAt: exportedAt.toISOString(), project: dossier }, null, 2) + "\n";
+    mimeType = "application/json;charset=utf-8";
+  } else {
+    content = exporter?.formatProjectDossierMarkdown
+      ? exporter.formatProjectDossierMarkdown(dossier, { exportedAt })
+      : `# ${dossier.name || "Untitled Project"} — Project Dossier\n\n${dossier.description || ""}\n`;
+    mimeType = "text/markdown;charset=utf-8";
+  }
+
+  const filename = exporter?.sanitizeDossierExportFilename
+    ? exporter.sanitizeDossierExportFilename(dossier.name, normalizedFormat, exportedAt)
+    : `project-dossier.${normalizedFormat}`;
+
+  const blob = new Blob([content], { type: mimeType });
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+
+  toast(`Exported dossier backup "${filename}".`, { durationMs: 2800 });
+  return true;
+}
+
+$("#project-export-md-btn")?.addEventListener("click", () => {
+  exportProjectDossier("md");
+});
+$("#project-export-json-btn")?.addEventListener("click", () => {
+  exportProjectDossier("json");
 });
 
 $("#project-form")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const projectId = String(form.elements.projectId.value || "").trim();
-  const name = String(form.elements.name.value || "").trim();
-  const status = String(form.elements.status?.value || "active").trim();
-  const vision = String(form.elements.vision?.value || "").trim();
-  const description = String(form.elements.description.value || "").trim();
-  const architecture = String(form.elements.architecture?.value || "").trim();
-  const nextActions = String(form.elements.nextActions?.value || "");
-  const blockers = String(form.elements.blockers?.value || "");
-  const decisions = String(form.elements.decisions?.value || "");
-  const postponed = String(form.elements.postponed?.value || "");
+  const payloadBody = collectProjectDossierPayload();
+  const name = payloadBody?.name || "";
   const err = $("#project-form-error");
   const submit = $("#project-submit-btn");
   if (err) err.textContent = "";
@@ -1915,25 +2120,16 @@ $("#project-form")?.addEventListener("submit", async (event) => {
     if (err) err.textContent = "Please enter a project name.";
     return;
   }
-  const payloadBody = {
-    name,
-    status,
-    vision,
-    description,
-    architecture,
-    nextActions,
-    blockers,
-    decisions,
-    postponed,
-    color: projectModalColor
-  };
+  getProjectDossierAutoSaver()?.cancel();
   if (submit) submit.disabled = true;
   try {
     if (projectId) {
-      await api("/api/core/projects/" + encodeURIComponent(projectId), {
+      const updated = await api("/api/core/projects/" + encodeURIComponent(projectId), {
         method: "PATCH",
         body: JSON.stringify(payloadBody)
       });
+      if (updated?.project) syncUpdatedProjectInState(updated.project);
+      getProjectDossierAutoSaver()?.markSaved(payloadBody);
       toast(`Updated project dossier "${name}".`);
     } else {
       const created = await api("/api/core/projects", {
@@ -1943,7 +2139,7 @@ $("#project-form")?.addEventListener("submit", async (event) => {
       if (created?.project?.id) state.selectedProjectId = created.project.id;
       toast(`Created project "${name}".`);
     }
-    closeProjectModal();
+    closeProjectModal({ flush: false });
     await loadProjects();
     renderConversations(state.conversations);
   } catch (error) {
@@ -3195,6 +3391,26 @@ function renderConversationList(host, conversations = []) {
   }
 }
 
+function activeConversationStorageKey() {
+  return `alfie:activeConversation:${state.user?.id || state.user?.username || "default"}`;
+}
+
+function rememberActiveConversation(id) {
+  try {
+    const key = activeConversationStorageKey();
+    if (id) localStorage.setItem(key, String(id));
+    else localStorage.removeItem(key);
+  } catch {}
+}
+
+function getRememberedActiveConversationId() {
+  try {
+    return localStorage.getItem(activeConversationStorageKey()) || null;
+  } catch {
+    return null;
+  }
+}
+
 function renderConversations(conversations = []) {
   renderConversationList($("#conversation-list"), conversations);
   renderConversationList($("#mobile-conversation-list"), conversations);
@@ -3205,23 +3421,47 @@ async function loadConversations() {
   const payload = await api("/api/core/conversations");
   const conversations = payload.conversations || [];
   state.conversations = conversations;
+  if (
+    state.selectedProjectId !== "all" &&
+    state.selectedProjectId !== "unassigned" &&
+    state.projects.length &&
+    !state.projects.some((project) => project.id === state.selectedProjectId)
+  ) {
+    state.selectedProjectId = "all";
+  }
+  if (state.activeConversationId && !conversations.some((item) => item.id === state.activeConversationId)) {
+    state.activeConversationId = null;
+    state.activeConversation = null;
+    state.messages = [];
+    rememberActiveConversation(null);
+  }
   renderConversations(conversations);
-  if (!state.activeConversationId && conversations.length) await loadConversation(conversations[0].id);
-  else syncChatContextBar();
+  if (!state.activeConversationId && conversations.length) {
+    const rememberedId = getRememberedActiveConversationId();
+    const targetId = rememberedId && conversations.some((item) => item.id === rememberedId)
+      ? rememberedId
+      : conversations[0].id;
+    await loadConversation(targetId);
+  } else {
+    syncChatContextBar();
+  }
 }
 
 async function loadConversation(id) {
   if (state.sending) { toast("Wait for Alfie's current reply before switching conversations."); return; }
+  const cleanId = String(id || "").replace(/^conversation:/i, "").trim();
+  if (!cleanId) return;
   const token = ++state.conversationLoadToken;
   state.conversationLoading = true;
   try {
-    const payload = await api("/api/core/conversations/" + encodeURIComponent(id));
+    const payload = await api("/api/core/conversations/" + encodeURIComponent(cleanId));
     if (token !== state.conversationLoadToken) return;
-    state.activeConversationId = id;
+    state.activeConversationId = cleanId;
     state.activeConversation = payload.conversation || null;
     state.messages = payload.conversation?.messages || [];
+    rememberActiveConversation(cleanId);
     renderMessages();
-    await restoreBackgroundTaskNotice(id);
+    await restoreBackgroundTaskNotice(cleanId);
     syncChatContextBar();
     renderVramWarningBanner();
     const list = await api("/api/core/conversations");
@@ -3255,6 +3495,7 @@ async function newConversation({ fromSend = false, projectId = undefined } = {})
     state.activeConversationId = payload.conversation.id;
     state.activeConversation = payload.conversation;
     state.messages = [];
+    rememberActiveConversation(payload.conversation.id);
     renderMessages();
     syncChatContextBar();
     renderVramWarningBanner();
@@ -3300,6 +3541,7 @@ async function deleteConversation(id) {
       state.activeConversationId = null;
       state.activeConversation = null;
       state.messages = [];
+      rememberActiveConversation(null);
       state.conversationLoadToken += 1;
       renderMessages();
       syncChatContextBar();
@@ -4242,6 +4484,417 @@ function createAutoMemoryDisclosure(autoMemories) {
   return details;
 }
 
+function formatApprovedToolResultForContinuation(toolId, result) {
+  if (typeof result === "string") return result.slice(0, 4500);
+  if (result && typeof result === "object") {
+    if (Array.isArray(result.results) && result.results.length) {
+      const lines = [];
+      if (result.query) lines.push(`Query: ${result.query}`);
+      if (result.provider) lines.push(`Source: ${result.provider}`);
+      for (const [idx, item] of result.results.slice(0, 6).entries()) {
+        const title = String(item?.title || item?.url || `Result ${idx + 1}`).slice(0, 140);
+        const url = String(item?.url || "").slice(0, 320);
+        const snippet = String(item?.excerpt || item?.description || "").slice(0, 320);
+        lines.push(`${idx + 1}. ${title}${url ? ` (${url})` : ""}${snippet ? `\n   ${snippet}` : ""}`);
+      }
+      return lines.join("\n").slice(0, 4500);
+    }
+    try {
+      return JSON.stringify(result, null, 2).slice(0, 4500);
+    } catch {
+      return "Tool completed successfully.";
+    }
+  }
+  return `Approved tool ${toolId || "action"} completed.`;
+}
+
+function markChatApprovalCardResolved(actionId, { state: nextState = "success", headingText = "", detailText = "", result = undefined } = {}) {
+  if (!actionId) return;
+  for (const msg of state.messages) {
+    if (msg?.actionCard?.actionId === actionId) {
+      msg.actionCard = {
+        ...msg.actionCard,
+        state: nextState,
+        ...(detailText ? { detail: detailText } : {})
+      };
+    }
+  }
+  const cards = [...document.querySelectorAll(".chat-approval-card")].filter((card) => card.dataset.actionId === actionId);
+  for (const card of cards) {
+    card.classList.toggle("chat-approval-completed", nextState === "success");
+    card.classList.toggle("chat-approval-rejected", nextState === "rejected");
+    const heading = card.querySelector("strong");
+    if (heading && headingText) heading.textContent = headingText;
+    const detail = card.querySelector("p.chat-approval-detail") || card.querySelector("p");
+    if (detail && detailText) detail.textContent = detailText;
+    card.querySelector(".chat-approval-actions")?.remove();
+    card.querySelectorAll(":scope > button").forEach((btn) => btn.remove());
+    if (result !== undefined && !card.querySelector(".chat-approval-result-details")) {
+      const details = document.createElement("details");
+      details.className = "chat-approval-result-details";
+      const summary = document.createElement("summary");
+      summary.textContent = "Inspect tool output";
+      const output = document.createElement("pre");
+      output.className = "chat-approval-result";
+      output.textContent = formatApprovedToolResultForContinuation("", result).slice(0, 6000);
+      details.append(summary, output);
+      card.appendChild(details);
+    }
+  }
+}
+
+function findConversationIdForAction(actionId) {
+  if (!actionId) return null;
+  if (state.pendingApprovalConversations.has(actionId)) {
+    return state.pendingApprovalConversations.get(actionId);
+  }
+  if (state.messages.some((msg) => msg?.actionCard?.actionId === actionId) && state.activeConversationId) {
+    return state.activeConversationId;
+  }
+  return null;
+}
+
+async function continueChatAfterApproval({ conversationId, toolId = "", approvalResult = null, summary = "" } = {}) {
+  if (!conversationId || !state.linked) return;
+  if (state.sending) {
+    toast("Alfie is finishing another reply. Send a follow-up once it completes.");
+    return;
+  }
+  setView("chat");
+  if (state.activeConversationId !== conversationId) {
+    await loadConversation(conversationId);
+  }
+
+  const form = $("#chat-form");
+  const input = form?.elements?.message;
+  state.sending = true;
+  if (input) input.disabled = true;
+  const sendStart = Date.now();
+  let assistantBody = null;
+  let thinking = null;
+
+  try {
+    assistantBody = appendMessageElement({ role: "assistant", content: "" });
+    thinking = createThinkingIndicator();
+    assistantBody.appendChild(thinking.element);
+    thinking.setStage(`Continuing with ${toolId || "approved action"}…`);
+    window.alfieSoul?.setState("working", "cyan");
+    chatAutoScrollEnabled = true;
+    scrollChatToBottom({ force: true });
+
+    const outgoingMessages = [];
+    if (state.activeConversation?.handoffContext) {
+      outgoingMessages.push({
+        role: "user",
+        content: "[Carried-over context from previous conversation]\n" + state.activeConversation.handoffContext
+      });
+    }
+    const recentSlice = state.messages.slice(outgoingMessages.length ? -13 : -14).map(({ role, content: text, reaction }) => ({
+      role,
+      content: text,
+      ...(reaction ? { reaction } : {})
+    }));
+    const formattedResult = formatApprovedToolResultForContinuation(toolId, approvalResult?.result);
+    const continuationPrompt =
+      `[Approved tool result: ${toolId || "action"}]\n` +
+      `The user explicitly approved the requested action${summary ? ` (${summary})` : ""}. ` +
+      `Continue the conversation and answer the user's preceding request directly using this result, citing sources and URLs where applicable. Do not repeat the same tool call.\n\n` +
+      `<untrusted_data source="approved_tool:${toolId || "action"}">\n${formattedResult}\n</untrusted_data>`;
+    outgoingMessages.push(...recentSlice, { role: "user", content: continuationPrompt });
+
+    const activeProjectId = getConversationProjectId(state.activeConversation);
+    const activeProject = findProjectById(activeProjectId);
+    const dashboardState = activeProject?.description
+      ? { attachedContext: `Project: ${activeProject.name}\n${activeProject.description}` }
+      : {};
+    const selectedAgentProvider = $("#agent-provider")?.value || state.selectedAgentProvider || "local";
+    const workingMode = $("#working-mode-select")?.value || state.workingMode || "companion";
+
+    const response = await fetch("/api/core/chat/stream", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json", "x-csrf-token": state.csrfToken },
+      body: JSON.stringify({
+        messages: outgoingMessages,
+        mode: $("#model-mode").value,
+        workingMode,
+        projectId: activeProject?.id || null,
+        agentProvider: selectedAgentProvider,
+        dashboardState
+      })
+    });
+    if (!response.ok) {
+      const failure = await response.json().catch(() => ({}));
+      throw new Error(failure.error || "Alfie could not continue the conversation.");
+    }
+
+    let buffer = "";
+    let assistantText = "";
+    let finalEvent = null;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const event = JSON.parse(line);
+        if (event.type === "tool_start" || event.type === "tool_call") {
+          thinking?.setTool(event.toolId, event.toolName, event.action || event.actionText, event.isExternal !== false);
+          window.alfieSoul?.setState("working", event.isExternal ? "cyan" : "amber");
+        } else if (event.type === "approval_required") {
+          thinking?.setTool(event.toolId, event.summary);
+          window.alfieSoul?.setState("waiting", "amber");
+        } else if (event.type === "heartbeat" && thinking) {
+          thinking.setStage("Still working…");
+        } else if (event.type === "delta") {
+          if (thinking) {
+            thinking.stop();
+            thinking.element.remove();
+            thinking = null;
+          }
+          assistantText += event.content || "";
+          renderMarkdown(assistantBody, assistantText);
+          if (chatAutoScrollEnabled) {
+            const host = $("#messages");
+            if (host) host.scrollTop = host.scrollHeight;
+          }
+          updateScrollToBottomIndicator();
+        } else if (event.type === "error") {
+          throw new Error(event.error || "Alfie could not continue the conversation.");
+        } else if (event.type === "done") {
+          finalEvent = event;
+        }
+      }
+      if (done) break;
+    }
+    if (buffer.trim()) {
+      const event = JSON.parse(buffer);
+      if (event.type === "delta") assistantText += event.content || "";
+      if (event.type === "done") finalEvent = event;
+    }
+    if (thinking) {
+      thinking.stop();
+      thinking.element.remove();
+      thinking = null;
+    }
+    assistantBody.querySelector(".streaming-cursor")?.remove();
+    if (!assistantText && finalEvent?.message) assistantText = finalEvent.message;
+    if (finalEvent?.status === "provider_unavailable" || !assistantText) {
+      assistantText = `The approved action (${toolId || "tool"}) completed. Here is the result:\n\n${formattedResult}`;
+    }
+    const finalText = assistantText;
+    renderMarkdown(assistantBody, finalText);
+    assistantBody.dataset.rawContent = finalText.trim();
+
+    let nextActionCard = null;
+    if (finalEvent?.status === "awaiting_user_approval" && finalEvent.actionId) {
+      nextActionCard = {
+        state: "approval",
+        label: "Your approval is needed",
+        actionId: finalEvent.actionId,
+        toolId: finalEvent.toolId || "",
+        summary: finalEvent.summary || "",
+        reason: finalEvent.reason || "",
+        detail: [finalEvent.toolId, finalEvent.summary].filter(Boolean).join(" · ") || "Alfie has prepared an action for review."
+      };
+      state.pendingApprovalConversations.set(finalEvent.actionId, conversationId);
+      assistantBody.closest(".message")?.appendChild(createChatApprovalCard(nextActionCard, { conversationId }));
+    }
+
+    const elapsedMs = Date.now() - sendStart;
+    const metrics = {
+      latencyMs: Number.isFinite(Number(finalEvent?.metrics?.latencyMs)) ? Number(finalEvent.metrics.latencyMs) : elapsedMs,
+      completionTokens: Number.isFinite(Number(finalEvent?.metrics?.completionTokens)) ? Number(finalEvent.metrics.completionTokens) : Math.max(1, Math.round(finalText.length / 4)),
+      totalTokens: Number.isFinite(Number(finalEvent?.metrics?.totalTokens)) ? Number(finalEvent.metrics.totalTokens) : Math.max(1, Math.round(finalText.length / 4)),
+      model: finalEvent?.model || finalEvent?.metrics?.model || $("#model-mode").value || null
+    };
+    const provenance = finalEvent?.provenance || null;
+    const savedMessage = await persistMessage("assistant", finalText, conversationId, metrics, provenance, null, nextActionCard);
+    const messageArticle = assistantBody.closest(".message");
+    if (messageArticle) {
+      const header = messageArticle.querySelector(".message-header");
+      if (header) {
+        header.querySelector(".message-meta-badge")?.remove();
+        const badge = createMetricsBadge({ role: "assistant", content: finalText, metrics });
+        if (badge) header.appendChild(badge);
+      }
+      messageArticle.querySelector(".message-actions")?.remove();
+      messageArticle.appendChild(createReactionControls(savedMessage || { role: "assistant", content: finalText, metrics, provenance }));
+      if (provenance) {
+        messageArticle.querySelector(".turn-provenance")?.remove();
+        const provEl = createProvenanceDisclosure(provenance);
+        if (provEl) messageArticle.appendChild(provEl);
+      }
+    }
+    await loadConversations().catch(() => {});
+    await refreshVramStatus().catch(() => {});
+    window.alfieSoul?.pulse("completed", 2200, "idle", "purple");
+    if (finalText) speakAssistantReply?.(finalText);
+    if (chatAutoScrollEnabled) scrollChatToBottom();
+    updateScrollToBottomIndicator();
+  } catch (error) {
+    if (thinking) {
+      thinking.stop();
+      thinking.element.remove();
+      thinking = null;
+    }
+    const fallbackResult = formatApprovedToolResultForContinuation(toolId, approvalResult?.result);
+    const fallbackText = `The approved action (${toolId || "tool"}) finished, though Alfie could not generate a follow-up summary (${error.message}).\n\n${fallbackResult}`;
+    if (assistantBody) {
+      renderMarkdown(assistantBody, fallbackText);
+      assistantBody.dataset.rawContent = fallbackText.trim();
+      try { await persistMessage("assistant", fallbackText, conversationId); } catch {}
+    }
+    window.alfieSoul?.pulse("completed", 1600, "idle", "purple");
+    toast("Action ran; showed tool output directly.");
+  } finally {
+    if (thinking) {
+      thinking.stop();
+      thinking.element.remove();
+      thinking = null;
+    }
+    state.sending = false;
+    if (input) {
+      input.disabled = false;
+      input.focus();
+    }
+  }
+}
+
+async function approvePendingActionAndContinue(actionId, { toolId = "", summary = "", conversationId = null, cardElement = null } = {}) {
+  if (!actionId) return;
+  const buttons = cardElement ? [...cardElement.querySelectorAll("button")] : [];
+  buttons.forEach((btn) => { btn.disabled = true; });
+  try {
+    window.alfieSoul?.setState("working", "cyan");
+    const res = await api("/api/core/tools/approve", {
+      method: "POST",
+      body: JSON.stringify({ actionId })
+    });
+    const resolvedToolId = res.toolId || toolId;
+    const targetConversationId =
+      conversationId ||
+      res.conversationId ||
+      findConversationIdForAction(actionId) ||
+      (state.view === "chat" ? state.activeConversationId : null);
+    state.pendingApprovalConversations.delete(actionId);
+    markChatApprovalCardResolved(actionId, {
+      state: "success",
+      headingText: res.receipt?.verified ? "Approved and verified" : "Approved and executed",
+      detailText: resolvedToolId
+        ? `Approved ${resolvedToolId}. Alfie is continuing the conversation below.`
+        : "Approved and executed. Alfie is continuing the conversation below.",
+      result: res.result
+    });
+    toast(targetConversationId ? "Action approved — Alfie is continuing your chat." : (res.receipt?.verified ? "Action approved & verified." : "Action approved and executed."));
+    loadToolsAndApprovals().catch(() => {});
+    if (targetConversationId) {
+      await continueChatAfterApproval({
+        conversationId: targetConversationId,
+        toolId: resolvedToolId,
+        approvalResult: res,
+        summary
+      });
+    } else {
+      window.alfieSoul?.pulse("completed", 2000, "idle", "purple");
+    }
+  } catch (error) {
+    buttons.forEach((btn) => { btn.disabled = false; });
+    window.alfieSoul?.setState("error", "red");
+    toast(error.message);
+  }
+}
+
+async function rejectPendingAction(actionId, { cardElement = null } = {}) {
+  if (!actionId) return;
+  const buttons = cardElement ? [...cardElement.querySelectorAll("button")] : [];
+  buttons.forEach((btn) => { btn.disabled = true; });
+  try {
+    await api("/api/core/tools/reject", {
+      method: "POST",
+      body: JSON.stringify({ actionId })
+    });
+    state.pendingApprovalConversations.delete(actionId);
+    markChatApprovalCardResolved(actionId, {
+      state: "rejected",
+      headingText: "Action rejected",
+      detailText: "You rejected this action. No external change or lookup was executed."
+    });
+    toast("Action rejected.");
+    await loadToolsAndApprovals().catch(() => {});
+  } catch (error) {
+    buttons.forEach((btn) => { btn.disabled = false; });
+    toast(error.message);
+  }
+}
+
+function createChatApprovalCard(card, { conversationId = state.activeConversationId } = {}) {
+  const approval = document.createElement("section");
+  approval.className = "chat-approval-card";
+  if (card.actionId) approval.dataset.actionId = card.actionId;
+  if (card.state === "success") approval.classList.add("chat-approval-completed");
+  if (card.state === "rejected") approval.classList.add("chat-approval-rejected");
+
+  const heading = document.createElement("strong");
+  if (card.state === "success") heading.textContent = "Approved and executed";
+  else if (card.state === "rejected") heading.textContent = "Action rejected";
+  else heading.textContent = card.label || "Your approval is needed";
+
+  const detail = document.createElement("p");
+  detail.className = "chat-approval-detail";
+  detail.textContent = card.detail || [card.toolId, card.summary].filter(Boolean).join(" · ") || "Alfie has prepared an action for review.";
+  approval.append(heading, detail);
+
+  if (card.reason && card.state === "approval") {
+    const reason = document.createElement("p");
+    reason.className = "chat-approval-reason";
+    reason.textContent = card.reason;
+    approval.appendChild(reason);
+  }
+
+  if (card.state === "approval" && card.actionId) {
+    const actions = document.createElement("div");
+    actions.className = "chat-approval-actions";
+
+    const approveBtn = document.createElement("button");
+    approveBtn.type = "button";
+    approveBtn.className = "primary-button";
+    approveBtn.textContent = "Approve & continue";
+    approveBtn.addEventListener("click", () => {
+      approvePendingActionAndContinue(card.actionId, {
+        toolId: card.toolId || "",
+        summary: card.summary || "",
+        conversationId,
+        cardElement: approval
+      });
+    });
+
+    const rejectBtn = document.createElement("button");
+    rejectBtn.type = "button";
+    rejectBtn.className = "secondary-button";
+    rejectBtn.textContent = "Reject";
+    rejectBtn.addEventListener("click", () => {
+      rejectPendingAction(card.actionId, { cardElement: approval });
+    });
+
+    const reviewBtn = document.createElement("button");
+    reviewBtn.type = "button";
+    reviewBtn.className = "secondary-button";
+    reviewBtn.textContent = "Review in Tools & access";
+    reviewBtn.addEventListener("click", () => {
+      setView("tools");
+      loadToolsAndApprovals(card.actionId).catch((error) => toast(error.message));
+    });
+
+    actions.append(approveBtn, rejectBtn, reviewBtn);
+    approval.appendChild(actions);
+  }
+  return approval;
+}
+
 function appendMessageElement(message) {
   const article = document.createElement("article");
   article.className = "message " + (message.role === "user" ? "user" : "assistant");
@@ -4270,6 +4923,9 @@ function appendMessageElement(message) {
   if (message.role === "assistant") {
     const actions = createReactionControls(message);
     article.appendChild(actions);
+    if (message.actionCard) {
+      article.insertBefore(createChatApprovalCard(message.actionCard, { conversationId: state.activeConversationId }), actions);
+    }
     if (message.provenance?.autoMemories?.length) {
       const autoMemEl = createAutoMemoryDisclosure(message.provenance.autoMemories);
       if (autoMemEl) article.appendChild(autoMemEl);
@@ -4284,9 +4940,22 @@ function appendMessageElement(message) {
   return body;
 }
 
-/* Chat Auto-Scroll Manager with User Scroll-Lock Protection */
+/* Chat Auto-Scroll Manager with MutationObserver & User Scroll-Lock Protection */
 const SCROLL_BOTTOM_THRESHOLD = 96;
 let chatAutoScrollEnabled = true;
+let chatScrollRafId = null;
+let chatProgrammaticScroll = false;
+let chatProgrammaticScrollTimer = null;
+let chatMessagesObserver = null;
+let chatMessagesResizeObserver = null;
+
+function clearProgrammaticScrollGuard() {
+  chatProgrammaticScroll = false;
+  if (chatProgrammaticScrollTimer !== null) {
+    clearTimeout(chatProgrammaticScrollTimer);
+    chatProgrammaticScrollTimer = null;
+  }
+}
 
 function isMessagesNearBottom(element = $("#messages"), threshold = SCROLL_BOTTOM_THRESHOLD) {
   if (!element) return true;
@@ -4298,7 +4967,7 @@ function updateScrollToBottomIndicator() {
   const scrollBtn = $("#scroll-to-bottom");
   const host = $("#messages");
   if (!scrollBtn || !host) return;
-  const hasMessages = state.messages && state.messages.length > 0;
+  const hasMessages = (state.messages && state.messages.length > 0) || Boolean(host.querySelector(".message"));
   const isUp = !isMessagesNearBottom(host);
   scrollBtn.hidden = !hasMessages || !isUp;
 }
@@ -4307,14 +4976,94 @@ function scrollChatToBottom({ force = false, smooth = false } = {}) {
   const host = $("#messages");
   if (!host) return;
   if (force || chatAutoScrollEnabled) {
+    clearProgrammaticScrollGuard();
+    chatProgrammaticScroll = true;
+    chatAutoScrollEnabled = true;
     if (smooth) {
       host.scrollTo({ top: host.scrollHeight, behavior: "smooth" });
+      chatProgrammaticScrollTimer = setTimeout(() => {
+        clearProgrammaticScrollGuard();
+        updateScrollToBottomIndicator();
+      }, 650);
     } else {
       host.scrollTop = host.scrollHeight;
+      updateScrollToBottomIndicator();
+      requestAnimationFrame(() => {
+        clearProgrammaticScrollGuard();
+      });
     }
-    chatAutoScrollEnabled = true;
-    updateScrollToBottomIndicator();
   }
+}
+
+function scheduleObservedAutoScroll() {
+  if (chatScrollRafId !== null) return;
+  chatScrollRafId = requestAnimationFrame(() => {
+    chatScrollRafId = null;
+    if (chatAutoScrollEnabled) {
+      scrollChatToBottom();
+    } else {
+      updateScrollToBottomIndicator();
+    }
+  });
+}
+
+function isIgnoredScrollMutationTarget(node) {
+  const el = node?.nodeType === 1 ? node : node?.parentElement;
+  if (!el || typeof el.closest !== "function") return false;
+  return Boolean(
+    el.closest(".message-actions, .turn-provenance, .auto-memory-disclosure, .copy-code-btn, .handoff-context-card")
+  );
+}
+
+function isStreamedMessageMutation(mutation) {
+  if (!mutation || isIgnoredScrollMutationTarget(mutation.target)) return false;
+  if (mutation.type === "characterData") {
+    const el = mutation.target?.parentElement;
+    return Boolean(el?.closest?.(".message.assistant, .message-body, .thinking-indicator"));
+  }
+  if (mutation.type === "childList" && mutation.addedNodes && mutation.addedNodes.length > 0) {
+    const targetEl = mutation.target?.nodeType === 1 ? mutation.target : null;
+    if (targetEl?.id === "messages") {
+      return [...mutation.addedNodes].some((n) => n.nodeType === 1 && n.classList?.contains("message"));
+    }
+    return Boolean(targetEl?.closest?.(".message.assistant, .message-body, .thinking-indicator"));
+  }
+  return false;
+}
+
+function attachChatMessagesObserver(host = $("#messages")) {
+  if (!host) return null;
+  if (chatMessagesObserver) {
+    chatMessagesObserver.disconnect();
+    chatMessagesObserver = null;
+  }
+  if (chatMessagesResizeObserver) {
+    chatMessagesResizeObserver.disconnect();
+    chatMessagesResizeObserver = null;
+  }
+  if (typeof MutationObserver === "function") {
+    chatMessagesObserver = new MutationObserver((mutations) => {
+      if (mutations.some(isStreamedMessageMutation)) {
+        scheduleObservedAutoScroll();
+      }
+    });
+    chatMessagesObserver.observe(host, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+  }
+  if (typeof ResizeObserver === "function") {
+    chatMessagesResizeObserver = new ResizeObserver(() => {
+      if (chatAutoScrollEnabled) {
+        scheduleObservedAutoScroll();
+      } else {
+        updateScrollToBottomIndicator();
+      }
+    });
+    chatMessagesResizeObserver.observe(host);
+  }
+  return chatMessagesObserver;
 }
 
 window.chatScroller = {
@@ -4324,12 +5073,31 @@ window.chatScroller = {
   setAutoScroll: (val) => {
     chatAutoScrollEnabled = Boolean(val);
     updateScrollToBottomIndicator();
+  },
+  isObserving: () => Boolean(chatMessagesObserver),
+  reconnectObserver: () => attachChatMessagesObserver($("#messages")),
+  disconnectObserver: () => {
+    if (chatMessagesObserver) {
+      chatMessagesObserver.disconnect();
+      chatMessagesObserver = null;
+    }
+    if (chatMessagesResizeObserver) {
+      chatMessagesResizeObserver.disconnect();
+      chatMessagesResizeObserver = null;
+    }
   }
 };
 
 const messagesHost = $("#messages");
 if (messagesHost) {
   messagesHost.addEventListener("scroll", () => {
+    if (chatProgrammaticScroll) {
+      if (isMessagesNearBottom(messagesHost)) {
+        clearProgrammaticScrollGuard();
+        updateScrollToBottomIndicator();
+      }
+      return;
+    }
     if (isMessagesNearBottom(messagesHost)) {
       chatAutoScrollEnabled = true;
     } else {
@@ -4337,6 +5105,21 @@ if (messagesHost) {
     }
     updateScrollToBottomIndicator();
   }, { passive: true });
+  messagesHost.addEventListener("scrollend", () => {
+    clearProgrammaticScrollGuard();
+    updateScrollToBottomIndicator();
+  }, { passive: true });
+  ["wheel", "touchstart"].forEach((evtName) => {
+    messagesHost.addEventListener(evtName, () => {
+      clearProgrammaticScrollGuard();
+    }, { passive: true });
+  });
+  messagesHost.addEventListener("load", (event) => {
+    if (event.target?.tagName === "IMG") {
+      scheduleObservedAutoScroll();
+    }
+  }, true);
+  attachChatMessagesObserver(messagesHost);
 }
 
 $("#scroll-to-bottom")?.addEventListener("click", () => {
@@ -4437,13 +5220,27 @@ function renderMessages() {
   scrollChatToBottom({ force: true });
 }
 
-async function persistMessage(role, content, conversationId = state.activeConversationId, metrics = null, provenance = null, taskId = null) {
+async function persistMessage(role, content, conversationId = state.activeConversationId, metrics = null, provenance = null, taskId = null, actionCard = null) {
   const payload = await api("/api/core/conversations/" + encodeURIComponent(conversationId) + "/messages", {
     method: "POST",
-    body: JSON.stringify({ role, content, ...(metrics ? { metrics } : {}), ...(provenance ? { provenance } : {}), ...(taskId ? { taskId } : {}) })
+    body: JSON.stringify({
+      role,
+      content,
+      ...(metrics ? { metrics } : {}),
+      ...(provenance ? { provenance } : {}),
+      ...(taskId ? { taskId } : {}),
+      ...(actionCard ? { actionCard } : {})
+    })
   });
   if (conversationId === state.activeConversationId) {
-    state.messages.push(payload.message || { role, content, ...(metrics ? { metrics } : {}), ...(provenance ? { provenance } : {}), ...(taskId ? { taskId } : {}) });
+    state.messages.push(payload.message || {
+      role,
+      content,
+      ...(metrics ? { metrics } : {}),
+      ...(provenance ? { provenance } : {}),
+      ...(taskId ? { taskId } : {}),
+      ...(actionCard ? { actionCard } : {})
+    });
     syncChatContextBar();
   }
   return payload.message;
@@ -4664,6 +5461,7 @@ async function sendMessage(rawText) {
       const selectedAgentProvider = $("#agent-provider")?.value || state.selectedAgentProvider || "local";
       const workingMode = $("#working-mode-select")?.value || state.workingMode || "companion";
       await persistMessage("user", content, conversationId, null, null, turnId);
+      loadConversations().catch(() => {});
       renderMessages();
       assistantBody = appendMessageElement({ role: "assistant", content: "" });
       thinking = createThinkingIndicator();
@@ -4691,6 +5489,7 @@ async function sendMessage(rawText) {
       return;
     }
     await persistMessage("user", content, conversationId);
+    loadConversations().catch(() => {});
     renderMessages();
     assistantBody = appendMessageElement({ role: "assistant", content: "" });
     thinking = createThinkingIndicator();
@@ -4858,23 +5657,19 @@ async function sendMessage(rawText) {
     const finalText = assistantText || "I couldn't produce a response.";
     renderMarkdown(assistantBody, finalText);
     assistantBody.dataset.rawContent = finalText.trim();
+    let approvalActionCard = null;
     if (finalEvent?.status === "awaiting_user_approval" && finalEvent.actionId) {
-      const approval = document.createElement("section");
-      approval.className = "chat-approval-card";
-      approval.dataset.actionId = finalEvent.actionId;
-      const heading = document.createElement("strong");
-      heading.textContent = "Your approval is needed";
-      const detail = document.createElement("p");
-      detail.textContent = [finalEvent.toolId, finalEvent.summary].filter(Boolean).join(" · ") || "Alfie has prepared an action for review.";
-      const review = document.createElement("button");
-      review.type = "button";
-      review.className = "secondary-button";
-      review.textContent = "Review in Tools & access";
-      review.addEventListener("click", () => {
-        setView("tools");
-        loadToolsAndApprovals(finalEvent.actionId).catch((error) => toast(error.message));
-      });
-      approval.append(heading, detail, review);
+      approvalActionCard = {
+        state: "approval",
+        label: "Your approval is needed",
+        actionId: finalEvent.actionId,
+        toolId: finalEvent.toolId || "",
+        summary: finalEvent.summary || "",
+        reason: finalEvent.reason || "",
+        detail: [finalEvent.toolId, finalEvent.summary].filter(Boolean).join(" · ") || "Alfie has prepared an action for review."
+      };
+      state.pendingApprovalConversations.set(finalEvent.actionId, conversationId);
+      const approval = createChatApprovalCard(approvalActionCard, { conversationId });
       assistantBody.closest(".message")?.appendChild(approval);
     }
     const elapsedMs = Date.now() - sendStart;
@@ -4905,7 +5700,7 @@ async function sendMessage(rawText) {
     }
 
     const provenance = finalEvent?.provenance || null;
-    const savedMessage = await persistMessage("assistant", assistantText || assistantBody.textContent, conversationId, metrics, provenance);
+    const savedMessage = await persistMessage("assistant", assistantText || assistantBody.textContent, conversationId, metrics, provenance, null, approvalActionCard);
     if (messageArticle) {
       messageArticle.querySelector(".message-actions")?.remove();
       messageArticle.appendChild(createReactionControls(savedMessage || { role: "assistant", content: assistantText, metrics, provenance }));
@@ -4954,6 +5749,7 @@ async function sendMessage(rawText) {
         messageArticle.appendChild(createReactionControls({ role: "assistant", content: errText }));
       }
     }
+    loadConversations().catch(() => {});
     window.alfieSoul?.setState("error", "red");
     setTimeout(() => {
       if (window.alfieSoul?.getAnimationState() === "error") window.alfieSoul?.setState("idle", "purple");
@@ -7023,42 +7819,19 @@ async function loadToolsAndApprovals(focusActionId = null) {
     if (!tools.tools?.length) toolsHost.textContent = "No registered tools.";
     for (const action of (pending.actions || [])) {
       const approve = {
-        label: "Approve",
+        label: "Approve & continue",
         kind: "primary-button",
         onClick: async () => {
-          try {
-            window.alfieSoul?.setState("working", "cyan");
-            const res = await api("/api/core/tools/approve", { method: "POST", body: JSON.stringify({ actionId: action.id }) });
-            const chatCard = [...document.querySelectorAll(".chat-approval-card")].find((card) => card.dataset.actionId === action.id);
-            if (chatCard) {
-              chatCard.classList.add("chat-approval-completed");
-              const heading = chatCard.querySelector("strong");
-              if (heading) heading.textContent = res.receipt?.verified ? "Approved and verified" : "Approved and executed";
-              const detail = chatCard.querySelector("p");
-              if (detail) detail.textContent = "The approved tool has finished. Its result is shown below.";
-              chatCard.querySelector("button")?.remove();
-              const output = document.createElement("pre");
-              output.className = "chat-approval-result";
-              let resultText = "";
-              try { resultText = typeof res.result === "string" ? res.result : JSON.stringify(res.result, null, 2); }
-              catch { resultText = "The tool completed, but its result could not be displayed."; }
-              output.textContent = String(resultText || "The tool completed without returning additional details.").slice(0, 6000);
-              chatCard.appendChild(output);
-            }
-            toast(res.receipt?.verified ? "Action approved & verified." : "Action approved and executed.");
-            window.alfieSoul?.pulse("completed", 2000, "idle", "purple");
-            await loadToolsAndApprovals();
-          } catch (error) {
-            window.alfieSoul?.setState("error", "red");
-            toast(error.message);
-          }
+          await approvePendingActionAndContinue(action.id, {
+            toolId: action.toolId,
+            summary: action.preview || ""
+          });
         }
       };
       const reject = {
         label: "Reject",
         onClick: async () => {
-          try { await api("/api/core/tools/reject", { method: "POST", body: JSON.stringify({ actionId: action.id }) }); toast("Action rejected."); await loadToolsAndApprovals(); }
-          catch (error) { toast(error.message); }
+          await rejectPendingAction(action.id);
         }
       };
       const itemEl = createItem(action.toolId, action.preview || "Waiting for your decision.", [reject, approve]);
@@ -7738,6 +8511,433 @@ const CONFIDENCE_LABELS = {
 
 const CONFIDENCE_SEQUENCE = ["exploring", "practicing", "comfortable", "confident"];
 
+const FEEDBACK_TRAIT_META = [
+  {
+    key: "concise",
+    label: "Concise replies",
+    preferHint: "Prefer concise, direct answers without unnecessary padding.",
+    avoidHint: "Avoid overly terse replies; include enough context to be self-contained."
+  },
+  {
+    key: "detailed",
+    label: "Thorough detail",
+    preferHint: "Provide thorough, well-explained answers with deeper rationale and edge cases.",
+    avoidHint: "Avoid long walls of text; keep replies tighter and easier to scan."
+  },
+  {
+    key: "structured",
+    label: "Structured headings & bullets",
+    preferHint: "Organize answers with clear headings and scannable bullet points.",
+    avoidHint: "Prefer natural prose paragraphs over heavy bulleted formatting when simple."
+  },
+  {
+    key: "codeExamples",
+    label: "Concrete code & commands",
+    preferHint: "Include concrete code snippets or runnable commands when explaining technical topics.",
+    avoidHint: "Keep code snippets minimal unless explicitly requested."
+  },
+  {
+    key: "stepByStep",
+    label: "Step-by-step walkthroughs",
+    preferHint: "Present actionable procedures as clear numbered steps with verification points.",
+    avoidHint: "Summarize outcomes directly instead of rigid numbered checklists."
+  }
+];
+
+const FEEDBACK_SENSITIVITY_META = {
+  gentle: {
+    label: "Gentle",
+    threshold: 2,
+    description: "Requires repeated feedback (score ±2) before shaping replies."
+  },
+  balanced: {
+    label: "Balanced",
+    threshold: 1,
+    description: "Adapts steadily from each thumbs-up or flag reaction."
+  },
+  responsive: {
+    label: "Responsive",
+    threshold: 1,
+    description: "Adapts quickly with stronger weight per reaction (2× per signal)."
+  }
+};
+
+let editingFeedbackTraitKey = null;
+
+function formatFeedbackScoreLabel(score) {
+  if (score > 0) return `Prefer +${score}`;
+  if (score < 0) return `Avoid ${score}`;
+  return "Neutral (0)";
+}
+
+function renderFeedbackLearningSection(profile) {
+  const learned = profile.learnedStyle || { likes: 0, flags: 0, sensitivity: "balanced", traits: {}, traitOverrides: {}, recentSignals: [] };
+  const learningEnabled = profile.learnFromFeedbackEnabled !== false;
+  const sensitivityKey = FEEDBACK_SENSITIVITY_META[learned.sensitivity] ? learned.sensitivity : "balanced";
+  const sensitivityMeta = FEEDBACK_SENSITIVITY_META[sensitivityKey];
+  const threshold = sensitivityMeta.threshold;
+  const likes = Number(learned.likes) || 0;
+  const flags = Number(learned.flags) || 0;
+  const totalReactions = likes + flags;
+
+  const learnFbEl = $("#wf-learn-feedback");
+  if (learnFbEl) learnFbEl.checked = learningEnabled;
+
+  const sensSelectEl = $("#feedback-sensitivity-select");
+  if (sensSelectEl) sensSelectEl.value = sensitivityKey;
+
+  const sensHintEl = $("#feedback-sensitivity-hint");
+  if (sensHintEl) {
+    sensHintEl.textContent = learningEnabled
+      ? sensitivityMeta.description
+      : "Feedback learning is paused. Existing preferences are kept below until you re-enable or edit them.";
+  }
+
+  const statsEl = $("#feedback-learning-stats");
+  if (statsEl) {
+    statsEl.textContent = !learningEnabled
+      ? `Paused · ${totalReactions} ${totalReactions === 1 ? "reaction" : "reactions"}`
+      : `👍 ${likes} · 🚩 ${flags} · ${sensitivityMeta.label}`;
+  }
+
+  const learnedSummaryEl = $("#learned-style-summary");
+  const learnedChipsEl = $("#learned-style-chips");
+  const traitsObj = learned.traits || {};
+  const overridesObj = learned.traitOverrides || {};
+
+  const preferenceRows = FEEDBACK_TRAIT_META.map((trait) => {
+    const score = Number.isFinite(Number(traitsObj[trait.key])) ? Math.max(-10, Math.min(10, Math.round(Number(traitsObj[trait.key])))) : 0;
+    const customHint = typeof overridesObj[trait.key] === "string" ? overridesObj[trait.key].trim() : "";
+    const direction = score > 0 ? "prefer" : score < 0 ? "avoid" : "neutral";
+    const defaultHint = score < 0 ? trait.avoidHint : trait.preferHint;
+    const active = learningEnabled && Math.abs(score) >= threshold;
+    return {
+      ...trait,
+      score,
+      customHint,
+      direction,
+      defaultHint,
+      effectiveHint: customHint || defaultHint,
+      active
+    };
+  });
+
+  const activeRows = preferenceRows
+    .filter((row) => Math.abs(row.score) >= threshold)
+    .sort((a, b) => Math.abs(b.score) - Math.abs(a.score));
+
+  if (learnedSummaryEl) {
+    if (!learningEnabled) {
+      learnedSummaryEl.textContent = "Feedback learning is currently paused. Toggle it back on above to apply these style preferences in new replies.";
+    } else if (activeRows.length || totalReactions > 0) {
+      learnedSummaryEl.textContent = totalReactions > 0
+        ? `Learned from ${likes} liked and ${flags} flagged ${totalReactions === 1 ? "reply" : "replies"} (${sensitivityMeta.label} sensitivity, threshold ±${threshold}).`
+        : `${activeRows.length} manually tuned style ${activeRows.length === 1 ? "preference" : "preferences"} active (${sensitivityMeta.label} sensitivity).`;
+    } else {
+      learnedSummaryEl.textContent = "Click 👍 Like or 🚩 Flag on any assistant reply, or edit any style dimension below to shape Alfie's replies across sessions.";
+    }
+  }
+
+  if (learnedChipsEl) {
+    learnedChipsEl.replaceChildren();
+    if (activeRows.length) {
+      for (const row of activeRows) {
+        const chip = document.createElement("span");
+        chip.className = "learned-style-chip " + (row.score > 0 ? "is-prefer" : "is-avoid") + (learningEnabled ? "" : " is-paused");
+        chip.textContent = row.score > 0
+          ? `${row.label} (+${row.score})`
+          : `Less ${row.label.toLowerCase()} (${row.score})`;
+        if (row.customHint) chip.title = `Custom rule: ${row.customHint}`;
+        learnedChipsEl.appendChild(chip);
+      }
+    } else {
+      const emptyNote = document.createElement("span");
+      emptyNote.className = "muted";
+      emptyNote.textContent = totalReactions > 0 && threshold > 1
+        ? `No traits have reached the ±${threshold} threshold yet.`
+        : "No active style traits yet.";
+      learnedChipsEl.appendChild(emptyNote);
+    }
+  }
+
+  const prefsHost = $("#feedback-preferences-list");
+  if (prefsHost) {
+    prefsHost.replaceChildren();
+    const sortedRows = [...preferenceRows].sort((a, b) => {
+      const aHas = a.score !== 0 || Boolean(a.customHint) ? 1 : 0;
+      const bHas = b.score !== 0 || Boolean(b.customHint) ? 1 : 0;
+      if (bHas !== aHas) return bHas - aHas;
+      return Math.abs(b.score) - Math.abs(a.score);
+    });
+
+    for (const row of sortedRows) {
+      const card = document.createElement("article");
+      card.className = "feedback-pref-card" + (row.score > 0 ? " is-prefer" : row.score < 0 ? " is-avoid" : " is-neutral");
+      card.setAttribute("role", "listitem");
+      card.dataset.traitKey = row.key;
+
+      const topRow = document.createElement("div");
+      topRow.className = "feedback-pref-top";
+
+      const titleGroup = document.createElement("div");
+      titleGroup.className = "feedback-pref-title-group";
+
+      const titleEl = document.createElement("strong");
+      titleEl.className = "feedback-pref-label";
+      titleEl.textContent = row.label;
+      titleGroup.appendChild(titleEl);
+
+      const badge = document.createElement("span");
+      badge.className = "feedback-pref-badge " + (row.score > 0 ? "is-prefer" : row.score < 0 ? "is-avoid" : "is-neutral");
+      badge.textContent = formatFeedbackScoreLabel(row.score);
+      titleGroup.appendChild(badge);
+
+      const statusTag = document.createElement("span");
+      statusTag.className = "feedback-pref-state";
+      if (!learningEnabled && Math.abs(row.score) >= threshold) {
+        statusTag.textContent = "Paused";
+      } else if (row.active) {
+        statusTag.textContent = row.customHint ? "Active · Custom rule" : "Active in prompt";
+      } else if (row.score !== 0) {
+        statusTag.textContent = `Below ±${threshold} threshold`;
+      } else if (row.customHint) {
+        statusTag.textContent = "Custom rule saved (set score to activate)";
+      } else {
+        statusTag.textContent = "Unlearned";
+      }
+      titleGroup.appendChild(statusTag);
+
+      const actionsWrap = document.createElement("div");
+      actionsWrap.className = "feedback-pref-actions";
+
+      const isEditing = editingFeedbackTraitKey === row.key;
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "secondary-button feedback-pref-btn";
+      editBtn.textContent = isEditing ? "Close" : "Edit";
+      editBtn.dataset.action = "edit-pref";
+      editBtn.dataset.traitKey = row.key;
+      editBtn.addEventListener("click", () => {
+        editingFeedbackTraitKey = isEditing ? null : row.key;
+        renderFeedbackLearningSection(state.workflowProfile || profile);
+      });
+      actionsWrap.appendChild(editBtn);
+
+      if (row.score !== 0 || row.customHint) {
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.className = "secondary-button feedback-pref-btn is-danger";
+        delBtn.textContent = "Delete";
+        delBtn.dataset.action = "delete-pref";
+        delBtn.dataset.traitKey = row.key;
+        delBtn.addEventListener("click", async () => {
+          try {
+            const res = await api(`/api/core/profile/feedback/${encodeURIComponent(row.key)}`, {
+              method: "DELETE",
+              body: "{}"
+            });
+            if (editingFeedbackTraitKey === row.key) editingFeedbackTraitKey = null;
+            state.workflowProfile = res.profile;
+            renderWorkflowProfile();
+            toast(`Deleted learned preference for ${row.label}.`);
+          } catch (error) {
+            toast(error.message || "Could not delete preference.");
+          }
+        });
+        actionsWrap.appendChild(delBtn);
+      }
+
+      topRow.appendChild(titleGroup);
+      topRow.appendChild(actionsWrap);
+      card.appendChild(topRow);
+
+      const descEl = document.createElement("p");
+      descEl.className = "feedback-pref-hint muted";
+      descEl.textContent = row.score === 0 && !row.customHint
+        ? `Default when preferred: ${row.preferHint}`
+        : row.effectiveHint;
+      card.appendChild(descEl);
+
+      if (isEditing) {
+        const editorForm = document.createElement("form");
+        editorForm.className = "feedback-pref-editor";
+        editorForm.dataset.traitKey = row.key;
+
+        const scoreRow = document.createElement("div");
+        scoreRow.className = "feedback-score-row";
+
+        const scoreLabel = document.createElement("label");
+        scoreLabel.className = "feedback-score-label";
+        const scoreTitle = document.createElement("span");
+        scoreTitle.textContent = "Preference weight (−10 avoid to +10 prefer)";
+        const scoreVal = document.createElement("strong");
+        scoreVal.className = "feedback-score-readout";
+        scoreVal.textContent = formatFeedbackScoreLabel(row.score);
+        scoreLabel.appendChild(scoreTitle);
+        scoreLabel.appendChild(scoreVal);
+
+        const rangeInput = document.createElement("input");
+        rangeInput.type = "range";
+        rangeInput.name = "score";
+        rangeInput.min = "-10";
+        rangeInput.max = "10";
+        rangeInput.step = "1";
+        rangeInput.value = String(row.score);
+        rangeInput.setAttribute("aria-label", `${row.label} preference weight`);
+        rangeInput.addEventListener("input", () => {
+          const val = Number(rangeInput.value) || 0;
+          scoreVal.textContent = formatFeedbackScoreLabel(val);
+        });
+        scoreLabel.appendChild(rangeInput);
+        scoreRow.appendChild(scoreLabel);
+
+        const quickWrap = document.createElement("div");
+        quickWrap.className = "feedback-quick-presets";
+        for (const preset of [
+          { label: "Avoid −2", val: -2 },
+          { label: "Neutral 0", val: 0 },
+          { label: "Prefer +2", val: 2 },
+          { label: "Strong +4", val: 4 }
+        ]) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "secondary-button feedback-preset-btn";
+          btn.textContent = preset.label;
+          btn.addEventListener("click", () => {
+            rangeInput.value = String(preset.val);
+            scoreVal.textContent = formatFeedbackScoreLabel(preset.val);
+          });
+          quickWrap.appendChild(btn);
+        }
+        scoreRow.appendChild(quickWrap);
+        editorForm.appendChild(scoreRow);
+
+        const hintLabel = document.createElement("label");
+        hintLabel.className = "feedback-custom-hint-field";
+        const hintCaption = document.createElement("span");
+        hintCaption.textContent = "Custom prompt instruction (optional — overrides default wording)";
+        const hintInput = document.createElement("input");
+        hintInput.type = "text";
+        hintInput.name = "customHint";
+        hintInput.maxLength = 220;
+        hintInput.value = row.customHint;
+        hintInput.placeholder = row.defaultHint;
+        hintLabel.appendChild(hintCaption);
+        hintLabel.appendChild(hintInput);
+        editorForm.appendChild(hintLabel);
+
+        const footer = document.createElement("div");
+        footer.className = "feedback-editor-footer";
+        const saveBtn = document.createElement("button");
+        saveBtn.type = "submit";
+        saveBtn.className = "primary-button feedback-pref-btn";
+        saveBtn.textContent = "Save preference";
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "secondary-button feedback-pref-btn";
+        cancelBtn.textContent = "Cancel";
+        cancelBtn.addEventListener("click", () => {
+          editingFeedbackTraitKey = null;
+          renderFeedbackLearningSection(state.workflowProfile || profile);
+        });
+        footer.appendChild(saveBtn);
+        footer.appendChild(cancelBtn);
+        editorForm.appendChild(footer);
+
+        editorForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          let score = Number(rangeInput.value);
+          if (!Number.isFinite(score)) score = 0;
+          const customHint = hintInput.value.trim();
+          // If the user wrote a custom rule while leaving score at 0, nudge it to +1 so it takes effect immediately.
+          if (customHint && score === 0) score = threshold;
+          try {
+            const res = await api(`/api/core/profile/feedback/${encodeURIComponent(row.key)}`, {
+              method: "PATCH",
+              body: JSON.stringify({ score, customHint })
+            });
+            editingFeedbackTraitKey = null;
+            state.workflowProfile = res.profile;
+            renderWorkflowProfile();
+            toast(`Updated preference: ${row.label} (${formatFeedbackScoreLabel(score)}).`);
+          } catch (error) {
+            toast(error.message || "Could not update learned preference.");
+          }
+        });
+
+        card.appendChild(editorForm);
+      }
+
+      prefsHost.appendChild(card);
+    }
+  }
+
+  const signalsHost = $("#feedback-signals-list");
+  if (signalsHost) {
+    signalsHost.replaceChildren();
+    const signals = Array.isArray(learned.recentSignals) ? learned.recentSignals : [];
+    if (!signals.length) {
+      const emptyEl = document.createElement("p");
+      emptyEl.className = "muted feedback-empty-note";
+      emptyEl.textContent = "No captured 👍 Like or 🚩 Flag signals yet. React to any reply in chat to log feedback here.";
+      signalsHost.appendChild(emptyEl);
+    } else {
+      for (const sig of signals) {
+        const rowEl = document.createElement("div");
+        rowEl.className = "feedback-signal-row " + (sig.reaction === "flag" ? "is-avoid" : "is-prefer");
+        rowEl.setAttribute("role", "listitem");
+        if (sig.id) rowEl.dataset.signalId = sig.id;
+
+        const iconEl = document.createElement("span");
+        iconEl.className = "feedback-signal-icon";
+        iconEl.setAttribute("aria-hidden", "true");
+        iconEl.textContent = sig.reaction === "flag" ? "🚩" : "👍";
+
+        const bodyEl = document.createElement("div");
+        bodyEl.className = "feedback-signal-body";
+        const labelEl = document.createElement("span");
+        labelEl.className = "feedback-signal-label";
+        labelEl.textContent = sig.label || "Captured reaction";
+        bodyEl.appendChild(labelEl);
+
+        if (sig.at) {
+          const timeEl = document.createElement("span");
+          timeEl.className = "feedback-signal-time muted";
+          const dt = new Date(sig.at);
+          timeEl.textContent = Number.isNaN(dt.getTime()) ? sig.at : dt.toLocaleString();
+          bodyEl.appendChild(timeEl);
+        }
+
+        const removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "secondary-button feedback-pref-btn";
+        removeBtn.textContent = "Delete";
+        removeBtn.dataset.action = "delete-signal";
+        if (sig.id) removeBtn.dataset.signalId = sig.id;
+        removeBtn.addEventListener("click", async () => {
+          if (!sig.id) return;
+          try {
+            const res = await api(`/api/core/profile/feedback/signals/${encodeURIComponent(sig.id)}`, {
+              method: "DELETE",
+              body: "{}"
+            });
+            state.workflowProfile = res.profile;
+            renderWorkflowProfile();
+            toast("Deleted captured feedback signal.");
+          } catch (error) {
+            toast(error.message || "Could not delete feedback signal.");
+          }
+        });
+
+        rowEl.appendChild(iconEl);
+        rowEl.appendChild(bodyEl);
+        rowEl.appendChild(removeBtn);
+        signalsHost.appendChild(rowEl);
+      }
+    }
+  }
+}
+
 function renderWorkflowProfile() {
   const profile = state.workflowProfile;
   if (!profile) return;
@@ -7752,53 +8952,12 @@ function renderWorkflowProfile() {
   if (notesEl) notesEl.value = profile.customNotes || "";
   const autoMemEl = $("#wf-auto-memory");
   if (autoMemEl) autoMemEl.checked = profile.autoMemoryEnabled !== false;
-  const learnFbEl = $("#wf-learn-feedback");
-  if (learnFbEl) learnFbEl.checked = profile.learnFromFeedbackEnabled !== false;
   const statusEl = $("#workflow-profile-status");
   if (statusEl && profile.updatedAt) {
     statusEl.textContent = "Updated " + new Date(profile.updatedAt).toLocaleTimeString();
   }
 
-  const learnedSummaryEl = $("#learned-style-summary");
-  const learnedChipsEl = $("#learned-style-chips");
-  if (learnedChipsEl) {
-    learnedChipsEl.replaceChildren();
-    const learned = profile.learnedStyle || { likes: 0, flags: 0, traits: {} };
-    const traitLabels = {
-      concise: "Concise replies",
-      detailed: "Thorough detail",
-      structured: "Structured headings & bullets",
-      codeExamples: "Concrete code & commands",
-      stepByStep: "Step-by-step walkthroughs"
-    };
-    const entries = Object.entries(learned.traits || {})
-      .filter(([, score]) => Number(score) !== 0)
-      .sort((a, b) => Math.abs(Number(b[1])) - Math.abs(Number(a[1])));
-    if (learnedSummaryEl) {
-      const likes = Number(learned.likes) || 0;
-      const flags = Number(learned.flags) || 0;
-      learnedSummaryEl.textContent = (likes || flags)
-        ? `Learned from ${likes} liked and ${flags} flagged ${likes + flags === 1 ? "reply" : "replies"}. Applied automatically to future conversations.`
-        : "Click 👍 Like or 🚩 Flag on any assistant reply and Alfie will adapt tone and formatting across sessions.";
-    }
-    if (entries.length) {
-      for (const [key, rawScore] of entries) {
-        const score = Number(rawScore);
-        const chip = document.createElement("span");
-        chip.className = "learned-style-chip " + (score > 0 ? "is-prefer" : "is-avoid");
-        const baseLabel = traitLabels[key] || key;
-        chip.textContent = score > 0
-          ? `${baseLabel} (+${score})`
-          : `Less ${baseLabel.toLowerCase()} (${score})`;
-        learnedChipsEl.appendChild(chip);
-      }
-    } else {
-      const emptyNote = document.createElement("span");
-      emptyNote.className = "muted";
-      emptyNote.textContent = "No style traits learned yet.";
-      learnedChipsEl.appendChild(emptyNote);
-    }
-  }
+  renderFeedbackLearningSection(profile);
 
   const topicHost = $("#learning-topic-list");
   if (!topicHost) return;
@@ -7881,7 +9040,7 @@ function initWorkflowProfile() {
       learningMode: formEl.elements.learningMode?.value || "explain",
       customNotes: (formEl.elements.customNotes?.value || "").trim(),
       autoMemoryEnabled: Boolean(formEl.elements.autoMemoryEnabled?.checked),
-      learnFromFeedbackEnabled: Boolean(formEl.elements.learnFromFeedbackEnabled?.checked)
+      learnFromFeedbackEnabled: Boolean($("#wf-learn-feedback")?.checked ?? true)
     };
     try {
       const res = await api("/api/core/profile", { method: "PUT", body: JSON.stringify(payload) });
@@ -7893,12 +9052,44 @@ function initWorkflowProfile() {
     }
   });
 
+  $("#wf-learn-feedback")?.addEventListener("change", async (event) => {
+    const enabled = Boolean(event.currentTarget.checked);
+    try {
+      const res = await api("/api/core/profile", {
+        method: "PUT",
+        body: JSON.stringify({ learnFromFeedbackEnabled: enabled })
+      });
+      state.workflowProfile = res.profile;
+      renderWorkflowProfile();
+      toast(enabled ? "Feedback learning enabled." : "Feedback learning paused.");
+    } catch (error) {
+      event.currentTarget.checked = !enabled;
+      toast(error.message || "Could not update feedback learning setting.");
+    }
+  });
+
+  $("#feedback-sensitivity-select")?.addEventListener("change", async (event) => {
+    const feedbackSensitivity = event.currentTarget.value || "balanced";
+    try {
+      const res = await api("/api/core/profile", {
+        method: "PUT",
+        body: JSON.stringify({ feedbackSensitivity })
+      });
+      state.workflowProfile = res.profile;
+      renderWorkflowProfile();
+      toast(`Feedback sensitivity set to ${FEEDBACK_SENSITIVITY_META[feedbackSensitivity]?.label || feedbackSensitivity}.`);
+    } catch (error) {
+      toast(error.message || "Could not update learning sensitivity.");
+    }
+  });
+
   $("#learned-style-reset-btn")?.addEventListener("click", async () => {
     try {
       const res = await api("/api/core/profile", {
         method: "PUT",
         body: JSON.stringify({ resetLearnedStyle: true })
       });
+      editingFeedbackTraitKey = null;
       state.workflowProfile = res.profile;
       renderWorkflowProfile();
       toast("Learned response preferences reset.");
@@ -8684,12 +9875,13 @@ function initHybridSearch() {
         const jumpBtn = document.createElement("button");
         jumpBtn.type = "button";
         jumpBtn.className = "secondary-button kg-action-btn";
-        const targetId = hit.docId || hit.entityId || "";
+        const rawTargetId = hit.entityId || hit.docId || "";
+        const targetId = String(rawTargetId).replace(/^(conversation|project|idea|memory|decision):/i, "");
         if (hit.entityType === "conversation") {
           jumpBtn.textContent = "Open conversation";
           jumpBtn.addEventListener("click", () => {
             setView("chat");
-            openConversation(targetId).catch((e) => toast(e.message));
+            loadConversation(targetId).catch((e) => toast(e.message));
           });
         } else if (hit.entityType === "idea") {
           jumpBtn.textContent = "Open in Ideas Vault";

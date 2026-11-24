@@ -1,35 +1,28 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { request as httpsRequest } from "node:https";
+import { isPrivateOrReservedIpv4, isPrivateOrReservedIpv6 } from "../watchers/engine.mjs";
 
 const SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
 const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_PAGE_BYTES = 1_000_000;
 const MAX_TEXT_CHARS = 1_300;
 const VALIDATED_ADDRESSES = Symbol("validatedPublicAddresses");
+const BLOCKED_METADATA_HOSTS = new Set([
+  "169.254.169.254",
+  "100.100.100.200",
+  "metadata.google.internal",
+  "metadata.goog"
+]);
 
 function fail(message, status = 400) {
   throw Object.assign(new Error(message), { status });
 }
 
 function isPublicAddress(address) {
-  if (isIP(address) === 4) {
-    const [a, b] = address.split(".").map(Number);
-    return !(a === 0 || a === 10 || a === 127 || a >= 224 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) || (a === 192 && b === 0) ||
-      (a === 198 && (b === 18 || b === 19)));
-  }
-  if (isIP(address) === 6) {
-    const value = address.toLowerCase();
-    return value === "::1" ? false :
-      !(value === "::" || value.startsWith("fc") || value.startsWith("fd") ||
-        value.startsWith("fe8") || value.startsWith("fe9") ||
-        value.startsWith("fea") || value.startsWith("feb") ||
-        value.startsWith("::ffff:127.") || value.startsWith("::ffff:10.") ||
-        value.startsWith("::ffff:192.168."));
-  }
+  const family = isIP(address);
+  if (family === 4) return !isPrivateOrReservedIpv4(address);
+  if (family === 6) return !isPrivateOrReservedIpv6(address);
   return false;
 }
 
@@ -38,13 +31,15 @@ export async function validatePublicWebUrl(value, { lookupImpl = lookup } = {}) 
   try { url = new URL(String(value || "")); } catch { fail("A valid absolute URL is required."); }
   if (url.protocol !== "https:" || url.username || url.password) fail("Only credential-free HTTPS URLs can be opened.");
   if (url.port && url.port !== "443") fail("Only standard HTTPS port 443 is allowed.");
-  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") ||
-      host.endsWith(".internal") || host.endsWith(".test") || host.endsWith(".home.arpa")) {
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.+$/, "");
+  if (!host || host === "localhost" || BLOCKED_METADATA_HOSTS.has(host) ||
+      host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".localdomain") ||
+      host.endsWith(".internal") || host.endsWith(".test") || host.endsWith(".home.arpa") ||
+      host.endsWith(".lan") || host.endsWith(".docker") || host.endsWith(".svc")) {
     fail("Local and internal hosts cannot be accessed.");
   }
   const literalFamily = isIP(host);
-  const addresses = literalFamily ? [{ address: host }] : await lookupImpl(host, { all: true, verbatim: true });
+  const addresses = literalFamily ? [{ address: host, family: literalFamily }] : await lookupImpl(host, { all: true, verbatim: true });
   if (!addresses.length || addresses.some((item) => !isPublicAddress(item.address))) {
     fail("The destination must resolve exclusively to public IP addresses.");
   }
@@ -91,6 +86,8 @@ function requestPinnedHttps(url, { addresses, headers, signal }) {
       method: "GET",
       headers,
       signal,
+      agent: false,
+      servername: isIP(url.hostname) ? undefined : url.hostname,
       lookup(_hostname, options, callback) {
         const resolved = { address: selected.address, family: selected.family || isIP(selected.address) };
         if (options?.all) callback(null, [resolved]);
@@ -151,17 +148,21 @@ async function readResponseText(response, maxBytes = MAX_PAGE_BYTES) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetch, lookupImpl = lookup, requestImpl = requestPinnedHttps } = {}) {
+export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetch, lookupImpl = lookup, requestImpl = requestPinnedHttps, env = process.env } = {}) {
   async function searchWeb(query, count = 4) {
-    const searxngBase = String(process.env.ALFIE_SEARXNG_URL || "").trim();
-    const braveKey = String(process.env.ALFIE_BRAVE_SEARCH_API_KEY || "").trim();
+    const searxngBase = String(env.ALFIE_SEARXNG_URL || "").trim();
+    const braveKey = String(env.ALFIE_BRAVE_SEARCH_API_KEY || "").trim();
     let searxngError = null;
 
     if (searxngBase) {
       try {
         const base = new URL(searxngBase);
+        const host = base.hostname.toLowerCase().replace(/^\[|\]$/g, "");
         if (!["http:", "https:"].includes(base.protocol) || base.username || base.password) {
           throw new Error("ALFIE_SEARXNG_URL must be an HTTP(S) URL without credentials.");
+        }
+        if (BLOCKED_METADATA_HOSTS.has(host)) {
+          throw new Error("ALFIE_SEARXNG_URL cannot target cloud metadata endpoints.");
         }
         const url = new URL("/search", base);
         url.searchParams.set("q", query);
@@ -170,16 +171,17 @@ export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetc
         url.searchParams.set("language", "en-GB");
         const response = await fetchImpl(url, {
           headers: { "Accept": "application/json", "User-Agent": "Alfie-Core/1.0" },
+          redirect: "error",
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
         });
         if (!response.ok) throw new Error(`SearXNG returned HTTP ${response.status}.`);
         const payload = await response.json();
         const results = (Array.isArray(payload.results) ? payload.results : []).slice(0, count).map((item) => ({
-          title: String(item.title || "").slice(0, 240),
-          url: String(item.url || "").slice(0, 1500),
-          description: String(item.content || item.description || "").slice(0, 600),
-          age: String(item.publishedDate || "").slice(0, 80),
-          source: Array.isArray(item.engines) ? item.engines.slice(0, 4).join(", ").slice(0, 120) : String(item.engine || "").slice(0, 120)
+          title: String(item.title || "").slice(0, 180),
+          url: String(item.url || "").slice(0, 500),
+          description: String(item.content || item.description || "").slice(0, 260),
+          age: String(item.publishedDate || "").slice(0, 40),
+          source: Array.isArray(item.engines) ? item.engines.slice(0, 4).join(", ").slice(0, 80) : String(item.engine || "").slice(0, 80)
         })).filter((item) => item.title && item.url);
         return { provider: "SearXNG", results };
       } catch (error) {
@@ -194,16 +196,17 @@ export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetc
       url.searchParams.set("safesearch", "moderate");
       const response = await fetchImpl(url, {
         headers: { "Accept": "application/json", "X-Subscription-Token": braveKey, "User-Agent": "Alfie-Core/1.0" },
+        redirect: "error",
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
       });
       if (!response.ok) throw Object.assign(new Error(`Brave Search provider returned HTTP ${response.status}.`), { status: 502 });
       const payload = await response.json();
       const results = (payload.web?.results || []).slice(0, count).map((item) => ({
-        title: String(item.title || "").slice(0, 240),
-        url: String(item.url || "").slice(0, 1500),
-        description: String(item.description || "").slice(0, 600),
-        age: String(item.age || item.page_age || "").slice(0, 80),
-        source: String(item.profile?.long_name || item.meta_url?.hostname || "").slice(0, 120)
+        title: String(item.title || "").slice(0, 180),
+        url: String(item.url || "").slice(0, 500),
+        description: String(item.description || "").slice(0, 260),
+        age: String(item.age || item.page_age || "").slice(0, 40),
+        source: String(item.profile?.long_name || item.meta_url?.hostname || "").slice(0, 80)
       })).filter((item) => item.title && item.url);
       return { provider: "Brave Search", fallbackReason: searxngError, results };
     }
@@ -279,17 +282,30 @@ export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetc
       sources: { type: "integer", minimum: 1, maximum: 3 }
     }, required: ["question"], additionalProperties: false },
     async handler(args) {
-      const search = await searchWeb(args.question.trim(), Math.max(3, (args.sources || 3) + 1));
-      const pages = [];
-      for (const result of search.results) {
-        if (pages.length >= (args.sources || 3)) break;
-        try {
-          const page = await openWebPage(result.url);
-          pages.push({ title: page.title || result.title, url: page.url, description: page.description || result.description, excerpt: page.text.slice(0, 350), searchDate: result.age });
-        } catch (error) {
-          pages.push({ title: result.title, url: result.url, description: result.description, excerpt: "", readError: String(error.message || "Unable to read page.").slice(0, 180) });
+      const targetCount = Math.max(1, Math.min(3, Number(args.sources) || 3));
+      const search = await searchWeb(args.question.trim(), Math.max(3, targetCount + 1));
+      const candidates = search.results.slice(0, targetCount);
+      const settled = await Promise.allSettled(candidates.map((result) => openWebPage(result.url)));
+      const pages = candidates.map((result, idx) => {
+        const outcome = settled[idx];
+        if (outcome.status === "fulfilled") {
+          const page = outcome.value;
+          return {
+            title: String(page.title || result.title).slice(0, 140),
+            url: String(page.url || result.url).slice(0, 320),
+            description: String(page.description || result.description || "").slice(0, 140),
+            excerpt: String(page.text || "").slice(0, 220),
+            searchDate: result.age || ""
+          };
         }
-      }
+        return {
+          title: String(result.title || "").slice(0, 140),
+          url: String(result.url || "").slice(0, 320),
+          description: String(result.description || "").slice(0, 140),
+          excerpt: "",
+          readError: String(outcome.reason?.message || "Unable to read page.").slice(0, 140)
+        };
+      });
       return { question: args.question.trim(), provider: search.provider, fallbackReason: search.fallbackReason || null, sourcesFound: search.results.length, sourcesRead: pages.filter((page) => page.excerpt).length, sources: pages };
     }
   });

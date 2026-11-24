@@ -251,3 +251,82 @@ test("WorkflowProfileStore persists learned feedback across sessions and injects
 
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test("Feedback learning sensitivity levels and individual preference edit/delete + signal delete work end-to-end", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-fb-tuning-"));
+  const userId = "user-fb-tuning-1";
+  const store = new WorkflowProfileStore({ dataDirectory: dir });
+
+  // Gentle sensitivity requires score ±2 before shaping prompt hints
+  await store.update(userId, { feedbackSensitivity: "gentle" });
+  const sampleReply = "### Summary\n- Bullet 1\n- Bullet 2\n- Bullet 3\n```js\nconsole.log('ok');\n```";
+  const firstLike = await store.recordFeedback(userId, {
+    reaction: "like",
+    previousReaction: null,
+    content: sampleReply
+  });
+  assert.equal(firstLike.profile.learnedStyle.sensitivity, "gentle");
+  assert.equal(firstLike.profile.learnedStyle.traits.structured, 1);
+  assert.equal(summarizeLearnedStyle(firstLike.profile.learnedStyle).promptHints.length, 0);
+
+  // Switch to responsive sensitivity (2x step, threshold 1)
+  await store.update(userId, { feedbackSensitivity: "responsive" });
+  const secondLike = await store.recordFeedback(userId, {
+    reaction: "like",
+    previousReaction: null,
+    content: sampleReply
+  });
+  assert.equal(secondLike.profile.learnedStyle.traits.structured, 3);
+  assert.ok(secondLike.profile.learnedStyle.recentSignals.length >= 2);
+  const firstSignalId = secondLike.profile.learnedStyle.recentSignals[0].id;
+  assert.ok(firstSignalId && typeof firstSignalId === "string");
+
+  // Edit a single learned preference (custom score + custom prompt override)
+  const edited = await store.updateFeedbackPreference(userId, "structured", {
+    score: 5,
+    customHint: "Always start with a 3-bullet executive summary before deep dives."
+  });
+  const editedPref = edited.summary.preferences.find((p) => p.key === "structured");
+  assert.equal(edited.profile.learnedStyle.traits.structured, 5);
+  assert.equal(editedPref.score, 5);
+  assert.equal(editedPref.customHint, "Always start with a 3-bullet executive summary before deep dives.");
+  const promptAfterEdit = buildWorkflowProfilePrompt(edited.profile);
+  assert.match(promptAfterEdit, /3-bullet executive summary before deep dives/);
+
+  // Validation rejects unknown trait key or out-of-range score
+  await assert.rejects(
+    () => store.updateFeedbackPreference(userId, "nonexistentTrait", { score: 2 }),
+    (err) => err.status === 404 && err.code === "FEEDBACK_TRAIT_NOT_FOUND"
+  );
+  await assert.rejects(
+    () => store.updateFeedbackPreference(userId, "concise", { score: 99 }),
+    (err) => err.status === 400
+  );
+
+  // Delete a single learned preference resets only that trait while preserving others
+  const deletedPref = await store.deleteFeedbackPreference(userId, "structured");
+  assert.equal(deletedPref.profile.learnedStyle.traits.structured, 0);
+  assert.equal(deletedPref.profile.learnedStyle.traitOverrides.structured, undefined);
+  assert.ok(deletedPref.profile.learnedStyle.traits.codeExamples > 0);
+  assert.doesNotMatch(buildWorkflowProfilePrompt(deletedPref.profile), /3-bullet executive summary/);
+
+  // Delete a single captured signal by id
+  const countBefore = deletedPref.profile.learnedStyle.recentSignals.length;
+  const afterSigDel = await store.deleteFeedbackSignal(userId, firstSignalId);
+  assert.equal(afterSigDel.profile.learnedStyle.recentSignals.length, countBefore - 1);
+  assert.equal(afterSigDel.profile.learnedStyle.recentSignals.some((s) => s.id === firstSignalId), false);
+
+  await assert.rejects(
+    () => store.deleteFeedbackSignal(userId, "missing-signal-id"),
+    (err) => err.status === 404
+  );
+
+  // Persistence check on fresh store instance
+  const reloaded = await new WorkflowProfileStore({ dataDirectory: dir }).get(userId);
+  assert.equal(reloaded.learnedStyle.sensitivity, "responsive");
+  assert.equal(reloaded.learnedStyle.traits.structured, 0);
+  assert.ok(reloaded.learnedStyle.traits.codeExamples > 0);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
