@@ -209,7 +209,7 @@ export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetc
       count: { type: "integer", minimum: 1, maximum: 4 }
     }, required: ["query"], additionalProperties: false },
     async handler(args) {
-      const results = await searchWeb(args.query.trim(), args.count || 6);
+      const results = await searchWeb(args.query.trim(), args.count || 4);
       return { query: args.query.trim(), provider: "Brave Search", resultCount: results.length, results };
     }
   });
