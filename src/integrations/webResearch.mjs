@@ -91,8 +91,10 @@ function requestPinnedHttps(url, { addresses, headers, signal }) {
       method: "GET",
       headers,
       signal,
-      lookup(_hostname, _options, callback) {
-        callback(null, selected.address, selected.family || isIP(selected.address));
+      lookup(_hostname, options, callback) {
+        const resolved = { address: selected.address, family: selected.family || isIP(selected.address) };
+        if (options?.all) callback(null, [resolved]);
+        else callback(null, resolved.address, resolved.family);
       }
     }, (res) => {
       const chunks = [];
