@@ -546,7 +546,11 @@ export function createAlfieCoreServer({
           return json(res, 410, { error: "Direct tool execution is disabled. Use plan, then explicit user approval." });
         }
       } catch (error) {
-        return json(res, error.status || 500, { error: error.message || "Tool permission operation failed." });
+        return json(res, error.status || 500, {
+          error: error.message || "Tool permission operation failed.",
+          ...(error.code ? { code: error.code } : {}),
+          ...(error.actionConsumed ? { actionConsumed: true, retryable: false, actionId: error.actionId, toolId: error.toolId } : {})
+        });
       }
       return json(res, 405, { error: "Method not allowed." });
     }
