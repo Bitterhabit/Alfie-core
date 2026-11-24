@@ -469,10 +469,14 @@ class AlfieSoulController {
         if (mutation.type !== "attributes" || mutation.attributeName !== "data-mood") continue;
         const oldMood = String(mutation.oldValue || "").toLowerCase().trim();
         const nextMood = String(element.getAttribute("data-mood") || "").toLowerCase().trim();
-        if (nextMood && SOUL_MOODS.includes(nextMood)) {
+        // Controller-originated mutations already use this._mood and have
+        // their transition scheduled by _transitionMood(). Ignore their
+        // observer echo so the same change is not animated twice.
+        const isExternalMoodChange = nextMood !== this._mood;
+        if (isExternalMoodChange && nextMood && SOUL_MOODS.includes(nextMood)) {
           this._syncRootMood(nextMood);
         }
-        if (oldMood && nextMood && oldMood !== nextMood) {
+        if (isExternalMoodChange && oldMood && nextMood && oldMood !== nextMood) {
           this._triggerMoodTransitionOnElement(element, oldMood, nextMood);
         }
       }
