@@ -220,10 +220,13 @@ export class ToolDispatcher {
     } catch (error) {
       // The pending record is deliberately consumed before validation/execution.
       // Never invite a second click: a failing integration may have partially acted.
-      error.actionConsumed = true;
-      error.actionId = actionId;
-      error.toolId = action.toolId;
-      throw error;
+      const safeError = error instanceof Error
+        ? error
+        : new Error(String(error || "Approved action failed."));
+      safeError.actionConsumed = true;
+      safeError.actionId = actionId;
+      safeError.toolId = action.toolId;
+      throw safeError;
     }
   }
 
