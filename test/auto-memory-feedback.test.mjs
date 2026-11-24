@@ -128,6 +128,11 @@ test("AgentLoop auto-captures memories, avoids duplicates, recalls core preferen
   assert.equal(turn1.status, "completed");
   assert.equal(turn1.autoMemories?.length, 1);
   assert.equal(turn1.autoMemories[0].kind, "preference");
+  const capturedMemory = (await memoryStore.list(userId))[0];
+  assert.equal(capturedMemory.origin, "conversation-captured");
+  assert.equal(capturedMemory.trust, "user_authored");
+  assert.equal(capturedMemory.provenance.source, "conversation-captured");
+  assert.equal(capturedMemory.provenance.capturedBy, "conversation");
   assert.equal(turn1.provenance.autoMemories.length, 1);
   assert.match(seenSystemPrompts[0], /rollback commands/i);
 
