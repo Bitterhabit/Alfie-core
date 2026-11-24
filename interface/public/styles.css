@@ -7861,13 +7861,6 @@ input:focus,textarea:focus,select:focus{
   color:#b91c1c;
 }
 
-@media(prefers-reduced-motion:reduce){
-  *,*:before,*:after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
-  .login-soul-stage{transform:none!important}
-  .login-soul-halo::after{animation:none!important}
-}
-
-
 /* V1 polish: shared alignment rhythm across workspace surfaces */
 :root{
   --layout-gutter:clamp(16px,2.4vw,34px);
@@ -7924,3 +7917,9 @@ input:focus,textarea:focus,select:focus{
   background:color-mix(in srgb,var(--red) 7%,var(--surface-card-bg));
 }
 .chat-approval-card.chat-approval-failed>strong{color:var(--red)}
+
+@media(prefers-reduced-motion:reduce){
+  *,*:before,*:after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
+  .login-soul-stage{transform:none!important}
+  .login-soul-halo::after{animation:none!important}
+}
