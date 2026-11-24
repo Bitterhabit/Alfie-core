@@ -182,41 +182,54 @@ ALFIE_CORE_DATA_DIR=./data ALFIE_CORE_SERVICE_TOKEN="$(openssl rand -hex 32)" AL
 
 The service listens on port 8780 by default.
 
-## Independent Docker deployment
+## Install on a Linux Docker host
 
-Alfie Core now has its own Compose project and environment template. It can be built and run without starting Petrio:
+The supported first-run path is the repository installer. It creates host-local credentials and configuration, validates the merged Compose project, builds both images, starts Core and Interface, and waits for their health checks. It does not require Petrio.
+
+Requirements: Linux host, Docker Engine, Docker Compose v2, OpenSSL, curl, and outbound access to pull/build container dependencies. Run from a fresh clone:
+
+```sh
+git clone https://github.com/Bitterhabit/Alfie-core.git
+cd Alfie-core
+sudo ./install.sh
+```
+
+The installer asks for:
+- the exact public HTTPS origin used by the trusted reverse proxy or Cloudflare Tunnel (defaults to `https://alfie.petrio-house.co.uk`);
+- the host address to bind the Interface port to (defaults to `127.0.0.1`, safest when the proxy runs on the same host; choose the host's LAN address if a separate trusted machine/container must reach it);
+- the host port (defaults to `8781`).
+
+It generates a fresh 256-bit Core service token and standalone identity secret with OpenSSL, writes them to a mode-600 `.env`, sets secure cookies, and creates a host-specific `compose.local.yaml`. Secrets and host overrides are ignored by Git. No bootstrap administrator password is generated: create the first administrator through the Interface's first-run setup form after the trusted HTTPS route is working.
+
+The Core port is never published to the host. Only the Interface is published, on the bind address and port selected during installation. Do not bind it to a public interface unless a firewall and trusted reverse proxy are correctly configured. Keep `ALFIE_UI_TRUST_PROXY_HEADERS=false` unless the Interface is reachable exclusively through a proxy that overwrites the relevant headers.
+
+### Upgrade an existing installation
+
+From the repository checkout:
+
+```sh
+sudo ./install.sh --upgrade
+```
+
+Upgrade mode fast-forwards from `origin/main`, validates the existing local configuration, rebuilds the services and waits for health checks. It preserves `.env`, `compose.local.yaml` and both persistent Docker volumes. It never runs `down --volumes` or deletes user data. Review release notes before upgrading production data, and maintain independent backups.
+
+The installer intentionally refuses to overwrite an existing `.env` or local Compose override during first-run setup. This prevents accidental credential replacement. For configuration changes, edit the local files deliberately and run the Compose validation command before applying them.
+
+### Manual Compose operation
+
+For administrators who deliberately manage deployment themselves, the equivalent commands are:
 
 ```sh
 cp .env.example .env
-# Add a private ALFIE_CORE_SERVICE_TOKEN and at least one trusted identity secret.
-docker compose up -d --build
+# Set a unique ALFIE_CORE_SERVICE_TOKEN, ALFIE_CORE_STANDALONE_IDENTITY_SECRET,
+# and ALFIE_UI_PUBLIC_ORIGIN before starting the services.
+docker compose up -d --build --wait
 docker compose ps
-docker compose logs -f alfie-core
 ```
 
-The service listens on port 8780 inside the private Compose network. No host port is published. The persistent alfie_core_data volume is owned by this Compose project, and the container runs as a non-root user with a read-only root filesystem, dropped Linux capabilities and a restricted temporary filesystem.
+The standalone Compose project creates the private `alfie-core-internal` network and named volumes `alfie-core-data` and `alfie-interface-data`. Core listens on port 8780 inside that private network; Interface listens on 8781. Neither service runs as root; both use read-only root filesystems, dropped Linux capabilities and restricted temporary filesystems.
 
-Configure these separate credentials in the repository-root .env file:
-
-- ALFIE_CORE_SERVICE_TOKEN — required by every versioned API request.
-- ALFIE_CORE_PETRIO_IDENTITY_SECRET — enables the existing Petrio client adapter.
-- ALFIE_CORE_STANDALONE_IDENTITY_SECRET — enables the independent interface backend identity provider.
-- ALFIE_CORE_IDENTITY_SECRET — supported only as a legacy alias for the Petrio identity secret.
-
-Petrio and the standalone interface can authenticate to the same Core simultaneously using different HMAC identity secrets. Their trusted Node.js backends sign user IDs server-side; no secret belongs in browser code. Core verifies the exact request method and path, a 60-second validity window and a one-time nonce. The service token is not a user identity. These assertions are backend-to-backend identity, not end-user login: each client must authenticate its own session first and sign the same stable canonical Core user ID for the same person. Provider-specific account IDs must be mapped to that canonical ID before signing, otherwise Core correctly treats them as separate users and separate memory stores.
-
-The standalone Compose project creates the alfie-core-internal network. When Petrio is connected as an adapter, its container must also be attached to this network (or another explicitly configured private network) before enabling the Petrio Core feature flag. The independent interface backend will use the internal service address alfie-core:8780 when attached to this network.
-
-For the current Petrio Compose deployment, start Core first so it creates the network. Then, from the Petrio checkout, attach the Petrio service using the opt-in overlay:
-
-```sh
-docker compose -f compose.yaml -f compose.alfie-core.yaml up -d
-```
-
-The overlay is stored in the Petrio repository. It preserves Petrio's normal default network and adds the external alfie-core-internal network only when explicitly selected. Set matching ALFIE_CORE_SERVICE_TOKEN and ALFIE_CORE_PETRIO_IDENTITY_SECRET values in both server environments, set ALFIE_CORE_URL=http://alfie-core:8780 in Petrio, and set ALFIE_PETRIO_ADAPTER_URL=http://petrio:3000/v1/alfie-core/tools/run in Core. Keep ALFIE_CORE_ENABLED=false until the private connection and read-only adapter checks have been completed.
-
-Petrio is deployed separately and connects as a client over a private Docker network. Do not run a second copy of Alfie Core inside the Petrio Compose project.
-
+Petrio remains an optional, separately deployed client. Do not enable `ALFIE_CORE_ENABLED` in Petrio until the private network path, matching service token, Petrio identity secret and read-only adapter checks have been completed. The independent Alfie installation does not require Petrio to start or operate.
 
 ## Backup and restore
 
