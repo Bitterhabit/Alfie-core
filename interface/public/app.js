@@ -4871,7 +4871,7 @@ async function sendMessage(rawText) {
       review.textContent = "Review in Tools & access";
       review.addEventListener("click", () => {
         setView("tools");
-        loadToolsAndApprovals().catch((error) => toast(error.message));
+        loadToolsAndApprovals(finalEvent.actionId).catch((error) => toast(error.message));
       });
       approval.append(heading, detail, review);
       assistantBody.closest(".message")?.appendChild(approval);
@@ -6904,7 +6904,7 @@ function initWatchers() {
   });
 }
 
-async function loadToolsAndApprovals() {
+async function loadToolsAndApprovals(focusActionId = null) {
   const toolsHost = $("#tool-list");
   const pendingHost = $("#pending-list");
   const receiptHost = $("#receipt-list");
@@ -7044,7 +7044,15 @@ async function loadToolsAndApprovals() {
           catch (error) { toast(error.message); }
         }
       };
-      const itemEl = createItem(action.toolId, action.preview || action.reason || "Waiting for your decision.", [reject, approve]);
+      const itemEl = createItem(action.toolId, action.preview || "Waiting for your decision.", [reject, approve]);
+      itemEl.dataset.actionId = action.id;
+      if (action.reason) {
+        const reason = document.createElement("p");
+        reason.className = "pending-action-reason";
+        reason.textContent = `Why approval is needed: ${action.reason}`;
+        itemEl.appendChild(reason);
+      }
+      if (action.id === focusActionId) itemEl.classList.add("pending-action-focused");
       if (action.simulation) {
         const sim = action.simulation;
         const simBox = document.createElement("div");
@@ -7074,6 +7082,14 @@ async function loadToolsAndApprovals() {
       pendingHost.appendChild(itemEl);
     }
     if (!pending.actions?.length) pendingHost.textContent = "Nothing is waiting for approval.";
+    if (focusActionId) {
+      const target = [...pendingHost.querySelectorAll("[data-action-id]")].find((item) => item.dataset.actionId === focusActionId);
+      if (target) {
+        requestAnimationFrame(() => target.scrollIntoView({ behavior: "smooth", block: "center" }));
+      } else {
+        toast("That approval is no longer pending. Refreshing the current list.");
+      }
+    }
 
     state.receipts = receiptsRes.receipts || [];
     if (receiptHost) {
