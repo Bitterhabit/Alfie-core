@@ -75,6 +75,25 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
 
+  searxng:
+    image: searxng/searxng:latest
+    container_name: alfie-searxng
+    restart: unless-stopped
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:?SEARXNG_SECRET must be set in .env}
+      SEARXNG_PORT: 8080
+      SEARXNG_BIND_ADDRESS: 0.0.0.0
+      SEARXNG_LIMITER: "false"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - searxng_cache:/var/cache/searxng
+    expose:
+      - "8080"
+    networks:
+      - alfie-core-internal
+    security_opt:
+      - no-new-privileges:true
+
 networks:
   alfie-core-internal:
     name: alfie-core-internal
@@ -84,3 +103,5 @@ volumes:
     name: alfie-core-data
   alfie_interface_data:
     name: alfie-interface-data
+  searxng_cache:
+    name: alfie-searxng-cache
