@@ -9,6 +9,7 @@ import { PendingActionStore } from "../src/agent/pendingActionStore.mjs";
 import { AuditStore } from "../src/audit/store.mjs";
 import { readUserJsonDocument, writeUserJsonDocument } from "../src/storage/userJsonStore.mjs";
 import { ToolDispatcher, computeToolFingerprint } from "../src/agent/toolDispatcher.mjs";
+import { ConversationStore } from "../src/conversations/store.mjs";
 
 test("Action receipts accurately distinguish all four execution & verification outcomes", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-receipt-states-"));
@@ -304,6 +305,64 @@ test("Approval integrity binds pending actions to exact security-relevant tool d
     // Audit log recorded tool.approval_stale events
     const auditEvents = await auditStore.list("alice", { limit: 50 });
     assert.ok(auditEvents.some((e) => e.event === "tool.approval_stale"));
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+
+test("Network-enabled draft tools always require explicit approval before execution", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-network-draft-"));
+  const registry = new ToolRegistry();
+  const permissionStore = new PermissionStore({ dataDirectory: dir });
+  const pendingActionStore = new PendingActionStore({ dataDirectory: dir });
+  const calls = { count: 0 };
+  registry.register({
+    id: "web.draft_publish",
+    name: "Prepare external draft",
+    description: "Creates a draft on a network service",
+    scope: "web:write",
+    risk: "draft",
+    trust: "external",
+    network: true,
+    externalAction: false,
+    inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"], additionalProperties: false },
+    handler: async ({ text }) => { calls.count += 1; return { saved: text }; }
+  });
+  await permissionStore.grant("alice", "web:write");
+  const dispatcher = new ToolDispatcher({ registry, permissionStore, pendingActionStore });
+  try {
+    const planned = await dispatcher.dispatch({ userId: "alice", toolId: "web.draft_publish", args: { text: "hello" }, turnId: "network-draft" });
+    assert.equal(planned.status, "awaiting_user_approval");
+    assert.equal(calls.count, 0, "The handler must not run before explicit approval");
+    const result = await dispatcher.approve("alice", planned.actionId);
+    assert.equal(result.status, "completed");
+    assert.equal(calls.count, 1);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Failed approval card state survives conversation reload", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-failed-approval-card-"));
+  const store = new ConversationStore({ dataDirectory: dir });
+  try {
+    const conversation = await store.create("alice");
+    const actionId = "approval-action-1";
+    await store.appendMessage("alice", conversation.id, {
+      role: "assistant",
+      content: "I need approval to continue.",
+      actionCard: { actionId, toolId: "web.draft_publish", state: "approval", label: "External draft" }
+    });
+    const updated = await store.updateActionCardState("alice", actionId, {
+      state: "failed",
+      detail: "The approval was consumed; check the destination before retrying."
+    });
+    assert.equal(updated.updated, true);
+    const reloaded = new ConversationStore({ dataDirectory: dir });
+    const restored = await reloaded.get("alice", conversation.id);
+    assert.equal(restored.messages[0].actionCard.state, "failed");
+    assert.match(restored.messages[0].actionCard.detail, /consumed/);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
