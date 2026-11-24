@@ -198,7 +198,7 @@ The service listens on port 8780 by default.
 
 ## Install on a Linux Docker host
 
-The supported first-run path is the repository installer. It creates host-local credentials and configuration, validates the merged Compose project, builds both images, starts Core and Interface, and waits for their health checks. It does not require Petrio.
+The supported first-run path is the repository installer. It creates host-local credentials and configuration, validates the merged Compose project, builds Core and Interface, starts the private SearXNG search service, and waits for the application health checks. SearXNG is not published to the host or internet; it is reachable only by services on the private Alfie Docker network. It does not require Petrio.
 
 Requirements: Linux host, Docker Engine, Docker Compose v2, OpenSSL, curl, and outbound access to pull/build container dependencies. Run from a fresh clone:
 
@@ -219,7 +219,7 @@ The Core port is never published to the host. Only the Interface is published, o
 
 ### Web search and research
 
-Alfie includes three read-only web tools: `web.search`, `web.open`, and `web.research`. They use the Brave Search API for discovery and fetch public HTTPS pages for reading. Obtain a Brave Search API key and set `ALFIE_BRAVE_SEARCH_API_KEY` in the Core `.env`; the installer can collect it during first-run setup. Without the key, the tools remain registered but report that the integration is not configured.
+Alfie includes three read-only web tools: `web.search`, `web.open`, and `web.research`. Search uses the private SearXNG service by default (`ALFIE_SEARXNG_URL=http://searxng:8080`) and can fall back to Brave Search when `ALFIE_BRAVE_SEARCH_API_KEY` is configured. The installer generates the SearXNG secret automatically; no third-party search API key is required for the primary provider. The Brave key remains optional and can be entered during first-run setup. SearXNG's JSON API is enabled in `searxng/settings.yml`; do not publish its port or expose it through the public reverse proxy.
 
 Grant the user the `web:read` permission in Alfie's permissions UI before use. Search results and page contents are marked as untrusted external data. The reader only accepts HTTPS on port 443, rejects private/internal destinations and redirects to them, limits page downloads to 1 MB, accepts HTML/plain text only, and applies request timeouts. It does not execute page scripts, log into websites, submit forms, or perform purchases. Web research reads up to three sources and returns their URLs and extracts; Alfie must cite those sources in its answer and distinguish evidence from inference.
 
@@ -247,7 +247,7 @@ docker compose up -d --build --wait
 docker compose ps
 ```
 
-The standalone Compose project creates the private `alfie-core-internal` network and named volumes `alfie-core-data` and `alfie-interface-data`. Core listens on port 8780 inside that private network; Interface listens on 8781. Neither service runs as root; both use read-only root filesystems, dropped Linux capabilities and restricted temporary filesystems.
+The standalone Compose project creates the private `alfie-core-internal` network and named volumes `alfie-core-data`, `alfie-interface-data`, and `alfie-searxng-cache`. Core listens on port 8780, Interface on 8781, and SearXNG on 8080 inside that private network. SearXNG is not published to the host. Core and Interface use read-only root filesystems, dropped Linux capabilities and restricted temporary filesystems.
 
 Petrio remains an optional, separately deployed client. Do not enable `ALFIE_CORE_ENABLED` in Petrio until the private network path, matching service token, Petrio identity secret and read-only adapter checks have been completed. The independent Alfie installation does not require Petrio to start or operate.
 
