@@ -86,6 +86,31 @@ test("analyzeResponseStyle and applyReactionDelta learn cross-session taste and 
 });
 
 
+
+test("conversation-captured and user-seeded memories cannot be elevated to system-verified trust", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-memory-trust-"));
+  const store = new MemoryStore({ dataDirectory: dir });
+  const conversation = await store.create("user-memory-trust", {
+    origin: "conversation-captured",
+    source: "conversation",
+    kind: "fact",
+    title: "Conversation assertion",
+    text: "The user says their preferred editor is Vim.",
+    trust: "system_verified"
+  });
+  const seeded = await store.create("user-memory-trust", {
+    origin: "user-seeded",
+    source: "user",
+    kind: "preference",
+    title: "Garden preference",
+    text: "The user prefers a quiet workspace.",
+    trust: "system_verified"
+  });
+  assert.equal(conversation.trust, "user_authored");
+  assert.equal(seeded.trust, "user_authored");
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
 test("MemoryStore migrates legacy automatic chat captures away from system-verified trust", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-auto-memory-migration-"));
   const userId = "user-auto-mem-migration";
