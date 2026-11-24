@@ -143,9 +143,28 @@ export function createDossierAutoSaver({
         if (token !== sessionToken) return null;
         inFlightFingerprint = "";
         inFlightPromise = null;
+
+        // Keep the failed draft available for an explicit flush/retry. If the
+        // user edited again while this request was in flight, preserve that
+        // newer draft instead of overwriting it with the failed older version.
+        if (!pendingDraft) {
+          pendingDraft = draftToSave;
+          pendingFingerprint = fpToSave;
+        }
+
         const message = err instanceof Error ? err.message : String(err || "Auto-save failed.");
         emit("error", message);
-        // If newer edits arrived during a failed request, let their timer persist them.
+
+        // A newer draft may have had its debounce timer fire while the
+        // previous request was in flight. Re-arm it once, rather than losing
+        // the queued edit or immediately retrying the failed request forever.
+        if (pendingDraft && pendingFingerprint !== fpToSave && timerHandle === null) {
+          const retryToken = sessionToken;
+          timerHandle = setTimer(() => {
+            timerHandle = null;
+            void runSave(retryToken);
+          }, Math.max(0, Number(debounceMs) || 0));
+        }
         return null;
       }
     })();
