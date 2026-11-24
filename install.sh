@@ -16,7 +16,7 @@ Usage:
   ./install.sh --help
 
 First install creates private credentials and local configuration, validates
-Compose, builds both services, and waits for their health checks.
+Compose, builds Core and Interface, starts private SearXNG, and waits for application health checks.
 EOF
 }
 
@@ -75,7 +75,7 @@ BIND_ADDRESS="${BIND_ADDRESS:-$DEFAULT_BIND}"
 read -r -p "Host port for the Interface [8781]: " HOST_PORT
 HOST_PORT="${HOST_PORT:-8781}"
 [[ "$HOST_PORT" =~ ^[0-9]+$ ]] && (( HOST_PORT >= 1 && HOST_PORT <= 65535 )) || fail "Port must be between 1 and 65535."
-read -r -s -p "Brave Search API key (optional; enables web research): " BRAVE_KEY
+read -r -s -p "Brave Search API key (optional fallback; press Enter to skip): " BRAVE_KEY
 printf "\\n"
 
 info "Generating fresh private credentials"
