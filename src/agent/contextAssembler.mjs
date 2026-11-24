@@ -88,7 +88,7 @@ export class ContextAssembler {
       dashboardSummary = JSON.stringify(summaryState);
     }
     const selectedTools = this.selectTools(userText, registry, grantedScopes);
-    const memoryContext = (Array.isArray(memories) ? memories : []).slice(0, 6).map((memory) => ({
+    const memoryContext = (Array.isArray(memories) ? memories : []).slice(0, 8).map((memory) => ({
       id: String(memory.id || "").slice(0, 64),
       origin: String(memory.origin || "unknown").slice(0, 40),
       source: String(memory.source || "").slice(0, 40),

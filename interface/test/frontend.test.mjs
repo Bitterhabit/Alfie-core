@@ -522,3 +522,26 @@ test("Settings includes V1 Provider Setup & Model Management control panel", asy
   assert.match(app, /\/api\/core\/providers\/endpoints/);
   assert.match(app, /\/api\/core\/providers\/settings/);
 });
+
+test("workspace includes automatic memory disclosure and learned response style controls", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+
+  for (const id of [
+    "wf-auto-memory",
+    "wf-learn-feedback",
+    "learned-style-block",
+    "learned-style-summary",
+    "learned-style-chips",
+    "learned-style-reset-btn"
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`), `Missing #${id} in index.html`);
+  }
+  assert.match(css, /\.auto-memory-disclosure/);
+  assert.match(css, /\.learned-style-chip/);
+  assert.match(app, /createAutoMemoryDisclosure/);
+  assert.match(app, /resetLearnedStyle/);
+  assert.match(app, /learnedFeedback/);
+});
+

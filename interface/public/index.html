@@ -26,6 +26,278 @@
 <body>
   <div class="ambient ambient-one" aria-hidden="true"></div>
   <div class="ambient ambient-two" aria-hidden="true"></div>
+  <div id="ambient-scene-layer" class="ambient-scene-layer" aria-hidden="true">
+    <div class="ambient-scene ambient-scene-nebula" data-scene="nebula">
+      <div class="ambient-nebula-veil"></div>
+      <svg class="ambient-scene-svg" viewBox="0 0 320 180" preserveAspectRatio="xMidYMid slice" shape-rendering="crispEdges">
+        <g class="ambient-stars">
+          <rect x="28" y="22" width="1" height="1" class="scene-star"/>
+          <rect x="74" y="38" width="1" height="1" class="scene-star scene-star-twinkle"/>
+          <rect x="118" y="16" width="1" height="1" class="scene-star"/>
+          <rect x="164" y="44" width="1" height="1" class="scene-star scene-star-twinkle-slow"/>
+          <rect x="212" y="26" width="1" height="1" class="scene-star"/>
+          <rect x="256" y="18" width="1" height="1" class="scene-star scene-star-twinkle"/>
+          <rect x="288" y="42" width="1" height="1" class="scene-star"/>
+          <rect x="48" y="76" width="1" height="1" class="scene-star scene-star-twinkle-slow"/>
+          <rect x="242" y="72" width="1" height="1" class="scene-star"/>
+          <rect x="296" y="88" width="1" height="1" class="scene-star scene-star-twinkle"/>
+        </g>
+      </svg>
+    </div>
+
+    <div class="ambient-scene ambient-scene-city" data-scene="pixel-city">
+      <svg class="ambient-scene-svg" viewBox="0 0 320 180" preserveAspectRatio="xMidYMax slice" shape-rendering="crispEdges">
+        <defs>
+          <linearGradient id="petrio-city-horizon" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" class="scene-grad-top"/>
+            <stop offset="68%" class="scene-grad-mid"/>
+            <stop offset="100%" class="scene-grad-glow"/>
+          </linearGradient>
+        </defs>
+        <rect x="0" y="0" width="320" height="180" fill="url(#petrio-city-horizon)"/>
+        <!-- Pixel stars & crescent moon -->
+        <g class="ambient-stars">
+          <rect x="22" y="18" width="1" height="1" class="scene-star"/>
+          <rect x="56" y="30" width="1" height="1" class="scene-star scene-star-twinkle"/>
+          <rect x="94" y="14" width="1" height="1" class="scene-star"/>
+          <rect x="134" y="26" width="1" height="1" class="scene-star scene-star-twinkle-slow"/>
+          <rect x="186" y="20" width="1" height="1" class="scene-star"/>
+          <rect x="230" y="34" width="1" height="1" class="scene-star scene-star-twinkle"/>
+          <rect x="294" y="22" width="1" height="1" class="scene-star"/>
+          <rect x="308" y="46" width="1" height="1" class="scene-star scene-star-twinkle-slow"/>
+          <!-- Crescent moon in open twilight sky -->
+          <rect x="284" y="42" width="4" height="1" class="scene-moon"/>
+          <rect x="282" y="43" width="3" height="1" class="scene-moon"/>
+          <rect x="281" y="44" width="2" height="4" class="scene-moon"/>
+          <rect x="282" y="48" width="3" height="1" class="scene-moon"/>
+          <rect x="284" y="49" width="4" height="1" class="scene-moon"/>
+        </g>
+        <!-- Far skyline silhouettes -->
+        <g class="scene-layer-1">
+          <rect x="0" y="108" width="24" height="72"/>
+          <rect x="20" y="94" width="18" height="86"/>
+          <rect x="36" y="114" width="26" height="66"/>
+          <rect x="58" y="84" width="22" height="96"/>
+          <rect x="66" y="76" width="6" height="8"/>
+          <rect x="68" y="68" width="2" height="8"/>
+          <rect x="86" y="102" width="30" height="78"/>
+          <rect x="112" y="88" width="24" height="92"/>
+          <rect x="140" y="110" width="28" height="70"/>
+          <rect x="164" y="82" width="20" height="98"/>
+          <rect x="172" y="72" width="4" height="10"/>
+          <rect x="190" y="100" width="32" height="80"/>
+          <rect x="218" y="78" width="24" height="102"/>
+          <rect x="226" y="70" width="8" height="8"/>
+          <rect x="229" y="62" width="2" height="8"/>
+          <rect x="248" y="96" width="26" height="84"/>
+          <rect x="272" y="86" width="22" height="94"/>
+          <rect x="292" y="104" width="28" height="76"/>
+        </g>
+        <!-- Mid skyline buildings -->
+        <g class="scene-layer-2">
+          <rect x="4" y="126" width="28" height="54"/>
+          <rect x="38" y="118" width="24" height="62"/>
+          <rect x="44" y="113" width="12" height="5"/>
+          <rect x="74" y="112" width="28" height="68"/>
+          <rect x="108" y="124" width="22" height="56"/>
+          <rect x="136" y="116" width="26" height="64"/>
+          <rect x="146" y="110" width="6" height="6"/>
+          <rect x="178" y="122" width="30" height="58"/>
+          <rect x="214" y="108" width="26" height="72"/>
+          <rect x="246" y="120" width="28" height="60"/>
+          <rect x="280" y="114" width="36" height="66"/>
+        </g>
+        <!-- Foreground skyline & elevated viaduct -->
+        <g class="scene-layer-3">
+          <rect x="0" y="144" width="36" height="36"/>
+          <rect x="42" y="138" width="32" height="42"/>
+          <rect x="92" y="146" width="38" height="34"/>
+          <rect x="148" y="142" width="34" height="38"/>
+          <rect x="204" y="136" width="38" height="44"/>
+          <rect x="256" y="144" width="40" height="36"/>
+          <rect x="294" y="134" width="26" height="46"/>
+          <!-- Elevated rail viaduct -->
+          <rect x="0" y="160" width="320" height="3"/>
+          <rect x="18" y="163" width="4" height="17"/>
+          <rect x="78" y="163" width="4" height="17"/>
+          <rect x="138" y="163" width="4" height="17"/>
+          <rect x="198" y="163" width="4" height="17"/>
+          <rect x="258" y="163" width="4" height="17"/>
+          <rect x="0" y="172" width="320" height="8"/>
+        </g>
+        <!-- Subtle mood-reactive illuminated pixel windows -->
+        <g class="scene-windows">
+          <rect x="64" y="92" width="2" height="2" class="scene-win-soft"/>
+          <rect x="70" y="92" width="2" height="2" class="scene-win-bright scene-win-pulse"/>
+          <rect x="64" y="98" width="2" height="2" class="scene-win-soft"/>
+          <rect x="118" y="96" width="2" height="2" class="scene-win-soft"/>
+          <rect x="124" y="102" width="2" height="2" class="scene-win-bright"/>
+          <rect x="170" y="90" width="2" height="2" class="scene-win-bright scene-win-pulse"/>
+          <rect x="176" y="96" width="2" height="2" class="scene-win-soft"/>
+          <rect x="224" y="86" width="2" height="2" class="scene-win-soft"/>
+          <rect x="230" y="92" width="2" height="2" class="scene-win-bright"/>
+          <rect x="224" y="98" width="2" height="2" class="scene-win-bright scene-win-pulse-slow"/>
+          <rect x="278" y="94" width="2" height="2" class="scene-win-soft"/>
+          <rect x="284" y="100" width="2" height="2" class="scene-win-bright"/>
+          <!-- Mid windows -->
+          <rect x="12" y="134" width="2" height="2" class="scene-win-bright"/>
+          <rect x="18" y="134" width="2" height="2" class="scene-win-soft"/>
+          <rect x="44" y="124" width="2" height="2" class="scene-win-soft"/>
+          <rect x="50" y="130" width="2" height="2" class="scene-win-bright scene-win-pulse"/>
+          <rect x="82" y="120" width="2" height="2" class="scene-win-bright"/>
+          <rect x="88" y="120" width="2" height="2" class="scene-win-soft"/>
+          <rect x="82" y="128" width="2" height="2" class="scene-win-soft"/>
+          <rect x="94" y="134" width="2" height="2" class="scene-win-bright scene-win-pulse-slow"/>
+          <rect x="144" y="124" width="2" height="2" class="scene-win-bright"/>
+          <rect x="150" y="130" width="2" height="2" class="scene-win-soft"/>
+          <rect x="186" y="130" width="2" height="2" class="scene-win-soft"/>
+          <rect x="194" y="130" width="2" height="2" class="scene-win-bright scene-win-pulse"/>
+          <rect x="220" y="116" width="2" height="2" class="scene-win-bright"/>
+          <rect x="228" y="122" width="2" height="2" class="scene-win-soft"/>
+          <rect x="254" y="128" width="2" height="2" class="scene-win-soft"/>
+          <rect x="262" y="134" width="2" height="2" class="scene-win-bright"/>
+          <rect x="288" y="122" width="2" height="2" class="scene-win-bright scene-win-pulse-slow"/>
+          <rect x="296" y="128" width="2" height="2" class="scene-win-soft"/>
+          <rect x="304" y="122" width="2" height="2" class="scene-win-soft"/>
+          <!-- Antenna beacons -->
+          <rect x="68" y="66" width="2" height="2" class="scene-win-bright scene-win-pulse"/>
+          <rect x="229" y="60" width="2" height="2" class="scene-win-bright scene-win-pulse-slow"/>
+        </g>
+      </svg>
+    </div>
+
+    <div class="ambient-scene ambient-scene-river" data-scene="river">
+      <svg class="ambient-scene-svg" viewBox="0 0 320 180" preserveAspectRatio="xMidYMax slice" shape-rendering="crispEdges">
+        <defs>
+          <linearGradient id="petrio-river-sky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" class="scene-grad-top"/>
+            <stop offset="62%" class="scene-grad-mid"/>
+            <stop offset="100%" class="scene-grad-glow"/>
+          </linearGradient>
+        </defs>
+        <rect x="0" y="0" width="320" height="180" fill="url(#petrio-river-sky)"/>
+        <!-- Quiet twilight stars & full pixel moon -->
+        <g class="ambient-stars">
+          <rect x="34" y="20" width="1" height="1" class="scene-star"/>
+          <rect x="82" y="34" width="1" height="1" class="scene-star scene-star-twinkle"/>
+          <rect x="132" y="18" width="1" height="1" class="scene-star"/>
+          <rect x="218" y="22" width="1" height="1" class="scene-star scene-star-twinkle-slow"/>
+          <rect x="278" y="32" width="1" height="1" class="scene-star"/>
+          <!-- Soft Pixel Moon resting to the right above the mountain pass -->
+          <rect x="266" y="44" width="10" height="12" class="scene-moon-soft"/>
+          <rect x="264" y="46" width="14" height="8" class="scene-moon-soft"/>
+          <rect x="268" y="46" width="6" height="1" class="scene-moon"/>
+          <rect x="267" y="47" width="8" height="6" class="scene-moon"/>
+          <rect x="268" y="53" width="6" height="1" class="scene-moon"/>
+        </g>
+        <!-- Distant stepped mountain range -->
+        <g class="scene-layer-1">
+          <polygon points="0,118 24,96 48,104 78,84 114,108 144,94 176,112 214,82 252,102 288,88 320,108 320,180 0,180"/>
+        </g>
+        <!-- Mid rolling hills & pine contours -->
+        <g class="scene-layer-2">
+          <polygon points="0,126 36,112 72,122 108,116 138,128 182,128 218,114 264,120 302,110 320,118 320,180 0,180"/>
+        </g>
+        <!-- Winding twilight river plane -->
+        <g class="scene-water-surface">
+          <rect x="0" y="128" width="320" height="52"/>
+        </g>
+        <!-- Terraced river banks framing the water -->
+        <g class="scene-layer-3">
+          <polygon points="0,126 116,130 92,144 58,154 0,162"/>
+          <polygon points="320,124 204,130 226,144 266,156 320,164"/>
+          <rect x="0" y="168" width="64" height="12"/>
+          <rect x="256" y="168" width="64" height="12"/>
+        </g>
+        <!-- Gentle mood-tinted moonlight ripples on the river -->
+        <g class="scene-ripples">
+          <rect x="148" y="133" width="22" height="2" class="scene-ripple-bright scene-ripple-drift"/>
+          <rect x="140" y="139" width="36" height="2" class="scene-ripple-soft scene-ripple-drift-alt"/>
+          <rect x="152" y="145" width="26" height="2" class="scene-ripple-bright scene-ripple-drift"/>
+          <rect x="128" y="152" width="44" height="2" class="scene-ripple-soft scene-ripple-drift-alt"/>
+          <rect x="144" y="159" width="32" height="2" class="scene-ripple-bright scene-ripple-drift"/>
+          <rect x="118" y="167" width="56" height="2" class="scene-ripple-soft scene-ripple-drift-alt"/>
+          <rect x="136" y="173" width="38" height="2" class="scene-ripple-bright scene-ripple-drift"/>
+          <!-- Riverbank fireflies -->
+          <rect x="38" y="140" width="2" height="2" class="scene-win-bright scene-win-pulse"/>
+          <rect x="76" y="134" width="2" height="2" class="scene-win-soft scene-win-pulse-slow"/>
+          <rect x="248" y="138" width="2" height="2" class="scene-win-bright scene-win-pulse-slow"/>
+          <rect x="284" y="144" width="2" height="2" class="scene-win-soft scene-win-pulse"/>
+        </g>
+      </svg>
+    </div>
+
+    <div class="ambient-scene ambient-scene-zen" data-scene="zen">
+      <svg class="ambient-scene-svg" viewBox="0 0 320 180" preserveAspectRatio="xMidYMax slice" shape-rendering="crispEdges">
+        <defs>
+          <linearGradient id="petrio-zen-sky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" class="scene-grad-top"/>
+            <stop offset="65%" class="scene-grad-mid"/>
+            <stop offset="100%" class="scene-grad-glow"/>
+          </linearGradient>
+        </defs>
+        <rect x="0" y="0" width="320" height="180" fill="url(#petrio-zen-sky)"/>
+        <!-- Soft sky & serene rising moon behind mist -->
+        <g class="ambient-stars">
+          <rect x="44" y="24" width="1" height="1" class="scene-star"/>
+          <rect x="98" y="18" width="1" height="1" class="scene-star scene-star-twinkle-slow"/>
+          <rect x="226" y="26" width="1" height="1" class="scene-star"/>
+          <rect x="274" y="16" width="1" height="1" class="scene-star scene-star-twinkle"/>
+          <!-- Large tranquil twilight disc -->
+          <rect x="226" y="42" width="16" height="2" class="scene-moon-soft"/>
+          <rect x="222" y="44" width="24" height="4" class="scene-moon-soft"/>
+          <rect x="220" y="48" width="28" height="12" class="scene-moon-soft"/>
+          <rect x="222" y="60" width="24" height="4" class="scene-moon-soft"/>
+          <rect x="226" y="64" width="16" height="2" class="scene-moon-soft"/>
+        </g>
+        <!-- Layered misty sanctuary hills -->
+        <g class="scene-layer-1">
+          <polygon points="0,122 46,98 94,114 146,96 198,116 254,92 320,114 320,180 0,180"/>
+        </g>
+        <g class="scene-layer-2">
+          <polygon points="0,134 58,118 118,132 184,124 246,118 320,132 320,180 0,180"/>
+        </g>
+        <!-- Quiet mirror pond & raked zen horizon -->
+        <g class="scene-water-surface">
+          <rect x="0" y="142" width="320" height="38"/>
+        </g>
+        <!-- Minimalist torii silhouette & stone lantern on the right flank -->
+        <g class="scene-layer-3">
+          <rect x="0" y="138" width="76" height="8"/>
+          <rect x="0" y="146" width="52" height="34"/>
+          <!-- Torii gate silhouette -->
+          <rect x="224" y="106" width="36" height="3"/>
+          <rect x="222" y="104" width="40" height="2"/>
+          <rect x="228" y="113" width="28" height="2"/>
+          <rect x="232" y="109" width="3" height="34"/>
+          <rect x="249" y="109" width="3" height="34"/>
+          <!-- Stone lantern (toro) -->
+          <rect x="276" y="122" width="10" height="2"/>
+          <rect x="278" y="120" width="6" height="2"/>
+          <rect x="278" y="124" width="2" height="5"/>
+          <rect x="282" y="124" width="2" height="5"/>
+          <rect x="277" y="129" width="8" height="2"/>
+          <rect x="280" y="131" width="2" height="10"/>
+          <rect x="276" y="141" width="10" height="3"/>
+          <rect x="218" y="142" width="102" height="6"/>
+          <rect x="248" y="148" width="72" height="32"/>
+        </g>
+        <!-- Lantern heart, zen water ripples, and calm floating spirit motes -->
+        <g class="scene-ripples">
+          <rect x="280" y="125" width="2" height="3" class="scene-win-bright scene-win-pulse"/>
+          <rect x="279" y="149" width="4" height="2" class="scene-ripple-bright scene-ripple-drift"/>
+          <rect x="74" y="150" width="68" height="1" class="scene-ripple-soft scene-ripple-drift-alt"/>
+          <rect x="112" y="157" width="84" height="1" class="scene-ripple-soft scene-ripple-drift"/>
+          <rect x="64" y="165" width="108" height="1" class="scene-ripple-soft scene-ripple-drift-alt"/>
+          <rect x="128" y="172" width="72" height="1" class="scene-ripple-bright scene-ripple-drift"/>
+          <!-- Drifting calm motes -->
+          <rect x="62" y="114" width="2" height="2" class="scene-win-soft scene-win-pulse-slow"/>
+          <rect x="188" y="126" width="2" height="2" class="scene-win-bright scene-win-pulse"/>
+          <rect x="262" y="118" width="2" height="2" class="scene-win-soft scene-win-pulse-slow"/>
+        </g>
+      </svg>
+    </div>
+  </div>
 
   <main id="login-screen" class="login-screen">
     <div class="login-doorway">
@@ -451,7 +723,6 @@
             <div class="composer-hints">
               <button type="button" class="composer-cmd-btn" id="idea-cmd-btn" title="Squirrel an idea into your Ideas Vault">✦ /idea</button>
               <button type="button" class="composer-cmd-btn" id="image-cmd-btn" title="Insert /image command into composer">🎨 /image</button>
-              <span class="composer-disclaimer">Quick slash commands</span>
             </div>
             <div class="composer-controls">
               <label class="mode-control agent-control" for="agent-provider">Agent<select id="agent-provider" name="agentProvider" aria-label="Select AI agent"><option value="local">Alfie Local</option><option value="gemini" disabled>Gemini (off)</option><option value="openai" disabled>ChatGPT (off)</option></select></label>
@@ -1256,7 +1527,7 @@
             </div>
           </section>
 
-          <section class="surface" id="settings-theme-surface">
+          <section class="surface surface-span-2" id="settings-theme-surface">
             <h3>Interface Theme</h3>
             <p class="muted">Toggle between Alfie's dark violet theme and crisp light theme.</p>
             <div id="theme-toggle-group" class="theme-toggle-group" role="radiogroup" aria-label="Theme selection">
@@ -1276,7 +1547,7 @@
               <span>Updates <code>--bg</code>, <code>--panel</code>, <code>--text</code> and palettes in <code>styles.css</code></span>
             </div>
           </section>
-          <section class="surface" id="settings-soul-theme-surface">
+          <section class="surface surface-span-2" id="settings-soul-theme-surface">
             <h3>Alfie Soul Palette Profile</h3>
             <p class="muted">Select from curated color palettes for the Alfie Soul. Changes smoothly fade and map to existing CSS variables.</p>
             <div id="soul-theme-toggle-group" class="soul-theme-grid" role="radiogroup" aria-label="Soul palette profile selection">
@@ -1398,6 +1669,98 @@
               <span>Maps to <code>--soul-glow</code>, <code>--soul-core-1</code>, <code>--soul-core-2</code>, <code>--soul-accent</code>, <code>--soul-ring</code></span>
             </div>
           </section>
+
+          <section class="surface surface-span-2" id="settings-background-surface" aria-labelledby="settings-background-heading">
+            <div class="bg-theme-section-head">
+              <div>
+                <h3 id="settings-background-heading">Workspace Background</h3>
+                <p class="muted">Choose a Petrio-toned atmospheric backdrop. Subtle lighting and highlights shift automatically with Alfie's active Soul mood.</p>
+              </div>
+              <span id="bg-theme-mood-readout" class="muted bg-theme-mood-readout">Mood tint: Purple</span>
+            </div>
+            <div id="bg-theme-toggle-group" class="bg-theme-grid" role="radiogroup" aria-label="Workspace background selection">
+              <button type="button" class="bg-theme-choice-btn active" data-bg-theme-set="nebula" role="radio" aria-checked="true">
+                <span class="bg-theme-preview bg-preview-nebula" aria-hidden="true"></span>
+                <div class="bg-theme-meta">
+                  <div class="bg-theme-title-row">
+                    <span class="bg-theme-name">Soft Nebula</span>
+                    <span class="theme-status-pill">Active</span>
+                  </div>
+                  <span class="bg-theme-desc">Quiet Petrio amethyst veil with mood-reactive ambient glow</span>
+                </div>
+              </button>
+
+              <button type="button" class="bg-theme-choice-btn" data-bg-theme-set="pixel-city" role="radio" aria-checked="false">
+                <span class="bg-theme-preview bg-preview-city" aria-hidden="true">
+                  <svg viewBox="0 0 80 36" shape-rendering="crispEdges">
+                    <rect x="0" y="0" width="80" height="36" fill="var(--bg-preview-sky, #140f26)"/>
+                    <rect x="64" y="6" width="3" height="3" fill="var(--ambient-accent, #b6a2ff)" opacity=".75"/>
+                    <rect x="4" y="18" width="10" height="18" fill="var(--bg-preview-layer-1, #231942)"/>
+                    <rect x="16" y="12" width="12" height="24" fill="var(--bg-preview-layer-2, #2b1e50)"/>
+                    <rect x="30" y="16" width="10" height="20" fill="var(--bg-preview-layer-3, #1e1539)"/>
+                    <rect x="42" y="10" width="14" height="26" fill="var(--bg-preview-layer-2, #2b1e50)"/>
+                    <rect x="58" y="15" width="10" height="21" fill="var(--bg-preview-layer-1, #231942)"/>
+                    <rect x="70" y="19" width="10" height="17" fill="var(--bg-preview-layer-3, #1b1334)"/>
+                    <rect x="19" y="16" width="2" height="2" fill="var(--ambient-accent, #b6a2ff)"/>
+                    <rect x="23" y="20" width="2" height="2" fill="var(--ambient-accent, #b6a2ff)"/>
+                    <rect x="46" y="14" width="2" height="2" fill="var(--ambient-accent, #b6a2ff)"/>
+                    <rect x="50" y="18" width="2" height="2" fill="var(--ambient-accent, #b6a2ff)"/>
+                    <rect x="61" y="20" width="2" height="2" fill="var(--ambient-accent, #b6a2ff)"/>
+                  </svg>
+                </span>
+                <div class="bg-theme-meta">
+                  <div class="bg-theme-title-row">
+                    <span class="bg-theme-name">Pixel City</span>
+                    <span class="theme-status-pill">Select</span>
+                  </div>
+                  <span class="bg-theme-desc">Twilight Petrio skyline with softly glowing pixel windows</span>
+                </div>
+              </button>
+
+              <button type="button" class="bg-theme-choice-btn" data-bg-theme-set="river" role="radio" aria-checked="false">
+                <span class="bg-theme-preview bg-preview-river" aria-hidden="true">
+                  <svg viewBox="0 0 80 36" shape-rendering="crispEdges">
+                    <rect x="0" y="0" width="80" height="36" fill="var(--bg-preview-sky, #140f26)"/>
+                    <rect x="56" y="7" width="5" height="5" fill="var(--ambient-accent, #b6a2ff)" opacity=".72"/>
+                    <polygon points="0,24 18,15 36,22 56,14 80,24 80,36 0,36" fill="var(--bg-preview-layer-1, #241942)"/>
+                    <rect x="0" y="24" width="80" height="12" fill="var(--bg-preview-layer-3, #17102c)"/>
+                    <rect x="32" y="26" width="16" height="2" fill="var(--ambient-accent, #b6a2ff)" opacity=".7"/>
+                    <rect x="28" y="30" width="24" height="2" fill="var(--ambient-accent, #b6a2ff)" opacity=".45"/>
+                  </svg>
+                </span>
+                <div class="bg-theme-meta">
+                  <div class="bg-theme-title-row">
+                    <span class="bg-theme-name">Moonlit River</span>
+                    <span class="theme-status-pill">Select</span>
+                  </div>
+                  <span class="bg-theme-desc">Stepped violet ridges with calm moonlit water ripples</span>
+                </div>
+              </button>
+
+              <button type="button" class="bg-theme-choice-btn" data-bg-theme-set="zen" role="radio" aria-checked="false">
+                <span class="bg-theme-preview bg-preview-zen" aria-hidden="true">
+                  <svg viewBox="0 0 80 36" shape-rendering="crispEdges">
+                    <rect x="0" y="0" width="80" height="36" fill="var(--bg-preview-sky, #140f26)"/>
+                    <rect x="52" y="7" width="10" height="10" fill="var(--ambient-accent, #b6a2ff)" opacity=".32"/>
+                    <polygon points="0,26 24,18 52,25 80,19 80,36 0,36" fill="var(--bg-preview-layer-1, #22183f)"/>
+                    <rect x="52" y="18" width="14" height="2" fill="var(--bg-preview-layer-3, #150e29)"/>
+                    <rect x="55" y="20" width="2" height="10" fill="var(--bg-preview-layer-3, #150e29)"/>
+                    <rect x="61" y="20" width="2" height="10" fill="var(--bg-preview-layer-3, #150e29)"/>
+                    <rect x="0" y="29" width="80" height="7" fill="var(--bg-preview-layer-2, #160f2b)"/>
+                    <rect x="14" y="32" width="26" height="1" fill="var(--ambient-accent, #b6a2ff)" opacity=".65"/>
+                    <rect x="68" y="24" width="2" height="2" fill="var(--ambient-accent, #b6a2ff)"/>
+                  </svg>
+                </span>
+                <div class="bg-theme-meta">
+                  <div class="bg-theme-title-row">
+                    <span class="bg-theme-name">Zen Sanctuary</span>
+                    <span class="theme-status-pill">Select</span>
+                  </div>
+                  <span class="bg-theme-desc">Quiet Petrio hills, lantern glow, and mirror-pond ripples</span>
+                </div>
+              </button>
+            </div>
+          </section>
           <section class="surface surface-span-2 workflow-profile-surface" id="settings-workflow-surface" aria-labelledby="settings-workflow-heading">
             <div class="shortcuts-section-header">
               <div>
@@ -1451,11 +1814,32 @@
               <label class="workflow-notes-field">Personal working note (optional)
                 <input id="wf-custom-notes" name="customNotes" maxlength="400" placeholder="e.g. Prefer explicit rollback commands before infrastructure changes">
               </label>
+              <div class="workflow-memory-toggles">
+                <label class="workflow-toggle-label">
+                  <input id="wf-auto-memory" name="autoMemoryEnabled" type="checkbox" checked>
+                  <span>Auto-remember durable facts, preferences &amp; decisions from chat</span>
+                </label>
+                <label class="workflow-toggle-label">
+                  <input id="wf-learn-feedback" name="learnFromFeedbackEnabled" type="checkbox" checked>
+                  <span>Learn response style from 👍 Like / 🚩 Flag feedback across sessions</span>
+                </label>
+              </div>
               <div class="watcher-form-footer">
                 <span class="muted watcher-form-note">Injected transparently into prompt assembly and visible in Turn Provenance.</span>
                 <button class="primary-button" type="submit">Save workflow profile</button>
               </div>
             </form>
+
+            <div class="learned-style-block" id="learned-style-block">
+              <div class="learned-style-head">
+                <div>
+                  <h4 class="watchers-subhead">Learned Response Preferences</h4>
+                  <p class="muted workflow-topics-sub" id="learned-style-summary">Automatically adapts tone and formatting from your 👍 Like and 🚩 Flag reactions across conversations.</p>
+                </div>
+                <button id="learned-style-reset-btn" class="secondary-button" type="button">Reset learned style</button>
+              </div>
+              <div id="learned-style-chips" class="learned-style-chips" aria-live="polite"></div>
+            </div>
 
             <div class="learning-topics-block">
               <h4 class="watchers-subhead">Developing Expertise &amp; Learning Topics</h4>
@@ -1488,7 +1872,7 @@
             <div id="settings-shortcuts-list" class="shortcuts-settings-list" role="list" aria-label="Customizable keyboard shortcuts"></div>
             <p id="settings-shortcuts-status" class="shortcuts-status-note" role="status" aria-live="polite"></p>
           </section>
-          <section class="surface" id="settings-vram-surface">
+          <section class="surface surface-span-2" id="settings-vram-surface">
             <div class="vram-surface-head">
               <h3>GPU VRAM &amp; Context Handoff</h3>
               <span id="vram-connection-badge" class="cloud-status-tag">Waiting for PC</span>
@@ -1591,7 +1975,7 @@
             </div>
             <div id="voice-ambient-status-list" class="item-list" aria-live="polite"></div>
           </section>
-          <section class="surface" id="settings-recovery-surface" aria-labelledby="settings-recovery-heading">
+          <section class="surface surface-span-2" id="settings-recovery-surface" aria-labelledby="settings-recovery-heading">
             <h3 id="settings-recovery-heading">Standalone Account Recovery</h3>
             <p class="muted">Generate 8 single-use hashed recovery codes so you can regain access without resetting the server if you forget your password.</p>
             <p id="recovery-status-text" class="settings-value">Checking recovery codes…</p>
@@ -1675,7 +2059,7 @@
           </section>
           <section class="surface"><h3>Account connection</h3><div id="account-status" class="settings-value">Checking…</div></section>
           <section class="surface"><h3>Core capabilities</h3><div id="core-status" class="item-list"></div></section>
-          <section class="surface"><h3>Change password</h3><form id="password-form" class="stack"><label>Current password<input name="currentPassword" type="password" autocomplete="current-password" minlength="6" maxlength="256" required></label><label>New password<input name="newPassword" type="password" autocomplete="new-password" minlength="16" maxlength="256" required></label><label>Confirm new password<input name="confirmPassword" type="password" autocomplete="new-password" minlength="16" maxlength="256" required></label><button class="secondary-button" type="submit">Update password</button><p class="muted">Changing your password signs out all active sessions, including this one.</p><p id="password-error" class="error-message" role="alert"></p></form></section>
+          <section class="surface surface-span-2" id="settings-password-surface"><h3>Change password</h3><form id="password-form" class="stack"><label>Current password<input name="currentPassword" type="password" autocomplete="current-password" minlength="6" maxlength="256" required></label><label>New password<input name="newPassword" type="password" autocomplete="new-password" minlength="16" maxlength="256" required></label><label>Confirm new password<input name="confirmPassword" type="password" autocomplete="new-password" minlength="16" maxlength="256" required></label><button class="secondary-button" type="submit">Update password</button><p class="muted">Changing your password signs out all active sessions, including this one.</p><p id="password-error" class="error-message" role="alert"></p></form></section>
         </div>
       </section>
       <div id="toast" class="toast" role="status" aria-live="polite"></div>

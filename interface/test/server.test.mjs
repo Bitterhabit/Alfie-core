@@ -519,3 +519,63 @@ test("concurrent failed logins reserve throttle slots before password hashing", 
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+test("/api/health responds 200 and trusted HTTPS reverse proxy upgrades session cookies for iframes", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-ui-proxy-https-"));
+  const authStore = new InterfaceAuthStore({ dataDirectory: directory });
+  await authStore.bootstrap("alfie-admin", "test-password-for-ci-only-123456");
+  const prevSameSite = process.env.ALFIE_UI_COOKIE_SAMESITE;
+  process.env.ALFIE_UI_COOKIE_SAMESITE = "none";
+  const server = createAlfieInterfaceServer({
+    authStore,
+    coreClient: {},
+    cookieSecure: false,
+    trustProxyHeaders: true,
+    allowLocalHttpOrigin: true
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = "http://127.0.0.1:" + server.address().port;
+  try {
+    const apiHealth = await fetch(base + "/api/health");
+    assert.equal(apiHealth.status, 200);
+    assert.deepEqual(await apiHealth.json(), { status: "ok", service: "alfie-interface" });
+
+    // Trusted proxy HTTPS origin succeeds and upgrades cookie to Secure; SameSite=None; Partitioned
+    const proxyHost = "alfie-prod.example.run.app";
+    const httpsLogin = await fetch(base + "/api/auth/login", {
+      method: "POST",
+      headers: {
+        origin: `https://${proxyHost}`,
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": proxyHost,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ username: "alfie-admin", password: "test-password-for-ci-only-123456" })
+    });
+    assert.equal(httpsLogin.status, 200);
+    const setCookie = httpsLogin.headers.get("set-cookie") || "";
+    assert.match(setCookie, /HttpOnly/);
+    assert.match(setCookie, /SameSite=None/);
+    assert.match(setCookie, /Secure/);
+    assert.match(setCookie, /Partitioned/);
+
+    // Mismatched external origin is still rejected
+    const badOrigin = await fetch(base + "/api/auth/login", {
+      method: "POST",
+      headers: {
+        origin: "https://evil.example",
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": proxyHost,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ username: "alfie-admin", password: "test-password-for-ci-only-123456" })
+    });
+    assert.equal(badOrigin.status, 403);
+  } finally {
+    if (prevSameSite === undefined) delete process.env.ALFIE_UI_COOKIE_SAMESITE;
+    else process.env.ALFIE_UI_COOKIE_SAMESITE = prevSameSite;
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+

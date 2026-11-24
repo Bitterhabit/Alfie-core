@@ -181,3 +181,27 @@ test("index.html, app.js, and styles.css render crisp pixel-art TotK Poe souls",
   assert.doesNotMatch(css, /@keyframes\s+soul-working-pulse\s*\{[^}]*filter:/);
 });
 
+test("Alfie Soul applies subtle layered transition animations when data-mood cycles without being overridden by animation states", async () => {
+  const css = await fs.readFile(new URL("styles.css", publicDir), "utf8");
+  const app = await fs.readFile(new URL("app.js", publicDir), "utf8");
+
+  // Layered child mood-shift rules must come AFTER [data-animation-state="idle"] so they are never clobbered
+  const idleIdx = css.indexOf('.alfie-soul[data-animation-state="idle"]');
+  const spriteShiftIdx = css.indexOf('.alfie-soul.mood-transitioning[data-mood]:not([data-animation-state="offline"]) .poe-sprite');
+  assert.ok(idleIdx > -1, "Expected idle state rule in styles.css");
+  assert.ok(spriteShiftIdx > idleIdx, "Mood transition sprite shift rule must follow state rules in cascade");
+
+  assert.match(css, /@keyframes\s+soul-mood-sprite-shift\s*\{[^}]*scale3d\(/);
+  assert.match(css, /@keyframes\s+soul-mood-aura-bloom\s*\{[^}]*scale3d\(/);
+  assert.match(css, /@keyframes\s+soul-mood-rings-ripple\s*\{[^}]*scale3d\(/);
+  assert.match(css, /@keyframes\s+soul-mood-spark-shift\s*\{[^}]*scale3d\(/);
+
+  // Controller restarts animation on rapid mood cycling, respects reduced motion, and observes direct data-mood mutations
+  assert.match(app, /_prefersReducedMotion\(\)/);
+  assert.match(app, /_triggerMoodTransitionOnElement\(/);
+  assert.match(app, /void\s+el\.offsetWidth/);
+  assert.match(app, /_observeMoodAttribute\(/);
+  assert.match(app, /attributeFilter:\s*\["data-mood"\]/);
+});
+
+

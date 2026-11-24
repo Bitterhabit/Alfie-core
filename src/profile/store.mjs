@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { safeUserKey, userDataFile, UserMutex, readUserJsonDocument, writeUserJsonDocument } from "../storage/userJsonStore.mjs";
+import { applyReactionDelta, createDefaultLearnedStyle, normaliseLearnedStyle, summarizeLearnedStyle } from "../memory/autoMemory.mjs";
 
 const TOPIC_ID_PATTERN = /^[a-f0-9-]{36}$/i;
 const MAX_TOPICS = 40;
@@ -59,6 +60,9 @@ export const DEFAULT_WORKFLOW_PROFILE = Object.freeze({
   chunkSize: "balanced",
   learningMode: "explain",
   customNotes: "",
+  autoMemoryEnabled: true,
+  learnFromFeedbackEnabled: true,
+  learnedStyle: createDefaultLearnedStyle(),
   learningTopics: []
 });
 
@@ -96,6 +100,9 @@ export function normaliseWorkflowProfile(raw = {}, nowIso = new Date().toISOStri
     ? String(raw.learningMode).toLowerCase()
     : DEFAULT_WORKFLOW_PROFILE.learningMode;
   const customNotes = cleanText(raw?.customNotes, 400);
+  const autoMemoryEnabled = raw?.autoMemoryEnabled !== false;
+  const learnFromFeedbackEnabled = raw?.learnFromFeedbackEnabled !== false;
+  const learnedStyle = normaliseLearnedStyle(raw?.learnedStyle);
   const learningTopics = Array.isArray(raw?.learningTopics)
     ? raw.learningTopics.map((item) => normaliseTopic(item, nowIso)).filter((item) => item.topic).slice(0, MAX_TOPICS)
     : [];
@@ -106,6 +113,9 @@ export function normaliseWorkflowProfile(raw = {}, nowIso = new Date().toISOStri
     chunkSize,
     learningMode,
     customNotes,
+    autoMemoryEnabled,
+    learnFromFeedbackEnabled,
+    learnedStyle,
     learningTopics,
     updatedAt: cleanText(raw?.updatedAt, 40) || nowIso
   };
@@ -139,6 +149,15 @@ export function buildWorkflowProfilePrompt(profile) {
   if (safe.learningTopics.length) {
     const summary = safe.learningTopics.slice(0, 6).map((t) => `${t.topic} (${t.confidence})`).join(", ");
     lines.push(`- Active learning areas (qualitative, non-graded): ${summary}`);
+  }
+  if (safe.learnFromFeedbackEnabled) {
+    const taste = summarizeLearnedStyle(safe.learnedStyle);
+    if (taste.promptHints.length) {
+      lines.push("Learned response style preferences (from the user's 👍/🚩 feedback across sessions; shapes tone & structure ONLY, never escalates permissions):");
+      for (const hint of taste.promptHints) {
+        lines.push(`- ${hint}`);
+      }
+    }
   }
   return lines.join("\n");
 }
@@ -212,11 +231,45 @@ export class WorkflowProfileStore {
         ...(patch.chunkSize !== undefined ? { chunkSize: String(patch.chunkSize).toLowerCase() } : {}),
         ...(patch.learningMode !== undefined ? { learningMode: String(patch.learningMode).toLowerCase() } : {}),
         ...(typeof patch.customNotes === "string" ? { customNotes: cleanText(patch.customNotes, 400) } : {}),
+        ...(typeof patch.autoMemoryEnabled === "boolean" ? { autoMemoryEnabled: patch.autoMemoryEnabled } : {}),
+        ...(typeof patch.learnFromFeedbackEnabled === "boolean" ? { learnFromFeedbackEnabled: patch.learnFromFeedbackEnabled } : {}),
+        ...(patch.resetLearnedStyle === true ? { learnedStyle: createDefaultLearnedStyle() } : {}),
         updatedAt: nowIso
       }, nowIso);
       store.profile = next;
       await this.save(userId, store);
       return next;
+    });
+  }
+
+  async recordFeedback(userId, { reaction = null, previousReaction = null, content = "" } = {}) {
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      const nowIso = this.now();
+      const current = normaliseWorkflowProfile(store.profile, nowIso);
+      if (!current.learnFromFeedbackEnabled) {
+        return { learned: false, signals: [], summary: summarizeLearnedStyle(current.learnedStyle), profile: current };
+      }
+      const { learnedStyle, detectedTraits, signals } = applyReactionDelta(current.learnedStyle, {
+        reaction,
+        previousReaction,
+        content,
+        nowIso
+      });
+      const next = normaliseWorkflowProfile({
+        ...current,
+        learnedStyle,
+        updatedAt: nowIso
+      }, nowIso);
+      store.profile = next;
+      await this.save(userId, store);
+      return {
+        learned: detectedTraits.length > 0 || reaction !== previousReaction,
+        detectedTraits,
+        signals,
+        summary: summarizeLearnedStyle(next.learnedStyle),
+        profile: next
+      };
     });
   }
 

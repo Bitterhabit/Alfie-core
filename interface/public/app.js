@@ -321,6 +321,9 @@ class AlfieSoulController {
     this._listeners = new Set();
     this._pulseTimeout = null;
     this._moodTransitionTimeout = null;
+    this._elementTransitionTimers = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+    this._moodObservers = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+    this._isApplyingMood = false;
   }
 
   getMood() {
@@ -408,17 +411,94 @@ class AlfieSoulController {
     };
   }
 
+  _prefersReducedMotion() {
+    return typeof window !== "undefined"
+      && typeof window.matchMedia === "function"
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  _triggerMoodTransitionOnElement(el, prevMood, newMood, durationMs = 560) {
+    if (!el || !prevMood || !newMood || prevMood === newMood) return;
+    if (this._prefersReducedMotion()) {
+      el.classList.remove("mood-transitioning");
+      delete el.dataset.prevMood;
+      el.removeAttribute("data-prev-mood");
+      return;
+    }
+
+    // Restart keyframe animation cleanly when moods cycle rapidly
+    if (el.classList.contains("mood-transitioning")) {
+      el.classList.remove("mood-transitioning");
+      void el.offsetWidth;
+    }
+    el.dataset.prevMood = prevMood;
+    el.setAttribute("data-prev-mood", prevMood);
+    el.classList.add("mood-transitioning");
+
+    if (this._elementTransitionTimers) {
+      const existing = this._elementTransitionTimers.get(el);
+      if (existing) clearTimeout(existing);
+      const timer = setTimeout(() => {
+        el.classList.remove("mood-transitioning");
+        delete el.dataset.prevMood;
+        el.removeAttribute("data-prev-mood");
+        this._elementTransitionTimers.delete(el);
+      }, durationMs);
+      this._elementTransitionTimers.set(el, timer);
+    }
+  }
+
+  _syncRootMood(mood) {
+    if (typeof document === "undefined") return;
+    const norm = String(mood || this._mood || "purple").toLowerCase().trim();
+    if (!SOUL_MOODS.includes(norm)) return;
+    document.documentElement.setAttribute("data-soul-mood", norm);
+    const readout = document.getElementById("bg-theme-mood-readout");
+    if (readout) {
+      const label = norm.charAt(0).toUpperCase() + norm.slice(1);
+      readout.textContent = `Mood tint: ${label}`;
+    }
+  }
+
+  _observeMoodAttribute(element) {
+    if (!element || typeof MutationObserver === "undefined" || !this._moodObservers) return;
+    if (this._moodObservers.has(element)) return;
+    const observer = new MutationObserver((mutations) => {
+      if (this._isApplyingMood) return;
+      for (const mutation of mutations) {
+        if (mutation.type !== "attributes" || mutation.attributeName !== "data-mood") continue;
+        const oldMood = String(mutation.oldValue || "").toLowerCase().trim();
+        const nextMood = String(element.getAttribute("data-mood") || "").toLowerCase().trim();
+        if (nextMood && SOUL_MOODS.includes(nextMood)) {
+          this._syncRootMood(nextMood);
+        }
+        if (oldMood && nextMood && oldMood !== nextMood) {
+          this._triggerMoodTransitionOnElement(element, oldMood, nextMood);
+        }
+      }
+    });
+    observer.observe(element, {
+      attributes: true,
+      attributeFilter: ["data-mood"],
+      attributeOldValue: true
+    });
+    this._moodObservers.set(element, observer);
+  }
+
   _transitionMood(prevMood, newMood) {
     if (prevMood === newMood) return;
+    const durationMs = 560;
     if (typeof document !== "undefined") {
       document.querySelectorAll(".alfie-soul").forEach((el) => {
-        el.classList.add("mood-transitioning");
-        el.dataset.prevMood = prevMood;
-        el.setAttribute("data-prev-mood", prevMood);
+        this._triggerMoodTransitionOnElement(el, prevMood, newMood, durationMs);
       });
     }
     if (this._moodTransitionTimeout) {
       clearTimeout(this._moodTransitionTimeout);
+    }
+    if (this._prefersReducedMotion()) {
+      this._moodTransitionTimeout = null;
+      return;
     }
     this._moodTransitionTimeout = setTimeout(() => {
       if (typeof document !== "undefined") {
@@ -429,7 +509,7 @@ class AlfieSoulController {
         });
       }
       this._moodTransitionTimeout = null;
-    }, 650);
+    }, durationMs);
   }
 
   setMood(mood) {
@@ -533,6 +613,7 @@ class AlfieSoulController {
     if (this.isMoodTransitioning()) {
       element.classList.add("mood-transitioning");
     }
+    this._observeMoodAttribute(element);
   }
 
   _updateThemeUI(activeProfile) {
@@ -551,20 +632,27 @@ class AlfieSoulController {
 
   _apply() {
     if (typeof document === "undefined") return;
-    document.querySelectorAll(".alfie-soul").forEach((el) => {
-      el.dataset.mood = this._mood;
-      el.dataset.animationState = this._animationState;
-      el.dataset.soulTheme = this._themeProfile;
-      el.setAttribute("data-mood", this._mood);
-      el.setAttribute("data-animation-state", this._animationState);
-      el.setAttribute("data-soul-theme", this._themeProfile);
-      el.setAttribute("aria-label", `Alfie Soul: ${this._themeProfile} palette, ${this._mood} mood, ${this._animationState} state`);
-    });
+    this._isApplyingMood = true;
+    try {
+      document.querySelectorAll(".alfie-soul").forEach((el) => {
+        this._observeMoodAttribute(el);
+        el.dataset.mood = this._mood;
+        el.dataset.animationState = this._animationState;
+        el.dataset.soulTheme = this._themeProfile;
+        el.setAttribute("data-mood", this._mood);
+        el.setAttribute("data-animation-state", this._animationState);
+        el.setAttribute("data-soul-theme", this._themeProfile);
+        el.setAttribute("aria-label", `Alfie Soul: ${this._themeProfile} palette, ${this._mood} mood, ${this._animationState} state`);
+      });
+    } finally {
+      this._isApplyingMood = false;
+    }
 
     document.querySelectorAll(".mood-chip").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.setMood === this._mood);
     });
 
+    this._syncRootMood(this._mood);
     this._updateThemeUI(this._themeProfile);
 
     for (const listener of this._listeners) {
@@ -586,6 +674,10 @@ class AlfieSoulController {
       saved = localStorage.getItem(SOUL_THEME_STORAGE_KEY) || "amethyst";
     } catch {}
     this.setThemeProfile(saved, false);
+    this._syncRootMood(this._mood);
+    if (typeof document !== "undefined") {
+      document.querySelectorAll(".alfie-soul").forEach((el) => this._observeMoodAttribute(el));
+    }
   }
 
   subscribe(listener) {
@@ -604,6 +696,26 @@ window.alfieSoul.init();
 
 /* Theme Management & CSS Variables */
 const THEME_STORAGE_KEY = "alfie_theme";
+const BG_THEME_STORAGE_KEY = "alfie_bg_theme";
+
+const BACKGROUND_THEMES = {
+  nebula: {
+    id: "nebula",
+    name: "Soft Nebula"
+  },
+  "pixel-city": {
+    id: "pixel-city",
+    name: "Pixel City"
+  },
+  river: {
+    id: "river",
+    name: "Moonlit River"
+  },
+  zen: {
+    id: "zen",
+    name: "Zen Sanctuary"
+  }
+};
 
 const THEME_DEFINITIONS = {
   dark: {
@@ -627,9 +739,9 @@ const THEME_DEFINITIONS = {
     "--red": "#f88995",
     "--green": "#7ddbb1",
     "--input-bg": "#110e20",
-    "--sidebar-bg": "linear-gradient(180deg,#151125,#110e1f)",
-    "--surface-bg": "linear-gradient(145deg,rgba(31,25,49,.8),rgba(21,17,34,.8))",
-    "--surface-card-bg": "rgba(14,11,24,.6)",
+    "--sidebar-bg": "linear-gradient(180deg,rgba(21,17,37,.92),rgba(17,14,31,.94))",
+    "--surface-bg": "linear-gradient(145deg,rgba(31,25,49,.82),rgba(21,17,34,.84))",
+    "--surface-card-bg": "rgba(14,11,24,.64)",
     "--composer-bg": "linear-gradient(145deg,rgba(34,28,54,.96),rgba(23,19,38,.96))",
     "--composer-border": "rgba(182,162,255,.28)",
     "--user-msg-bg": "rgba(33,27,51,.75)",
@@ -639,7 +751,7 @@ const THEME_DEFINITIONS = {
     "--pre-text": "#e8e3f2",
     "--brand-bg": "linear-gradient(145deg,#292044,#171326)",
     "--bg-gradient": "radial-gradient(ellipse at 70% -10%,rgba(105,76,174,.18),transparent 45%),radial-gradient(ellipse at 15% 105%,rgba(82,53,142,.12),transparent 40%),var(--bg)",
-    "--ambient-opacity": "0.11"
+    "--ambient-opacity": "0.14"
   },
   light: {
     "color-scheme": "light",
@@ -662,9 +774,9 @@ const THEME_DEFINITIONS = {
     "--red": "#d4354c",
     "--green": "#1b8858",
     "--input-bg": "#ffffff",
-    "--sidebar-bg": "linear-gradient(180deg,#faf8ff,#f1ecfa)",
-    "--surface-bg": "linear-gradient(145deg,#ffffff,#f9f6fd)",
-    "--surface-card-bg": "#f4effb",
+    "--sidebar-bg": "linear-gradient(180deg,rgba(250,248,255,.92),rgba(241,236,250,.94))",
+    "--surface-bg": "linear-gradient(145deg,rgba(255,255,255,.92),rgba(249,246,253,.9))",
+    "--surface-card-bg": "rgba(244,239,251,.84)",
     "--composer-bg": "linear-gradient(145deg,#ffffff,#faf7fd)",
     "--composer-border": "rgba(128,105,231,.32)",
     "--user-msg-bg": "rgba(235,228,252,.92)",
@@ -674,13 +786,14 @@ const THEME_DEFINITIONS = {
     "--pre-text": "#221c35",
     "--brand-bg": "linear-gradient(145deg,#ede6fa,#ded4f5)",
     "--bg-gradient": "radial-gradient(ellipse at 70% -10%,rgba(128,105,231,.10),transparent 50%),radial-gradient(ellipse at 15% 105%,rgba(128,105,231,.06),transparent 45%),var(--bg)",
-    "--ambient-opacity": "0.04"
+    "--ambient-opacity": "0.07"
   }
 };
 
 class AlfieThemeController {
   constructor() {
     this._theme = "dark";
+    this._bgTheme = "nebula";
     this._listeners = new Set();
   }
 
@@ -718,6 +831,29 @@ class AlfieThemeController {
     return this.setTheme(this._theme === "light" ? "dark" : "light");
   }
 
+  getBackgroundTheme() {
+    return this._bgTheme;
+  }
+
+  setBackgroundTheme(bgId, persist = true) {
+    const norm = String(bgId || "").toLowerCase().trim();
+    const selected = Object.prototype.hasOwnProperty.call(BACKGROUND_THEMES, norm) ? norm : "nebula";
+    this._bgTheme = selected;
+    document.documentElement.setAttribute("data-bg-theme", selected);
+
+    if (persist) {
+      try {
+        localStorage.setItem(BG_THEME_STORAGE_KEY, selected);
+      } catch {}
+    }
+
+    this._updateBgUI(selected);
+    for (const listener of this._listeners) {
+      try { listener({ theme: this._theme, backgroundTheme: selected }); } catch {}
+    }
+    return selected;
+  }
+
   _updateUI(theme) {
     const buttons = document.querySelectorAll("[data-theme-set]");
     buttons.forEach((button) => {
@@ -731,12 +867,28 @@ class AlfieThemeController {
     });
   }
 
+  _updateBgUI(bgTheme) {
+    const buttons = document.querySelectorAll("[data-bg-theme-set]");
+    buttons.forEach((button) => {
+      const isActive = button.dataset.bgThemeSet === bgTheme;
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-checked", String(isActive));
+      const pill = button.querySelector(".theme-status-pill");
+      if (pill) {
+        pill.textContent = isActive ? "Active" : "Select";
+      }
+    });
+  }
+
   init() {
     let saved = "dark";
+    let savedBg = "nebula";
     try {
       saved = localStorage.getItem(THEME_STORAGE_KEY) || "dark";
+      savedBg = localStorage.getItem(BG_THEME_STORAGE_KEY) || "nebula";
     } catch {}
     this.setTheme(saved, false);
+    this.setBackgroundTheme(savedBg, false);
   }
 
   getSoulTheme() {
@@ -756,10 +908,11 @@ class AlfieThemeController {
   }
 }
 
+window.BACKGROUND_THEMES = BACKGROUND_THEMES;
 window.alfieTheme = new AlfieThemeController();
 window.alfieTheme.init();
 
-/* Delegated click handler for navigation menus, Soul orbs, mood chips, theme toggle, and soul palette profile buttons */
+/* Delegated click handler for navigation menus, Soul orbs, mood chips, theme toggle, soul palette profile, and background scene buttons */
 document.addEventListener("click", (event) => {
   const navItem = event.target.closest(".nav-item, [data-view]");
   if (navItem && navItem.dataset.view) {
@@ -771,6 +924,14 @@ document.addEventListener("click", (event) => {
     const targetTheme = themeBtn.dataset.themeSet;
     window.alfieTheme.setTheme(targetTheme);
     toast("Switched to " + (targetTheme === "light" ? "Light" : "Dark") + " theme");
+    return;
+  }
+  const bgThemeBtn = event.target.closest("[data-bg-theme-set]");
+  if (bgThemeBtn) {
+    const targetBg = bgThemeBtn.dataset.bgThemeSet;
+    window.alfieTheme.setBackgroundTheme(targetBg);
+    const bgName = BACKGROUND_THEMES[targetBg]?.name || targetBg;
+    toast("Background set to " + bgName);
     return;
   }
   const soulThemeBtn = event.target.closest("[data-soul-theme-set]");
@@ -3916,10 +4077,26 @@ function createReactionControls(message) {
     }
 
     try {
-      await api("/api/core/conversations/" + encodeURIComponent(state.activeConversationId) + "/messages/" + encodeURIComponent(message.id) + "/reaction", {
+      const res = await api("/api/core/conversations/" + encodeURIComponent(state.activeConversationId) + "/messages/" + encodeURIComponent(message.id) + "/reaction", {
         method: "POST",
         body: JSON.stringify({ reaction: nextReaction })
       });
+      if (res?.learnedFeedback?.profile) {
+        state.workflowProfile = res.learnedFeedback.profile;
+        renderWorkflowProfile();
+      }
+      const learnedSignals = Array.isArray(res?.learnedFeedback?.signals) ? res.learnedFeedback.signals : [];
+      if (nextReaction === "like") {
+        tag.textContent = learnedSignals.length
+          ? "Learned: " + learnedSignals.slice(0, 2).join(" · ")
+          : "Saved to response taste";
+        tag.hidden = false;
+      } else if (nextReaction === "flag") {
+        tag.textContent = learnedSignals.length
+          ? "Noted: avoid " + learnedSignals.slice(0, 2).join(" · ").toLowerCase()
+          : "Flagged for future sessions";
+        tag.hidden = false;
+      }
     } catch (error) {
       message.reaction = prevReaction || undefined;
       likeBtn.classList.toggle("active", prevReaction === "like");
@@ -3990,6 +4167,76 @@ function createProvenanceDisclosure(provenance) {
   return details;
 }
 
+function createAutoMemoryDisclosure(autoMemories) {
+  if (!Array.isArray(autoMemories) || !autoMemories.length) return null;
+  const details = document.createElement("details");
+  details.className = "auto-memory-disclosure";
+
+  const summary = document.createElement("summary");
+  summary.className = "auto-memory-summary";
+  const firstTitle = String(autoMemories[0]?.title || autoMemories[0]?.text || "Saved to Garden").slice(0, 72);
+  summary.textContent = autoMemories.length === 1
+    ? `✦ Memory updated · ${firstTitle}`
+    : `✦ Memory updated · ${autoMemories.length} items saved`;
+
+  const list = document.createElement("div");
+  list.className = "auto-memory-list";
+
+  for (const item of autoMemories) {
+    const row = document.createElement("div");
+    row.className = "auto-memory-item";
+
+    const info = document.createElement("div");
+    info.className = "auto-memory-copy";
+    const kindTag = document.createElement("span");
+    kindTag.className = "auto-memory-kind";
+    kindTag.textContent = String(item.kind || "fact").toUpperCase();
+    const textEl = document.createElement("span");
+    textEl.className = "auto-memory-text";
+    textEl.textContent = item.text || item.title || "Saved memory";
+    info.append(kindTag, textEl);
+
+    const actions = document.createElement("div");
+    actions.className = "auto-memory-actions";
+
+    const viewBtn = document.createElement("button");
+    viewBtn.type = "button";
+    viewBtn.className = "secondary-button auto-memory-btn";
+    viewBtn.textContent = "Garden";
+    viewBtn.addEventListener("click", () => {
+      setView("garden");
+      loadMemories().catch(() => {});
+    });
+    actions.appendChild(viewBtn);
+
+    if (item.id) {
+      const forgetBtn = document.createElement("button");
+      forgetBtn.type = "button";
+      forgetBtn.className = "secondary-button auto-memory-btn";
+      forgetBtn.textContent = "Forget";
+      forgetBtn.addEventListener("click", async () => {
+        forgetBtn.disabled = true;
+        try {
+          await api("/api/core/memories/" + encodeURIComponent(item.id), { method: "DELETE", body: "{}" });
+          row.remove();
+          if (!list.children.length) details.remove();
+          toast("Forgot auto-saved memory.");
+        } catch (error) {
+          forgetBtn.disabled = false;
+          toast(error.message || "Could not remove memory.");
+        }
+      });
+      actions.appendChild(forgetBtn);
+    }
+
+    row.append(info, actions);
+    list.appendChild(row);
+  }
+
+  details.append(summary, list);
+  return details;
+}
+
 function appendMessageElement(message) {
   const article = document.createElement("article");
   article.className = "message " + (message.role === "user" ? "user" : "assistant");
@@ -4018,6 +4265,10 @@ function appendMessageElement(message) {
   if (message.role === "assistant") {
     const actions = createReactionControls(message);
     article.appendChild(actions);
+    if (message.provenance?.autoMemories?.length) {
+      const autoMemEl = createAutoMemoryDisclosure(message.provenance.autoMemories);
+      if (autoMemEl) article.appendChild(autoMemEl);
+    }
     if (message.provenance) {
       const provEl = createProvenanceDisclosure(message.provenance);
       if (provEl) article.appendChild(provEl);
@@ -4652,6 +4903,14 @@ async function sendMessage(rawText) {
     if (messageArticle) {
       messageArticle.querySelector(".message-actions")?.remove();
       messageArticle.appendChild(createReactionControls(savedMessage || { role: "assistant", content: assistantText, metrics, provenance }));
+      messageArticle.querySelector(".auto-memory-disclosure")?.remove();
+      if (provenance?.autoMemories?.length) {
+        const autoMemEl = createAutoMemoryDisclosure(provenance.autoMemories);
+        if (autoMemEl) messageArticle.appendChild(autoMemEl);
+        toast(provenance.autoMemories.length === 1
+          ? `✦ Memory updated: ${provenance.autoMemories[0].title}`
+          : `✦ Memory updated (${provenance.autoMemories.length} items saved)`);
+      }
       messageArticle.querySelector(".turn-provenance")?.remove();
       if (provenance) {
         const provEl = createProvenanceDisclosure(provenance);
@@ -7453,9 +7712,54 @@ function renderWorkflowProfile() {
   setVal("#learning-mode-select", profile.learningMode || "explain");
   const notesEl = $("#wf-custom-notes");
   if (notesEl) notesEl.value = profile.customNotes || "";
+  const autoMemEl = $("#wf-auto-memory");
+  if (autoMemEl) autoMemEl.checked = profile.autoMemoryEnabled !== false;
+  const learnFbEl = $("#wf-learn-feedback");
+  if (learnFbEl) learnFbEl.checked = profile.learnFromFeedbackEnabled !== false;
   const statusEl = $("#workflow-profile-status");
   if (statusEl && profile.updatedAt) {
     statusEl.textContent = "Updated " + new Date(profile.updatedAt).toLocaleTimeString();
+  }
+
+  const learnedSummaryEl = $("#learned-style-summary");
+  const learnedChipsEl = $("#learned-style-chips");
+  if (learnedChipsEl) {
+    learnedChipsEl.replaceChildren();
+    const learned = profile.learnedStyle || { likes: 0, flags: 0, traits: {} };
+    const traitLabels = {
+      concise: "Concise replies",
+      detailed: "Thorough detail",
+      structured: "Structured headings & bullets",
+      codeExamples: "Concrete code & commands",
+      stepByStep: "Step-by-step walkthroughs"
+    };
+    const entries = Object.entries(learned.traits || {})
+      .filter(([, score]) => Number(score) !== 0)
+      .sort((a, b) => Math.abs(Number(b[1])) - Math.abs(Number(a[1])));
+    if (learnedSummaryEl) {
+      const likes = Number(learned.likes) || 0;
+      const flags = Number(learned.flags) || 0;
+      learnedSummaryEl.textContent = (likes || flags)
+        ? `Learned from ${likes} liked and ${flags} flagged ${likes + flags === 1 ? "reply" : "replies"}. Applied automatically to future conversations.`
+        : "Click 👍 Like or 🚩 Flag on any assistant reply and Alfie will adapt tone and formatting across sessions.";
+    }
+    if (entries.length) {
+      for (const [key, rawScore] of entries) {
+        const score = Number(rawScore);
+        const chip = document.createElement("span");
+        chip.className = "learned-style-chip " + (score > 0 ? "is-prefer" : "is-avoid");
+        const baseLabel = traitLabels[key] || key;
+        chip.textContent = score > 0
+          ? `${baseLabel} (+${score})`
+          : `Less ${baseLabel.toLowerCase()} (${score})`;
+        learnedChipsEl.appendChild(chip);
+      }
+    } else {
+      const emptyNote = document.createElement("span");
+      emptyNote.className = "muted";
+      emptyNote.textContent = "No style traits learned yet.";
+      learnedChipsEl.appendChild(emptyNote);
+    }
   }
 
   const topicHost = $("#learning-topic-list");
@@ -7537,7 +7841,9 @@ function initWorkflowProfile() {
       interruptionTolerance: formEl.elements.interruptionTolerance?.value || "balanced",
       chunkSize: formEl.elements.chunkSize?.value || "balanced",
       learningMode: formEl.elements.learningMode?.value || "explain",
-      customNotes: (formEl.elements.customNotes?.value || "").trim()
+      customNotes: (formEl.elements.customNotes?.value || "").trim(),
+      autoMemoryEnabled: Boolean(formEl.elements.autoMemoryEnabled?.checked),
+      learnFromFeedbackEnabled: Boolean(formEl.elements.learnFromFeedbackEnabled?.checked)
     };
     try {
       const res = await api("/api/core/profile", { method: "PUT", body: JSON.stringify(payload) });
@@ -7546,6 +7852,20 @@ function initWorkflowProfile() {
       toast("Workflow & learning profile saved.");
     } catch (error) {
       toast(error.message || "Could not save workflow profile.");
+    }
+  });
+
+  $("#learned-style-reset-btn")?.addEventListener("click", async () => {
+    try {
+      const res = await api("/api/core/profile", {
+        method: "PUT",
+        body: JSON.stringify({ resetLearnedStyle: true })
+      });
+      state.workflowProfile = res.profile;
+      renderWorkflowProfile();
+      toast("Learned response preferences reset.");
+    } catch (error) {
+      toast(error.message || "Could not reset learned style.");
     }
   });
 

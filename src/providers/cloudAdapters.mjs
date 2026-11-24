@@ -1,6 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
+export const DEFAULT_CLOUD_OPENAI_TIMEOUT_MS = 5 * 60 * 1000;
 
 function safeJsonFinal(text) {
   const trimmed = String(text || "").trim();
@@ -170,7 +171,7 @@ export class CloudAgentAdapters {
       ...conversation
     ];
 
-    const timeout = AbortSignal.timeout(25000);
+    const timeout = AbortSignal.timeout(DEFAULT_CLOUD_OPENAI_TIMEOUT_MS);
     const combinedSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
 
     let response;

@@ -49,6 +49,16 @@ function sessionCookieFlags(cookieSecure) {
   return flags;
 }
 
+function isHttpsRequest(req, { cookieSecure = isCookieSecure(), trustProxyHeaders = false } = {}) {
+  if (cookieSecure) return true;
+  if (req?.socket?.encrypted) return true;
+  if (trustProxyHeaders) {
+    const proto = String(req?.headers?.["x-forwarded-proto"] || "").split(",")[0].trim().toLowerCase();
+    if (proto === "https") return true;
+  }
+  return false;
+}
+
 function setSessionCookie(res, token, cookieSecure = isCookieSecure()) {
   const flags = [`${COOKIE_NAME}=${encodeURIComponent(token)}`, ...sessionCookieFlags(cookieSecure), "Max-Age=43200"];
   res.setHeader("set-cookie", flags.join("; "));
@@ -211,8 +221,11 @@ export function createAlfieInterfaceServer({
   }
 
   function clientIp(req) {
-    const forwardedIp = trustProxyHeaders ? req.headers["cf-connecting-ip"] : null;
-    return String(forwardedIp || req.socket.remoteAddress || "unknown").slice(0, 100);
+    const cfIp = trustProxyHeaders ? req.headers["cf-connecting-ip"] : null;
+    const xff = trustProxyHeaders && typeof req.headers["x-forwarded-for"] === "string"
+      ? req.headers["x-forwarded-for"].split(",")[0].trim()
+      : null;
+    return String(cfIp || xff || req.socket.remoteAddress || "unknown").slice(0, 100);
   }
 
   // Reserve an attempt synchronously before password/recovery hashing yields.
@@ -267,7 +280,7 @@ export function createAlfieInterfaceServer({
     const url = new URL(req.url || "/", "http://alfie-interface.local");
     const method = req.method || "GET";
 
-    if (method === "GET" && url.pathname === "/health") {
+    if (method === "GET" && (url.pathname === "/health" || url.pathname === "/api/health")) {
       return json(res, 200, { status: "ok", service: "alfie-interface" });
     }
 
@@ -332,7 +345,7 @@ export function createAlfieInterfaceServer({
             return json(res, 409, { error: "Initial administrator setup has already been completed." });
           }
           const result = await authStore.login(body.username, body.password, { ip });
-          setSessionCookie(res, result.token, cookieSecure);
+          setSessionCookie(res, result.token, isHttpsRequest(req, { cookieSecure, trustProxyHeaders }));
           return json(res, 201, { authenticated: true, user: result.user, csrfToken: result.csrfToken });
         }
 
@@ -347,7 +360,7 @@ export function createAlfieInterfaceServer({
           const body = await readJson(req);
           const result = await authStore.login(body.username, body.password, { ip });
           loginAttempts.delete(ip);
-          setSessionCookie(res, result.token, cookieSecure);
+          setSessionCookie(res, result.token, isHttpsRequest(req, { cookieSecure, trustProxyHeaders }));
           return json(res, 200, { authenticated: true, user: result.user, csrfToken: result.csrfToken });
         }
 
@@ -357,7 +370,7 @@ export function createAlfieInterfaceServer({
           requireCsrf(req, session);
           const body = await readJson(req);
           const result = await authStore.changePassword(session.user.id, body.currentPassword, body.newPassword);
-          clearSessionCookie(res, cookieSecure);
+          clearSessionCookie(res, isHttpsRequest(req, { cookieSecure, trustProxyHeaders }));
           return json(res, 200, result);
         }
 
@@ -372,7 +385,7 @@ export function createAlfieInterfaceServer({
           const body = await readJson(req);
           const result = await authStore.recoverWithCode(body.username, body.recoveryCode, body.newPassword);
           loginAttempts.delete(ip);
-          clearSessionCookie(res, cookieSecure);
+          clearSessionCookie(res, isHttpsRequest(req, { cookieSecure, trustProxyHeaders }));
           return json(res, 200, result);
         }
 
@@ -396,7 +409,7 @@ export function createAlfieInterfaceServer({
           requireCsrf(req, session);
           const token = cookies(req.headers.cookie)[COOKIE_NAME];
           await authStore.logout(token);
-          clearSessionCookie(res, cookieSecure);
+          clearSessionCookie(res, isHttpsRequest(req, { cookieSecure, trustProxyHeaders }));
           return json(res, 200, { authenticated: false });
         }
 
@@ -739,7 +752,20 @@ export function createAlfieInterfaceServer({
         }
         if (method === "POST" && url.pathname === "/api/core/chat/stream") {
           requireCsrf(req, session);
-          const upstream = await coreClient.stream(userId, await readJson(req));
+          const streamController = new AbortController();
+          const abortUpstream = () => {
+            if (!streamController.signal.aborted) streamController.abort(new Error("Browser client disconnected."));
+          };
+          req.on("aborted", abortUpstream);
+          res.on("close", () => { if (!res.writableEnded) abortUpstream(); });
+          const body = await readJson(req);
+          let upstream;
+          try {
+            upstream = await coreClient.stream(userId, body, { signal: streamController.signal });
+          } catch (error) {
+            if (streamController.signal.aborted) return;
+            throw error;
+          }
           if (!upstream.ok) {
             const payload = await upstream.json().catch(() => ({}));
             return json(res, upstream.status, payload);
@@ -749,8 +775,17 @@ export function createAlfieInterfaceServer({
             "cache-control": "no-cache, no-transform",
             "x-accel-buffering": "no"
           });
-          for await (const chunk of upstream.body) res.write(chunk);
-          return res.end();
+          res.flushHeaders?.();
+          try {
+            for await (const chunk of upstream.body) {
+              if (streamController.signal.aborted || res.destroyed) break;
+              res.write(chunk);
+            }
+          } catch (error) {
+            if (!streamController.signal.aborted) throw error;
+          }
+          if (!res.writableEnded) res.end();
+          return;
         }
 
         if (method === "GET" && url.pathname === "/api/core/memories") {

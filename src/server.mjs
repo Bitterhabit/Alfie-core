@@ -1592,8 +1592,24 @@ export function createAlfieCoreServer({
         }
         if (reactionMatch && (req.method === "POST" || req.method === "PUT")) {
           const body = await readJsonBody(req);
+          let previousReaction = null;
+          try {
+            const existingConv = await conversationStore.get(identity.userId, reactionMatch[1]);
+            const existingMsg = existingConv?.messages?.find((item) => item.id === reactionMatch[2]);
+            previousReaction = existingMsg?.reaction || null;
+          } catch {}
           const message = await conversationStore.reactMessage(identity.userId, reactionMatch[1], reactionMatch[2], body.reaction);
-          return json(res, 200, { message });
+          let learnedFeedback = null;
+          if (message?.role === "assistant" && typeof profileStore?.recordFeedback === "function") {
+            try {
+              learnedFeedback = await profileStore.recordFeedback(identity.userId, {
+                reaction: message.reaction || null,
+                previousReaction,
+                content: message.content || ""
+              });
+            } catch {}
+          }
+          return json(res, 200, { message, ...(learnedFeedback ? { learnedFeedback } : {}) });
         }
         if (conversationMatch && req.method === "PATCH") {
           const body = await readJsonBody(req);

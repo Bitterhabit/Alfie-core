@@ -4,6 +4,7 @@ import { applyCloudPrivacyPolicy, isToolAllowedByVisibility } from "../privacy/p
 import { containsUntrustedData } from "./untrustedData.mjs";
 import { resolveWorkingMode } from "./workingModes.mjs";
 import { resolveLearningMode } from "../profile/store.mjs";
+import { extractAutoMemories } from "../memory/autoMemory.mjs";
 
 export const MAX_STEPS = 4;
 export const WALL_CLOCK_TIMEOUT = 30 * 60 * 1000;
@@ -200,18 +201,6 @@ export class AgentLoop {
       }
     }
 
-    let memories = [];
-    const shouldSearchMemories = !cloudAgent || cloudAgent.visibility?.allowPersonalMemories === true;
-    if (shouldSearchMemories && this.memoryStore?.search) {
-      try {
-        memories = await awaitWithAbort(this.memoryStore.search(userId, userText, { limit: 6 }), controller.signal);
-      } catch (error) {
-        if (controller.signal.aborted) throw error;
-        // Memory retrieval is useful context, not a dependency that should take chat offline.
-        memories = [];
-      }
-    }
-
     let workflowProfile = null;
     if (this.profileStore?.get) {
       try {
@@ -219,6 +208,87 @@ export class AgentLoop {
       } catch (error) {
         if (controller.signal.aborted) throw error;
         workflowProfile = null;
+      }
+    }
+
+    const shouldUsePersonalMemories = !cloudAgent || cloudAgent.visibility?.allowPersonalMemories === true;
+    const autoMemories = [];
+    const autoMemoryAllowed = shouldUsePersonalMemories
+      && workflowProfile?.autoMemoryEnabled !== false
+      && typeof this.memoryStore?.create === "function";
+    if (autoMemoryAllowed && userText) {
+      const candidates = extractAutoMemories(userText, { projectName: activeProject?.name || null });
+      for (const candidate of candidates) {
+        try {
+          if (typeof this.memoryStore.findSimilar === "function") {
+            const existing = await awaitWithAbort(
+              this.memoryStore.findSimilar(userId, candidate.text, { limit: 1, threshold: 0.72 }),
+              controller.signal
+            );
+            if (Array.isArray(existing) && existing.length > 0) continue;
+          }
+          const saved = await awaitWithAbort(
+            this.memoryStore.create(userId, {
+              origin: "alfie-created",
+              source: "auto-memory",
+              type: candidate.kind,
+              kind: candidate.kind,
+              trust: "system_verified",
+              title: candidate.title,
+              text: candidate.text,
+              importance: candidate.importance,
+              tags: candidate.tags,
+              metadata: {
+                autoCaptured: true,
+                ...(activeProject?.id ? { projectId: activeProject.id } : {})
+              }
+            }),
+            controller.signal
+          );
+          autoMemories.push({
+            id: saved.id,
+            title: saved.title,
+            text: saved.text,
+            kind: saved.kind
+          });
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          // Duplicates or storage limits never block chat replies.
+        }
+      }
+    }
+
+    let memories = [];
+    if (shouldUsePersonalMemories && this.memoryStore?.search) {
+      try {
+        const keywordMatches = await awaitWithAbort(this.memoryStore.search(userId, userText, { limit: 6 }), controller.signal);
+        const merged = [];
+        const seenIds = new Set();
+        const pushUnique = (item) => {
+          if (!item || typeof item !== "object") return;
+          const key = item.id || `${item.title}:${item.text}`;
+          if (seenIds.has(key)) return;
+          seenIds.add(key);
+          merged.push(item);
+        };
+        for (const item of (Array.isArray(keywordMatches) ? keywordMatches : [])) pushUnique(item);
+        if (typeof this.memoryStore.list === "function") {
+          const corePrefs = await awaitWithAbort(
+            this.memoryStore.list(userId, { kind: "preference", sort: "importance", limit: 4 }),
+            controller.signal
+          );
+          for (const item of (Array.isArray(corePrefs) ? corePrefs : [])) pushUnique(item);
+          const coreFacts = await awaitWithAbort(
+            this.memoryStore.list(userId, { minImportance: 8, sort: "importance", limit: 3 }),
+            controller.signal
+          );
+          for (const item of (Array.isArray(coreFacts) ? coreFacts : [])) pushUnique(item);
+        }
+        memories = merged.slice(0, 8);
+      } catch (error) {
+        if (controller.signal.aborted) throw error;
+        // Memory retrieval is useful context, not a dependency that should take chat offline.
+        memories = [];
       }
     }
 
@@ -338,12 +408,18 @@ export class AgentLoop {
             workingMode: { id: resolvedMode.id, label: resolvedMode.label },
             learningMode: resolvedLearning ? { id: resolvedLearning.id, label: resolvedLearning.label } : null,
             project: activeProject ? { id: activeProject.id, name: activeProject.name, status: activeProject.status || "active" } : null,
-            memoriesInjected: effectiveMemories.slice(0, 6).map((m) => ({
+            memoriesInjected: effectiveMemories.slice(0, 8).map((m) => ({
               id: String(m.id || "").slice(0, 64),
               title: String(m.title || m.text || "Memory").slice(0, 80),
               kind: String(m.kind || m.type || "note").slice(0, 40),
               trust: String(m.trust || m.provenance?.trust || "user_authored").slice(0, 40),
               importance: Math.max(1, Math.min(10, Number(m.importance) || 5))
+            })),
+            autoMemories: autoMemories.map((m) => ({
+              id: String(m.id || "").slice(0, 64),
+              title: String(m.title || m.text || "Memory").slice(0, 120),
+              text: String(m.text || "").slice(0, 320),
+              kind: String(m.kind || "fact").slice(0, 40)
             })),
             toolsShortlisted: lastShortlistedTools,
             toolsUsed: toolsUsed.map((t) => t.toolId),
@@ -362,6 +438,7 @@ export class AgentLoop {
             endpointId: selected.endpoint?.id,
             metrics: { latencyMs, completionTokens, promptTokens, totalTokens },
             provenance,
+            ...(autoMemories.length ? { autoMemories } : {}),
             ...(lastPrivacyReport ? { privacyReport: lastPrivacyReport } : {}),
             ...(toolsUsed.length ? { toolsUsed } : {})
           };

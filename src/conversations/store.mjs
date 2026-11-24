@@ -24,11 +24,21 @@ function cleanProvenance(raw) {
       }
     : null;
   const memoriesInjected = Array.isArray(raw.memoriesInjected)
-    ? raw.memoriesInjected.slice(0, 6).map((m) => ({
+    ? raw.memoriesInjected.slice(0, 8).map((m) => ({
         id: String(m?.id || "").slice(0, 64),
         title: String(m?.title || "Memory").slice(0, 120),
+        kind: String(m?.kind || "note").slice(0, 40),
+        trust: String(m?.trust || "user_authored").slice(0, 40),
         importance: Math.max(1, Math.min(10, Number(m?.importance) || 5))
       }))
+    : [];
+  const autoMemories = Array.isArray(raw.autoMemories)
+    ? raw.autoMemories.slice(0, 4).map((m) => ({
+        id: String(m?.id || "").slice(0, 64),
+        title: String(m?.title || "Memory").slice(0, 120),
+        text: String(m?.text || "").slice(0, 320),
+        kind: String(m?.kind || "fact").slice(0, 40)
+      })).filter((m) => m.id || m.title)
     : [];
   const toolsShortlisted = Array.isArray(raw.toolsShortlisted)
     ? raw.toolsShortlisted.slice(0, 12).map((t) => String(t).slice(0, 80))
@@ -43,6 +53,7 @@ function cleanProvenance(raw) {
     ...(workingMode ? { workingMode } : {}),
     project,
     memoriesInjected,
+    ...(autoMemories.length ? { autoMemories } : {}),
     toolsShortlisted,
     toolsUsed,
     tainted: Boolean(raw.tainted),

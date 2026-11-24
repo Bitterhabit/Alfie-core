@@ -103,3 +103,61 @@ test("app.js implements soul theme profile switching and persists palette select
   assert.match(app, /data-soul-theme-set/);
 });
 
+test("styles.css drives .ambient color shifts from Alfie Soul data-mood via CSS custom properties", async () => {
+  const css = await fs.readFile(new URL("styles.css", publicDir), "utf8");
+
+  // Registered color custom properties for smooth transitions
+  assert.match(css, /@property\s+--ambient-one-color\s*\{\s*syntax:\s*'<color>'/);
+  assert.match(css, /@property\s+--ambient-two-color\s*\{\s*syntax:\s*'<color>'/);
+  assert.match(css, /@property\s+--ambient-accent\s*\{\s*syntax:\s*'<color>'/);
+  assert.match(css, /--ambient-one-color\s+1\.1s/);
+  assert.match(css, /\.ambient-one\{[^}]*background-color:var\(--ambient-one-color\)/);
+  assert.match(css, /\.ambient-two\{[^}]*background-color:var\(--ambient-two-color\)/);
+
+  // Mood selectors cover all soul moods via both root data-soul-mood and :has(.alfie-soul[data-mood=...])
+  for (const mood of ["purple", "blue", "red", "amber", "cyan", "green", "pink"]) {
+    assert.match(css, new RegExp(`:root\\[data-soul-mood="${mood}"\\]`));
+    assert.match(css, new RegExp(`:root:has\\(\\.alfie-soul\\[data-mood="${mood}"\\]\\)`));
+  }
+
+  // Scene cross-fade rules and Settings background selector styles
+  assert.match(css, /:root\[data-bg-theme="pixel-city"\]/);
+  assert.match(css, /:root\[data-bg-theme="river"\]/);
+  assert.match(css, /:root\[data-bg-theme="zen"\]/);
+  assert.match(css, /\.bg-theme-grid/);
+  assert.match(css, /\.bg-theme-choice-btn/);
+});
+
+test("index.html includes Petrio background scene layer and Settings background selector", async () => {
+  const html = await fs.readFile(new URL("index.html", publicDir), "utf8");
+
+  assert.match(html, /id="ambient-scene-layer"/);
+  assert.match(html, /data-scene="nebula"/);
+  assert.match(html, /data-scene="pixel-city"/);
+  assert.match(html, /data-scene="river"/);
+  assert.match(html, /data-scene="zen"/);
+
+  assert.match(html, /id="settings-background-surface"/);
+  assert.match(html, /id="bg-theme-toggle-group"/);
+  assert.match(html, /id="bg-theme-mood-readout"/);
+  assert.match(html, /data-bg-theme-set="nebula"/);
+  assert.match(html, /data-bg-theme-set="pixel-city"/);
+  assert.match(html, /data-bg-theme-set="river"/);
+  assert.match(html, /data-bg-theme-set="zen"/);
+});
+
+test("app.js syncs data-soul-mood to document root and persists background theme selection", async () => {
+  const app = await fs.readFile(new URL("app.js", publicDir), "utf8");
+
+  assert.match(app, /_syncRootMood\(/);
+  assert.match(app, /document\.documentElement\.setAttribute\("data-soul-mood",\s*norm\)/);
+  assert.match(app, /BG_THEME_STORAGE_KEY\s*=\s*"alfie_bg_theme"/);
+  assert.match(app, /BACKGROUND_THEMES/);
+  assert.match(app, /setBackgroundTheme\(/);
+  assert.match(app, /getBackgroundTheme\(/);
+  assert.match(app, /document\.documentElement\.setAttribute\("data-bg-theme",\s*selected\)/);
+  assert.match(app, /localStorage\.setItem\(BG_THEME_STORAGE_KEY,\s*selected\)/);
+  assert.match(app, /data-bg-theme-set/);
+});
+
+

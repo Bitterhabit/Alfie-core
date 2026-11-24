@@ -24,15 +24,21 @@ ensureSecret("ALFIE_CORE_PETRIO_IDENTITY_SECRET");
 
 process.env.ALFIE_CORE_DATA_DIR = process.env.ALFIE_CORE_DATA_DIR || path.join(rootDir, "data", "core");
 process.env.ALFIE_UI_DATA_DIR = process.env.ALFIE_UI_DATA_DIR || path.join(rootDir, "data", "interface");
+const hasPlaceholderPublicOrigin = process.env.ALFIE_UI_PUBLIC_ORIGIN === "https://alfie.example.local";
+if (hasPlaceholderPublicOrigin) {
+  process.env.ALFIE_UI_PUBLIC_ORIGIN = "";
+}
+
 process.env.ALFIE_UI_COOKIE_SECURE = process.env.ALFIE_UI_COOKIE_SECURE || "false";
+if (process.env.APP_URL || process.env.K_SERVICE) {
+  if (!process.env.ALFIE_UI_TRUST_PROXY_HEADERS || hasPlaceholderPublicOrigin || !process.env.ALFIE_UI_PUBLIC_ORIGIN) {
+    process.env.ALFIE_UI_TRUST_PROXY_HEADERS = "true";
+  }
+}
 if (process.env.APP_URL) {
   process.env.ALFIE_UI_ALLOW_IFRAME = process.env.ALFIE_UI_ALLOW_IFRAME || "true";
   process.env.ALFIE_UI_FRAME_ANCESTORS = process.env.ALFIE_UI_FRAME_ANCESTORS || "https://aistudio.google.com https://*.google.com https://*.googleusercontent.com 'self'";
   process.env.ALFIE_UI_COOKIE_SAMESITE = process.env.ALFIE_UI_COOKIE_SAMESITE || "none";
-}
-
-if (process.env.ALFIE_UI_PUBLIC_ORIGIN === "https://alfie.example.local") {
-  process.env.ALFIE_UI_PUBLIC_ORIGIN = "";
 }
 
 const bootstrapUsername = (process.env.ALFIE_UI_BOOTSTRAP_USERNAME || "").trim();
@@ -82,10 +88,12 @@ const coreClient = createAlfieCoreClient({
 // 4. Start Interface server on port 3000 (required by AI Studio)
 const PORT = Number(process.env.ALFIE_PORT || (process.env.PORT === "8080" ? 3000 : (process.env.PORT || 3000)));
 const cookieSecure = process.env.ALFIE_UI_COOKIE_SECURE !== "false";
+const trustProxyHeaders = process.env.ALFIE_UI_TRUST_PROXY_HEADERS === "true";
 const interfaceServer = createAlfieInterfaceServer({
   authStore,
   coreClient,
   cookieSecure,
+  trustProxyHeaders,
   allowLocalHttpOrigin: !process.env.ALFIE_UI_PUBLIC_ORIGIN
 });
 
