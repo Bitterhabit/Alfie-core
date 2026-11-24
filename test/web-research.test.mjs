@@ -77,3 +77,63 @@ test("web.open pins the request to the validated public DNS address and refuses 
   assert.equal(calls, 1);
   assert.deepEqual(pinnedAddresses, [{ address: "93.184.216.34", family: 4 }]);
 });
+
+
+test("web.search prefers the configured private SearXNG JSON API", async () => {
+  const previousUrl = process.env.ALFIE_SEARXNG_URL;
+  const previousKey = process.env.ALFIE_BRAVE_SEARCH_API_KEY;
+  process.env.ALFIE_SEARXNG_URL = "http://searxng:8080";
+  delete process.env.ALFIE_BRAVE_SEARCH_API_KEY;
+  try {
+    let requested;
+    const registry = new ToolRegistry();
+    registerWebResearchTools(registry, { fetchImpl: async (url, options) => {
+      requested = { url: String(url), options };
+      return new Response(JSON.stringify({ results: [
+        { title: "SearX result", url: "https://example.com/result", content: "A useful summary", engines: ["duckduckgo"] }
+      ] }), { status: 200, headers: { "content-type": "application/json" } });
+    }, lookupImpl: publicLookup });
+    const result = await registry.tools.get("web.search").handler({ query: "test topic", count: 2 });
+    assert.equal(result.provider, "SearXNG");
+    assert.equal(result.resultCount, 1);
+    assert.equal(result.results[0].title, "SearX result");
+    assert.match(requested.url, /^http:\/\/searxng:8080\/search\?/);
+    assert.match(requested.url, /format=json/);
+    assert.equal(requested.options.headers.Accept, "application/json");
+  } finally {
+    if (previousUrl === undefined) delete process.env.ALFIE_SEARXNG_URL;
+    else process.env.ALFIE_SEARXNG_URL = previousUrl;
+    if (previousKey === undefined) delete process.env.ALFIE_BRAVE_SEARCH_API_KEY;
+    else process.env.ALFIE_BRAVE_SEARCH_API_KEY = previousKey;
+  }
+});
+
+test("web.search falls back to Brave when SearXNG is unavailable", async () => {
+  const previousUrl = process.env.ALFIE_SEARXNG_URL;
+  const previousKey = process.env.ALFIE_BRAVE_SEARCH_API_KEY;
+  process.env.ALFIE_SEARXNG_URL = "http://searxng:8080";
+  process.env.ALFIE_BRAVE_SEARCH_API_KEY = "fallback-test-key";
+  try {
+    let calls = 0;
+    const registry = new ToolRegistry();
+    registerWebResearchTools(registry, { fetchImpl: async (url) => {
+      calls += 1;
+      if (String(url).startsWith("http://searxng:8080")) {
+        return new Response("unavailable", { status: 503 });
+      }
+      return new Response(JSON.stringify({ web: { results: [
+        { title: "Brave fallback", url: "https://example.com/fallback", description: "Fallback summary" }
+      ] } }), { status: 200, headers: { "content-type": "application/json" } });
+    }, lookupImpl: publicLookup });
+    const result = await registry.tools.get("web.search").handler({ query: "test topic" });
+    assert.equal(calls, 2);
+    assert.equal(result.provider, "Brave Search");
+    assert.match(result.fallbackReason, /SearXNG returned HTTP 503/);
+    assert.equal(result.results[0].title, "Brave fallback");
+  } finally {
+    if (previousUrl === undefined) delete process.env.ALFIE_SEARXNG_URL;
+    else process.env.ALFIE_SEARXNG_URL = previousUrl;
+    if (previousKey === undefined) delete process.env.ALFIE_BRAVE_SEARCH_API_KEY;
+    else process.env.ALFIE_BRAVE_SEARCH_API_KEY = previousKey;
+  }
+});
