@@ -17,7 +17,6 @@ import { AgentLoop } from "./agent/loop.mjs";
 import { PendingActionStore } from "./agent/pendingActionStore.mjs";
 import { PetrioHarnessClient, registerPetrioHarnessTools } from "./integrations/petrioHarness.mjs";
 import { registerMemoryTools } from "./integrations/memoryTools.mjs";
-import { registerWebResearchTools } from "./integrations/webResearch.mjs";
 import { ImageGenerator } from "./integrations/imageGenerator.mjs";
 import { registerImageTools } from "./integrations/imageTools.mjs";
 import { ProjectStore } from "./projects/store.mjs";
@@ -225,7 +224,6 @@ export function createAlfieCoreServer({
   });
   registerPetrioHarnessTools(toolRegistry, petrioHarnessClient);
   registerMemoryTools(toolRegistry, memoryStore);
-  registerWebResearchTools(toolRegistry);
   registerImageTools(toolRegistry, imageGenerator);
   registerModularConnectorTools(toolRegistry, {
     dataDirectory: memoryStore.dataDirectory || projectStore.dataDirectory || process.env.ALFIE_CORE_DATA_DIR || "/data",
