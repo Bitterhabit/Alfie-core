@@ -85,14 +85,12 @@ services:
       SEARXNG_BIND_ADDRESS: 0.0.0.0
       SEARXNG_LIMITER: "false"
     volumes:
-      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - ./searxng/settings.yml:/etc/searxng/settings.yml
       - searxng_cache:/var/cache/searxng
     expose:
       - "8080"
     networks:
       - alfie-core-internal
-    security_opt:
-      - no-new-privileges:true
 
 networks:
   alfie-core-internal:
