@@ -4526,6 +4526,7 @@ function markChatApprovalCardResolved(actionId, { state: nextState = "success", 
   for (const card of cards) {
     card.classList.toggle("chat-approval-completed", nextState === "success");
     card.classList.toggle("chat-approval-rejected", nextState === "rejected");
+    card.classList.toggle("chat-approval-failed", nextState === "failed");
     const heading = card.querySelector("strong");
     if (heading && headingText) heading.textContent = headingText;
     const detail = card.querySelector("p.chat-approval-detail") || card.querySelector("p");
