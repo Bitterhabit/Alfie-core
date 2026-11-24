@@ -230,6 +230,12 @@ test("Frontend app.js and styles.css contain history, approval continuation, and
   assert.doesNotMatch(appJs, /\bopenConversation\s*\(/, "Undefined openConversation() call should not exist");
   assert.match(appJs, /async function continueChatAfterApproval\(/);
   assert.match(appJs, /async function approvePendingActionAndContinue\(/);
+  assert.match(appJs, /api\("\/api\/core\/tools\/approve"/);
+  assert.match(appJs, /res\.conversationId/);
+  assert.match(appJs, /findConversationIdForAction\(actionId\)/);
+  assert.match(appJs, /state\.pendingApprovalConversations\.delete\(actionId\)/);
+  assert.match(appJs, /await continueChatAfterApproval\(/);
+  assert.match(appJs, /catch \(error\) \{[\s\S]*?setState\("error", "red"\)/);
   assert.match(appJs, /function createChatApprovalCard\(/);
   assert.match(appJs, /state\.conversations\s*=\s*\[\];/);
   assert.match(stylesCss, /\.sr-only\s*\{/);
