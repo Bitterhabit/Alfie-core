@@ -89,6 +89,20 @@ For cloud services and self-hosted servers that implement the OpenAI chat-comple
 
 Do not put credentials in endpoint URLs. Use private network addresses for model endpoints and keep the Core service off the public internet.
 
+## Web search and research
+
+Alfie Core includes three registered, read-only web tools:
+
+- `web.search` searches public web results and returns titles, URLs, snippets and source dates.
+- `web.open` retrieves readable public HTTPS pages and extracts bounded text.
+- `web.research` searches a question and reads up to three relevant pages for source-attributed synthesis.
+
+To enable search, provide a Brave Search API key as `ALFIE_BRAVE_SEARCH_API_KEY` in the private Core environment. The first-run installer prompts for this key; it is optional, and leaving it blank leaves web search unconfigured. The key is sent only from the Core server to Brave Search and is never returned to the browser. Do not commit it to Git.
+
+Grant the user the `web:read` tool permission in **Settings → Tools & Access** before Alfie can use web retrieval. The tools are read-only and do not log into websites, submit forms, or make purchases.
+
+Web retrieval is deliberately constrained: page reads require HTTPS on the standard port, reject credentials and local/private destinations, pin the outbound TLS connection to a DNS address validated as public, revalidate every redirect, accept only HTML/plain text, cap response size and time, and mark retrieved material as untrusted. Webpage instructions are evidence, never commands. Network reads are held for approval if the current turn already contains untrusted content.
+
 ## API
 
 All `/v1/*` routes require `Authorization: Bearer <ALFIE_CORE_SERVICE_TOKEN>`. Most user-scoped routes additionally require a one-time identity signature bound to the exact HTTP method and path; `/v1/peer/*` routes instead require a scoped peer token in `X-Alfie-Peer-Token`.
