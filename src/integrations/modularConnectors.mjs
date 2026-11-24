@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { safeUserKey } from "../storage/userJsonStore.mjs";
+import { registerWebResearchTools } from "./webResearch.mjs";
 
 /**
  * Modular Integration Suite (Phase 3)
@@ -89,6 +90,17 @@ export function getModularIntegrationsStatus({ petrioHarnessClient = null } = {}
       scopes: ["homelab:read"],
       tools: ["proxmox.cluster.status"],
       description: "Read-only Proxmox VE cluster node and VM/LXC resource snapshot via scoped API token."
+    }
+    {
+      id: "web_research",
+      name: "Web Search & Research",
+      category: "research",
+      configured: Boolean(process.env.ALFIE_BRAVE_SEARCH_API_KEY),
+      mode: process.env.ALFIE_BRAVE_SEARCH_API_KEY ? "configured" : "awaiting-api-key",
+      requiredEnv: ["ALFIE_BRAVE_SEARCH_API_KEY"],
+      scopes: ["web:read"],
+      tools: ["web.search", "web.open", "web.research"],
+      description: "Search the public web and read HTTPS pages with private-network protections and untrusted-source handling."
     }
   ];
 }
@@ -506,6 +518,8 @@ export function registerModularConnectorTools(
       }
     }
   });
+
+  registerWebResearchTools(registry, { fetchImpl });
 
   // ── 4. Proxmox / Homelab Read Connector ──
   registry.register({
