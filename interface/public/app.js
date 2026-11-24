@@ -70,6 +70,9 @@ async function api(route, options = {}) {
       const error = new Error(payload.error || "The request could not be completed.");
       error.status = response.status;
       error.code = payload.code;
+      error.actionConsumed = payload.actionConsumed === true;
+      error.actionId = payload.actionId || null;
+      error.toolId = payload.toolId || null;
       throw error;
     }
     return payload;
@@ -4802,9 +4805,21 @@ async function approvePendingActionAndContinue(actionId, { toolId = "", summary 
       window.alfieSoul?.pulse("completed", 2000, "idle", "purple");
     }
   } catch (error) {
-    buttons.forEach((btn) => { btn.disabled = false; });
-    window.alfieSoul?.setState("error", "red");
-    toast(error.message);
+    if (error.actionConsumed) {
+      state.pendingApprovalConversations.delete(actionId);
+      markChatApprovalCardResolved(actionId, {
+        state: "failed",
+        headingText: "Approval could not be completed",
+        detailText: "This approval has been consumed to prevent duplicate execution. Check the destination before asking Alfie to propose the action again."
+      });
+      buttons.forEach((btn) => { btn.disabled = true; });
+      window.alfieSoul?.setState("error", "red");
+      toast(error.message || "The approved action failed. Check its destination before retrying.");
+    } else {
+      buttons.forEach((btn) => { btn.disabled = false; });
+      window.alfieSoul?.setState("error", "red");
+      toast(error.message);
+    }
   }
 }
 
