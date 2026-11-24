@@ -37,8 +37,10 @@ test("registers three read-only external web tools under one permission scope", 
   }
 });
 
-test("web.search requires a server-side Brave API key and returns bounded results", async () => {
+test("Brave fallback requires a server-side API key and returns bounded results", async () => {
   const previous = process.env.ALFIE_BRAVE_SEARCH_API_KEY;
+  const previousSearxng = process.env.ALFIE_SEARXNG_URL;
+  delete process.env.ALFIE_SEARXNG_URL;
   process.env.ALFIE_BRAVE_SEARCH_API_KEY = "test-key";
   try {
     let requested;
@@ -58,6 +60,8 @@ test("web.search requires a server-side Brave API key and returns bounded result
   } finally {
     if (previous === undefined) delete process.env.ALFIE_BRAVE_SEARCH_API_KEY;
     else process.env.ALFIE_BRAVE_SEARCH_API_KEY = previous;
+    if (previousSearxng === undefined) delete process.env.ALFIE_SEARXNG_URL;
+    else process.env.ALFIE_SEARXNG_URL = previousSearxng;
   }
 });
 
