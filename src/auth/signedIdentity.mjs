@@ -1,4 +1,6 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import path from "node:path";
+import { IdentityReplayStore } from "./identityReplayStore.mjs";
 
 const USER_ID_PATTERN = /^[a-zA-Z0-9._:@-]{1,128}$/;
 const NONCE_PATTERN = /^[a-zA-Z0-9_-]{16,128}$/;
@@ -21,9 +23,12 @@ export function createSignedIdentityAuth({
   providerHeader = "x-alfie-identity-provider",
   now = () => Date.now(),
   maxSkewSeconds = 60,
-  maxReplayEntries = 100000
+  maxReplayEntries = 100000,
+  replayStore = null,
+  replayDatabasePath = process.env.ALFIE_IDENTITY_REPLAY_DB_PATH ||
+    path.join(process.env.ALFIE_CORE_DATA_DIR || path.resolve(process.cwd(), "data"), "identity-replay.sqlite")
 } = {}) {
-  const usedNonces = new Map();
+  let resolvedReplayStore = replayStore;
   const headerMap = headerNames || {
     userId: headerPrefix + "-user-id", timestamp: headerPrefix + "-timestamp",
     nonce: headerPrefix + "-nonce", method: headerPrefix + "-method",
@@ -76,24 +81,28 @@ export function createSignedIdentityAuth({
     if (!Number.isSafeInteger(issuedAt) || Math.abs(current - issuedAt) > maxSkewSeconds) {
       throw Object.assign(new Error("The signed user identity assertion has expired."), { status: 401 });
     }
-    for (const [key, expiry] of usedNonces) {
-      if (expiry <= current) usedNonces.delete(key);
-    }
-    const replayKey = `${userId}:${nonce}`;
-    if (usedNonces.has(replayKey)) {
-      throw Object.assign(new Error("The signed user identity assertion has already been used."), { status: 401 });
-    }
-    if (usedNonces.size >= Math.max(1, Number(maxReplayEntries) || 100000)) {
-      throw Object.assign(new Error("The identity replay-protection cache is full; retry after older assertions expire."), {
-        status: 503, code: "IDENTITY_REPLAY_CACHE_FULL"
-      });
-    }
+
     const expected = Buffer.from(signatureFor(secret, userId, timestamp, nonce, signedMethod, signedPath), "hex");
     const provided = Buffer.from(signature, "hex");
     if (expected.length !== provided.length || !timingSafeEqual(expected, provided)) {
       throw Object.assign(new Error("The signed user identity assertion is invalid."), { status: 401 });
     }
-    usedNonces.set(replayKey, issuedAt + maxSkewSeconds);
+
+    // SQLite's unique key and BEGIN IMMEDIATE transaction make nonce consumption
+    // atomic across requests, Core instances and process restarts. Fail closed if
+    // durable replay protection cannot be read or written.
+    resolvedReplayStore ||= new IdentityReplayStore({ filePath: replayDatabasePath });
+    const consumed = resolvedReplayStore.consume({
+      providerId,
+      userId,
+      nonce,
+      expiresAt: issuedAt + maxSkewSeconds,
+      now: current,
+      maxEntries: maxReplayEntries
+    });
+    if (!consumed) {
+      throw Object.assign(new Error("The signed user identity assertion has already been used."), { status: 401 });
+    }
     return { userId, providerId };
   }
 
