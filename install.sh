@@ -107,7 +107,9 @@ info "Building and starting Alfie Core and Interface"
 "${COMPOSE[@]}" up -d --build --wait --wait-timeout 180
 
 info "Checking service health"
-curl --fail --silent --show-error http://127.0.0.1:"$HOST_PORT"/health >/dev/null || fail "Interface health endpoint did not respond locally."
+CHECK_HOST="$BIND_ADDRESS"
+[[ "$CHECK_HOST" == "0.0.0.0" ]] && CHECK_HOST="127.0.0.1"
+curl --fail --silent --show-error "http://$CHECK_HOST:$HOST_PORT/health" >/dev/null || fail "Interface health endpoint did not respond locally."
 "${COMPOSE[@]}" ps
 
 printf '\nInstallation complete.\n'
