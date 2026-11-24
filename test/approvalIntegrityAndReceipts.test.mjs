@@ -97,7 +97,15 @@ test("Action receipts accurately distinguish all four execution & verification o
   try {
     // Scenario 1: Execution failed
     const p1 = await dispatcher.dispatch({ userId: "alice", toolId: "ops.fail_exec", args: { target: "vol-1" }, turnId: "t1" });
-    await assert.rejects(() => dispatcher.approve("alice", p1.actionId), /Disk read-only/);
+    await assert.rejects(
+      () => dispatcher.approve("alice", p1.actionId),
+      (error) => /Disk read-only/.test(error.message) && error.actionConsumed === true && error.actionId === p1.actionId
+    );
+    await assert.rejects(
+      () => dispatcher.approve("alice", p1.actionId),
+      (error) => error.status === 404,
+      "A consumed approval must not execute twice after a failure"
+    );
 
     // Scenario 2: Execution succeeded, verification unavailable
     const p2 = await dispatcher.dispatch({ userId: "alice", toolId: "ops.no_verifier", args: { target: "vol-2" }, turnId: "t2" });
