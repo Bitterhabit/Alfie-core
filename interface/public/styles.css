@@ -7406,3 +7406,21 @@ input:focus,textarea:focus,select:focus{
   .login-soul-stage{transform:none!important}
   .login-soul-halo::after{animation:none!important}
 }
+
+
+/* Keep the exact approval requested from chat visible when opening Tools & access. */
+.pending-action-focused {
+  outline: 2px solid var(--accent, currentColor);
+  outline-offset: 3px;
+  scroll-margin-block: 7rem;
+  animation: pending-action-focus 1.8s ease-out 1;
+}
+.pending-action-reason {
+  margin: 0.55rem 0 0;
+  font-size: 0.88em;
+  opacity: 0.82;
+}
+@keyframes pending-action-focus {
+  0%, 100% { outline-color: transparent; }
+  20%, 65% { outline-color: var(--accent, currentColor); }
+}
