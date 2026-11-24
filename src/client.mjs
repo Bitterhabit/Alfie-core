@@ -56,6 +56,7 @@ export function createAlfieCoreClient({
         code: payload.code,
         revision: payload.revision,
         actionConsumed: payload.actionConsumed === true,
+        actionCompleted: payload.actionCompleted === true,
         retryable: payload.retryable !== false,
         actionId: payload.actionId || null,
         toolId: payload.toolId || null
