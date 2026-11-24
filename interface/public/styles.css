@@ -7866,3 +7866,55 @@ input:focus,textarea:focus,select:focus{
   .login-soul-stage{transform:none!important}
   .login-soul-halo::after{animation:none!important}
 }
+
+
+/* V1 polish: shared alignment rhythm across workspace surfaces */
+:root{
+  --layout-gutter:clamp(16px,2.4vw,34px);
+  --control-height:38px;
+  --surface-radius:12px;
+}
+.workspace{padding-inline:var(--layout-gutter)}
+.topbar{gap:18px;min-width:0}
+.topbar-brand-wrap{display:flex;align-items:center;gap:12px;min-width:0}
+.topbar-brand-wrap>div:last-child{min-width:0}
+.topbar-actions{flex-wrap:wrap;justify-content:flex-end;min-width:0}
+.view{min-width:0;width:100%}
+.view :is(input:not([type="checkbox"]):not([type="radio"]),select,textarea){
+  max-width:100%;
+}
+.view :is(input:not([type="checkbox"]):not([type="radio"]),select,button){
+  min-height:var(--control-height);
+}
+.view :is(.panel-header,.section-header,.settings-section-header,.providers-panel-header,.bg-theme-section-head){
+  display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;flex-wrap:wrap;
+}
+.view :is(.panel-header,.section-header,.settings-section-header,.providers-panel-header,.bg-theme-section-head)>:first-child{min-width:0}
+.view :is(.form-row,.form-grid,.settings-grid,.provider-form-grid,.provider-endpoints-grid){
+  align-items:end;min-width:0;
+}
+.view :is(.form-row,.form-grid,.settings-grid,.provider-form-grid,.provider-endpoints-grid)>*{min-width:0}
+.view :is(.panel,.settings-panel,.surface-card,.settings-section,.provider-card){
+  min-width:0;border-radius:var(--surface-radius);
+}
+.view :is(button,input,select,textarea):focus-visible{
+  outline:2px solid color-mix(in srgb,var(--purple) 78%,white);
+  outline-offset:2px;
+}
+.chat-context-bar{align-items:center;gap:12px}
+.chat-context-selectors,.chat-context-actions{align-items:center;min-width:0}
+.chat-context-selectors{row-gap:8px}
+.chat-mode-assign,.chat-project-assign{align-items:center;min-width:0}
+.chat-project-select{max-width:100%}
+@media(max-width:850px){
+  .workspace{padding-inline:18px}
+  .topbar{gap:10px}
+}
+@media(max-width:768px){
+  .workspace{padding-inline:12px}
+  .topbar-actions{gap:5px}
+  .chat-context-bar{align-items:stretch}
+  .chat-context-selectors{align-items:stretch}
+  .chat-mode-assign,.chat-project-assign{max-width:100%}
+  .view :is(.panel-header,.section-header,.settings-section-header,.providers-panel-header,.bg-theme-section-head){align-items:flex-start}
+}
