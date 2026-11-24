@@ -181,9 +181,10 @@ export class ToolDispatcher {
     const untrustedContext = typeof explicitUntrustedContext === "boolean"
       ? explicitUntrustedContext
       : containsUntrustedData(contextMessages);
-    const requiresApproval = tool.risk === "write" || tool.externalAction ||
-      (untrustedContext && tool.risk !== "read") ||
-      (tool.network && untrustedContext);
+    // The registry is the single source of truth for baseline approval policy.
+    // Add the contextual gate for non-read tools handling untrusted content.
+    const requiresApproval = Boolean(tool.requiresApproval) ||
+      (Boolean(tool.approvalWhenUntrusted) && untrustedContext && tool.risk !== "read");
     if (requiresApproval) {
       const preview = tool.approvalPreview
         ? String(await tool.approvalPreview(args, { userId, toolId })).slice(0, 500)
