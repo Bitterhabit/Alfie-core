@@ -28,6 +28,11 @@ case "${1:-}" in
   --upgrade)
     [[ -f .env ]] || fail "No .env found. Run ./install.sh for first-time setup."
     [[ -f compose.local.yaml ]] || fail "compose.local.yaml is missing; refusing to guess local settings."
+    command -v openssl >/dev/null 2>&1 || fail "OpenSSL is required to manage the SearXNG secret."
+    if ! grep -q "^SEARXNG_SECRET=." .env; then
+      echo "SEARXNG_SECRET=$(openssl rand -hex 32)" >> .env
+      chmod 600 .env
+    fi
     command -v docker >/dev/null 2>&1 || fail "Docker is required."
     docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required."
     docker info >/dev/null 2>&1 || fail "Docker is unavailable or this user cannot access the Docker daemon."
@@ -47,7 +52,7 @@ esac
 
 [[ ! -e .env ]] || fail ".env already exists. Refusing to overwrite credentials. Use ./install.sh --upgrade for a non-destructive update."
 [[ ! -e compose.local.yaml ]] || fail "compose.local.yaml already exists. Move it aside or review it before first install."
-[[ -f .env.example && -f compose.yaml ]] || fail "Run this installer from the Alfie Core repository root."
+[[ -f .env.example && -f compose.yaml && -f searxng/settings.yml ]] || fail "Run this installer from the Alfie Core repository root."
 
 command -v docker >/dev/null 2>&1 || fail "Docker is required. Install Docker Engine and the Compose v2 plugin first."
 command -v openssl >/dev/null 2>&1 || fail "OpenSSL is required to generate credentials."
@@ -92,6 +97,8 @@ write_env ALFIE_CORE_STANDALONE_IDENTITY_SECRET "$IDENTITY_SECRET"
 write_env ALFIE_UI_PUBLIC_ORIGIN "$PUBLIC_ORIGIN"
 write_env ALFIE_UI_COOKIE_SECURE "true"
 write_env ALFIE_BRAVE_SEARCH_API_KEY "$BRAVE_KEY"
+write_env ALFIE_SEARXNG_URL "http://searxng:8080"
+write_env SEARXNG_SECRET "$(openssl rand -hex 32)"
 unset SERVICE_TOKEN IDENTITY_SECRET BRAVE_KEY
 
 cat > compose.local.yaml <<EOF
@@ -121,6 +128,7 @@ if [[ "$BIND_ADDRESS" != "127.0.0.1" ]]; then
   printf 'Interface (bound): http://%s:%s\n' "$BIND_ADDRESS" "$HOST_PORT"
 fi
 printf 'Configured public origin: %s\n' "$PUBLIC_ORIGIN"
+printf 'SearXNG is running privately at http://searxng:8080 on the Alfie Docker network.\n'
 printf 'Open the public origin after your trusted HTTPS reverse proxy/tunnel is configured.\n'
 printf 'Create the first administrator using the one-time setup form. No default password was created.\n'
 printf '\nCredentials are stored in .env (mode 600). Do not commit or share that file.\n'
