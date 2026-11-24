@@ -61,13 +61,19 @@ test("web.search requires a server-side Brave API key and returns bounded result
   }
 });
 
-test("web.open revalidates redirect targets and refuses private redirects", async () => {
+test("web.open pins the request to the validated public DNS address and refuses private redirects", async () => {
   let calls = 0;
+  let pinnedAddresses;
   const registry = new ToolRegistry();
-  registerWebResearchTools(registry, { fetchImpl: async () => {
-    calls += 1;
-    return new Response("", { status: 302, headers: { location: "https://127.0.0.1/admin" } });
-  }, lookupImpl: publicLookup });
+  registerWebResearchTools(registry, {
+    requestImpl: async (_url, options) => {
+      calls += 1;
+      pinnedAddresses = options.addresses;
+      return new Response("", { status: 302, headers: { location: "https://127.0.0.1/admin" } });
+    },
+    lookupImpl: publicLookup
+  });
   await assert.rejects(() => registry.tools.get("web.open").handler({ url: "https://example.com" }), /public IP/);
   assert.equal(calls, 1);
+  assert.deepEqual(pinnedAddresses, [{ address: "93.184.216.34", family: 4 }]);
 });
