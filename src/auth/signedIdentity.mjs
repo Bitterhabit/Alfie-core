@@ -26,7 +26,7 @@ export function createSignedIdentityAuth({
   maxReplayEntries = 100000,
   replayStore = null,
   replayDatabasePath = process.env.ALFIE_IDENTITY_REPLAY_DB_PATH ||
-    path.join(process.env.ALFIE_CORE_DATA_DIR || path.resolve(process.cwd(), "data"), "identity-replay.sqlite")
+    path.join(process.env.ALFIE_CORE_DATA_DIR || path.resolve(process.cwd(), "data"), ".identity-replay", "identity-replay.sqlite")
 } = {}) {
   let resolvedReplayStore = replayStore;
   const headerMap = headerNames || {
