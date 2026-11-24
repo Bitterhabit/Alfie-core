@@ -229,6 +229,7 @@ export class ToolDispatcher {
         safeError.name = error.name;
         if (Number.isInteger(error.status)) safeError.status = error.status;
         if (error.code) safeError.code = error.code;
+        if (error.actionCompleted === true) safeError.actionCompleted = true;
       }
       safeError.actionConsumed = true;
       safeError.actionId = actionId;
