@@ -7883,7 +7883,7 @@ input:focus,textarea:focus,select:focus{
 .view :is(input:not([type="checkbox"]):not([type="radio"]),select,textarea){
   max-width:100%;
 }
-.view :is(input:not([type="checkbox"]):not([type="radio"]),select,button){
+.view :is(input:not([type="checkbox"]):not([type="radio"]),select,textarea){
   min-height:var(--control-height);
 }
 .view :is(.panel-header,.section-header,.settings-section-header,.providers-panel-header,.bg-theme-section-head){
@@ -7918,3 +7918,9 @@ input:focus,textarea:focus,select:focus{
   .chat-mode-assign,.chat-project-assign{max-width:100%}
   .view :is(.panel-header,.section-header,.settings-section-header,.providers-panel-header,.bg-theme-section-head){align-items:flex-start}
 }
+
+.chat-approval-card.chat-approval-failed{
+  border-color:color-mix(in srgb,var(--red) 58%,var(--line));
+  background:color-mix(in srgb,var(--red) 7%,var(--surface-card-bg));
+}
+.chat-approval-card.chat-approval-failed>strong{color:var(--red)}
