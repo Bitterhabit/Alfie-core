@@ -241,8 +241,8 @@ For administrators who deliberately manage deployment themselves, the equivalent
 
 ```sh
 cp .env.example .env
-# Set a unique ALFIE_CORE_SERVICE_TOKEN, ALFIE_CORE_STANDALONE_IDENTITY_SECRET,
-# and ALFIE_UI_PUBLIC_ORIGIN before starting the services.
+# Set a unique SEARXNG_SECRET, ALFIE_CORE_SERVICE_TOKEN,
+# ALFIE_CORE_STANDALONE_IDENTITY_SECRET, and ALFIE_UI_PUBLIC_ORIGIN.
 docker compose up -d --build --wait
 docker compose ps
 ```
