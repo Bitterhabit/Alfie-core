@@ -4861,6 +4861,7 @@ async function sendMessage(rawText) {
     if (finalEvent?.status === "awaiting_user_approval" && finalEvent.actionId) {
       const approval = document.createElement("section");
       approval.className = "chat-approval-card";
+      approval.dataset.actionId = finalEvent.actionId;
       const heading = document.createElement("strong");
       heading.textContent = "Your approval is needed";
       const detail = document.createElement("p");
@@ -7028,7 +7029,23 @@ async function loadToolsAndApprovals(focusActionId = null) {
           try {
             window.alfieSoul?.setState("working", "cyan");
             const res = await api("/api/core/tools/approve", { method: "POST", body: JSON.stringify({ actionId: action.id }) });
-            toast(res.receipt?.verified ? "Action approved & verified." : "Action approved.");
+            const chatCard = [...document.querySelectorAll(".chat-approval-card")].find((card) => card.dataset.actionId === action.id);
+            if (chatCard) {
+              chatCard.classList.add("chat-approval-completed");
+              const heading = chatCard.querySelector("strong");
+              if (heading) heading.textContent = res.receipt?.verified ? "Approved and verified" : "Approved and executed";
+              const detail = chatCard.querySelector("p");
+              if (detail) detail.textContent = "The approved tool has finished. Its result is shown below.";
+              chatCard.querySelector("button")?.remove();
+              const output = document.createElement("pre");
+              output.className = "chat-approval-result";
+              let resultText = "";
+              try { resultText = typeof res.result === "string" ? res.result : JSON.stringify(res.result, null, 2); }
+              catch { resultText = "The tool completed, but its result could not be displayed."; }
+              output.textContent = String(resultText || "The tool completed without returning additional details.").slice(0, 6000);
+              chatCard.appendChild(output);
+            }
+            toast(res.receipt?.verified ? "Action approved & verified." : "Action approved and executed.");
             window.alfieSoul?.pulse("completed", 2000, "idle", "purple");
             await loadToolsAndApprovals();
           } catch (error) {
