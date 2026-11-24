@@ -19,6 +19,7 @@ env:
 
 jobs:
   verify:
+    name: Full release verification
     runs-on: ubuntu-latest
     steps:
       - name: Check out
@@ -29,14 +30,48 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
-      - name: Run tests
+      - name: Run complete test suite
         run: npm test
       - name: Check Node.js and browser syntax
         run: |
           npm run build
           node --check interface/public/app.js
+      - name: Validate Docker Compose configuration
+        run: |
+          cp .env.example .env
+          docker compose -f compose.yaml config --quiet
+      - name: Build both release images
+        run: |
+          docker build -t alfie-core:release-check .
+          docker build -t alfie-interface:release-check -f interface/Dockerfile .
+      - name: Smoke-test containers and backup restoration
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'docker compose down -v --remove-orphans' EXIT
+          sed -i "s/^ALFIE_CORE_SERVICE_TOKEN=.*/ALFIE_CORE_SERVICE_TOKEN=$(openssl rand -hex 32)/" .env
+          sed -i "s/^ALFIE_CORE_PETRIO_IDENTITY_SECRET=.*/ALFIE_CORE_PETRIO_IDENTITY_SECRET=$(openssl rand -hex 32)/" .env
+          sed -i "s/^ALFIE_CORE_STANDALONE_IDENTITY_SECRET=.*/ALFIE_CORE_STANDALONE_IDENTITY_SECRET=$(openssl rand -hex 32)/" .env
+          sed -i "s/^ALFIE_UI_BOOTSTRAP_USERNAME=.*/ALFIE_UI_BOOTSTRAP_USERNAME=ci-admin/" .env
+          sed -i "s/^ALFIE_UI_BOOTSTRAP_PASSWORD=.*/ALFIE_UI_BOOTSTRAP_PASSWORD=ci-bootstrap-password-2026/" .env
+          docker compose up -d --wait
+          docker compose exec -T alfie-core node -e "fetch('http://127.0.0.1:8780/ready').then(async r=>{if(!r.ok)throw new Error(await r.text());console.log('Core ready')})"
+          docker compose exec -T alfie-interface node -e "fetch('http://127.0.0.1:8781/health').then(async r=>{if(!r.ok)throw new Error(await r.text());console.log('Interface healthy')})"
+          docker compose exec -T alfie-core node -e "require('node:fs').writeFileSync('/data/backup-smoke-test.txt','core-volume-ok')"
+          mkdir -p "$RUNNER_TEMP/alfie-backups"
+          docker compose stop
+          docker run --rm -v alfie-core-data:/data:ro -v "$RUNNER_TEMP/alfie-backups:/backup" alpine:3.20 sh -c 'tar -czf /backup/core.tar.gz -C /data .'
+          docker run --rm -v alfie-interface-data:/data:ro -v "$RUNNER_TEMP/alfie-backups:/backup" alpine:3.20 sh -c 'tar -czf /backup/interface.tar.gz -C /data .'
+          docker run --rm -v alfie-core-data:/data alpine:3.20 sh -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+          docker run --rm -v alfie-interface-data:/data alpine:3.20 sh -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+          docker run --rm -v alfie-core-data:/data -v "$RUNNER_TEMP/alfie-backups:/backup" alpine:3.20 sh -c 'tar -xzf /backup/core.tar.gz -C /data && chown -R 1000:1000 /data'
+          docker run --rm -v alfie-interface-data:/data -v "$RUNNER_TEMP/alfie-backups:/backup" alpine:3.20 sh -c 'tar -xzf /backup/interface.tar.gz -C /data && chown -R 1000:1000 /data'
+          docker compose up -d --wait
+          docker compose exec -T alfie-core node -e "if(require('node:fs').readFileSync('/data/backup-smoke-test.txt','utf8')!=='core-volume-ok')process.exit(1);console.log('Core volume restore verified')"
+          docker compose exec -T alfie-interface node -e "if(!require('node:fs').existsSync('/data/accounts.json'))process.exit(1);console.log('Interface account restore verified')"
 
   publish:
+    name: Publish ${{ matrix.name }}
     needs: verify
     runs-on: ubuntu-latest
     permissions:

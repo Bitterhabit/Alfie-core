@@ -205,3 +205,15 @@ test("Alfie Soul applies subtle layered transition animations when data-mood cyc
 });
 
 
+
+test("Soul observer ignores controller-originated mood mutations to prevent duplicate transitions", async () => {
+  const app = await fs.readFile(new URL("app.js", publicDir), "utf8");
+  const observerStart = app.indexOf("_observeMoodAttribute(element)");
+  const observerEnd = app.indexOf("\n  _transitionMood(", observerStart);
+  assert.ok(observerStart >= 0 && observerEnd > observerStart, "Expected Soul mood observer implementation");
+  const observer = app.slice(observerStart, observerEnd);
+  assert.match(observer, /const isExternalMoodChange = nextMood !== this\._mood/);
+  assert.match(observer, /if \(isExternalMoodChange && nextMood && SOUL_MOODS\.includes\(nextMood\)\)/);
+  assert.match(observer, /this\._mood = nextMood/);
+  assert.match(observer, /if \(isExternalMoodChange && oldMood && nextMood && oldMood !== nextMood\)/);
+});

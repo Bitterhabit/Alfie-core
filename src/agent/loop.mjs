@@ -229,11 +229,11 @@ export class AgentLoop {
           }
           const saved = await awaitWithAbort(
             this.memoryStore.create(userId, {
-              origin: "alfie-created",
-              source: "auto-memory",
+              origin: "conversation-captured",
+              source: "conversation",
               type: candidate.kind,
               kind: candidate.kind,
-              trust: "system_verified",
+              trust: "user_authored",
               title: candidate.title,
               text: candidate.text,
               importance: candidate.importance,

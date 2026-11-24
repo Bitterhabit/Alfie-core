@@ -85,6 +85,60 @@ test("analyzeResponseStyle and applyReactionDelta learn cross-session taste and 
   assert.ok(summary.promptHints.some((h) => /Avoid long walls of text/i.test(h)));
 });
 
+
+
+test("conversation-captured and user-seeded memories cannot be elevated to system-verified trust", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-memory-trust-"));
+  const store = new MemoryStore({ dataDirectory: dir });
+  const conversation = await store.create("user-memory-trust", {
+    origin: "conversation-captured",
+    source: "conversation",
+    kind: "fact",
+    title: "Conversation assertion",
+    text: "The user says their preferred editor is Vim.",
+    trust: "system_verified"
+  });
+  const seeded = await store.create("user-memory-trust", {
+    origin: "user-seeded",
+    source: "user",
+    kind: "preference",
+    title: "Garden preference",
+    text: "The user prefers a quiet workspace.",
+    trust: "system_verified"
+  });
+  assert.equal(conversation.trust, "user_authored");
+  assert.equal(seeded.trust, "user_authored");
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("MemoryStore migrates legacy automatic chat captures away from system-verified trust", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-auto-memory-migration-"));
+  const userId = "user-auto-mem-migration";
+  const store = new MemoryStore({ dataDirectory: dir });
+  const legacy = await store.create(userId, {
+    origin: "alfie-created",
+    source: "auto-memory",
+    kind: "preference",
+    title: "Concise replies",
+    text: "The user prefers concise replies.",
+    trust: "system_verified",
+    metadata: { autoCaptured: true }
+  });
+
+  const migrated = await store.list(userId);
+  assert.equal(migrated.length, 1);
+  assert.equal(migrated[0].id, legacy.id);
+  assert.equal(migrated[0].origin, "conversation-captured");
+  assert.equal(migrated[0].trust, "user_authored");
+  assert.equal(migrated[0].provenance.capturedBy, "conversation");
+
+  const freshStore = new MemoryStore({ dataDirectory: dir });
+  const persisted = await freshStore.list(userId);
+  assert.equal(persisted[0].origin, "conversation-captured");
+  assert.equal(persisted[0].trust, "user_authored");
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
 test("AgentLoop auto-captures memories, avoids duplicates, recalls core preferences on unrelated turns, and respects toggle", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-auto-mem-"));
   const userId = "user-auto-mem-1";
@@ -128,6 +182,11 @@ test("AgentLoop auto-captures memories, avoids duplicates, recalls core preferen
   assert.equal(turn1.status, "completed");
   assert.equal(turn1.autoMemories?.length, 1);
   assert.equal(turn1.autoMemories[0].kind, "preference");
+  const capturedMemory = (await memoryStore.list(userId))[0];
+  assert.equal(capturedMemory.origin, "conversation-captured");
+  assert.equal(capturedMemory.trust, "user_authored");
+  assert.equal(capturedMemory.provenance.source, "conversation-captured");
+  assert.equal(capturedMemory.provenance.capturedBy, "conversation");
   assert.equal(turn1.provenance.autoMemories.length, 1);
   assert.match(seenSystemPrompts[0], /rollback commands/i);
 
