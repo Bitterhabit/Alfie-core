@@ -85,6 +85,35 @@ test("analyzeResponseStyle and applyReactionDelta learn cross-session taste and 
   assert.ok(summary.promptHints.some((h) => /Avoid long walls of text/i.test(h)));
 });
 
+
+test("MemoryStore migrates legacy automatic chat captures away from system-verified trust", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-auto-memory-migration-"));
+  const userId = "user-auto-mem-migration";
+  const store = new MemoryStore({ dataDirectory: dir });
+  const legacy = await store.create(userId, {
+    origin: "alfie-created",
+    source: "auto-memory",
+    kind: "preference",
+    title: "Concise replies",
+    text: "The user prefers concise replies.",
+    trust: "system_verified",
+    metadata: { autoCaptured: true }
+  });
+
+  const migrated = await store.list(userId);
+  assert.equal(migrated.length, 1);
+  assert.equal(migrated[0].id, legacy.id);
+  assert.equal(migrated[0].origin, "conversation-captured");
+  assert.equal(migrated[0].trust, "user_authored");
+  assert.equal(migrated[0].provenance.capturedBy, "conversation");
+
+  const freshStore = new MemoryStore({ dataDirectory: dir });
+  const persisted = await freshStore.list(userId);
+  assert.equal(persisted[0].origin, "conversation-captured");
+  assert.equal(persisted[0].trust, "user_authored");
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
 test("AgentLoop auto-captures memories, avoids duplicates, recalls core preferences on unrelated turns, and respects toggle", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-auto-mem-"));
   const userId = "user-auto-mem-1";
