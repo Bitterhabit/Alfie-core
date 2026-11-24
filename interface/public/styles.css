@@ -7424,3 +7424,20 @@ input:focus,textarea:focus,select:focus{
   0%, 100% { outline-color: transparent; }
   20%, 65% { outline-color: var(--accent, currentColor); }
 }
+
+
+.chat-approval-completed {
+  border-color: var(--success, var(--accent, currentColor));
+}
+.chat-approval-result {
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0.75rem 0 0;
+  padding: 0.75rem;
+  border-radius: 0.75rem;
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  font: inherit;
+  font-size: 0.88em;
+}
