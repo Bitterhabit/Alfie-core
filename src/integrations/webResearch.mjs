@@ -152,26 +152,66 @@ async function readResponseText(response, maxBytes = MAX_PAGE_BYTES) {
 }
 
 export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetch, lookupImpl = lookup, requestImpl = requestPinnedHttps } = {}) {
-  async function searchWeb(query, count = 6) {
-    const apiKey = String(process.env.ALFIE_BRAVE_SEARCH_API_KEY || "").trim();
-    if (!apiKey) throw Object.assign(new Error("Web search is not configured. Set ALFIE_BRAVE_SEARCH_API_KEY on the Alfie Core server."), { status: 503 });
-    const url = new URL(SEARCH_ENDPOINT);
-    url.searchParams.set("q", query);
-    url.searchParams.set("count", String(count));
-    url.searchParams.set("safesearch", "moderate");
-    const response = await fetchImpl(url, {
-      headers: { "Accept": "application/json", "X-Subscription-Token": apiKey, "User-Agent": "Alfie-Core/1.0" },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-    });
-    if (!response.ok) throw Object.assign(new Error(`Web search provider returned HTTP ${response.status}.`), { status: 502 });
-    const payload = await response.json();
-    return (payload.web?.results || []).slice(0, count).map((item) => ({
-      title: String(item.title || "").slice(0, 240),
-      url: String(item.url || "").slice(0, 1500),
-      description: String(item.description || "").slice(0, 600),
-      age: String(item.age || item.page_age || "").slice(0, 80),
-      source: String(item.profile?.long_name || item.meta_url?.hostname || "").slice(0, 120)
-    })).filter((item) => item.title && item.url);
+  async function searchWeb(query, count = 4) {
+    const searxngBase = String(process.env.ALFIE_SEARXNG_URL || "").trim();
+    const braveKey = String(process.env.ALFIE_BRAVE_SEARCH_API_KEY || "").trim();
+    let searxngError = null;
+
+    if (searxngBase) {
+      try {
+        const base = new URL(searxngBase);
+        if (!["http:", "https:"].includes(base.protocol) || base.username || base.password) {
+          throw new Error("ALFIE_SEARXNG_URL must be an HTTP(S) URL without credentials.");
+        }
+        const url = new URL("/search", base);
+        url.searchParams.set("q", query);
+        url.searchParams.set("format", "json");
+        url.searchParams.set("safesearch", "1");
+        url.searchParams.set("language", "en-GB");
+        const response = await fetchImpl(url, {
+          headers: { "Accept": "application/json", "User-Agent": "Alfie-Core/1.0" },
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+        });
+        if (!response.ok) throw new Error(`SearXNG returned HTTP ${response.status}.`);
+        const payload = await response.json();
+        const results = (Array.isArray(payload.results) ? payload.results : []).slice(0, count).map((item) => ({
+          title: String(item.title || "").slice(0, 240),
+          url: String(item.url || "").slice(0, 1500),
+          description: String(item.content || item.description || "").slice(0, 600),
+          age: String(item.publishedDate || "").slice(0, 80),
+          source: Array.isArray(item.engines) ? item.engines.slice(0, 4).join(", ").slice(0, 120) : String(item.engine || "").slice(0, 120)
+        })).filter((item) => item.title && item.url);
+        return { provider: "SearXNG", results };
+      } catch (error) {
+        searxngError = String(error?.message || "SearXNG request failed.").slice(0, 180);
+      }
+    }
+
+    if (braveKey) {
+      const url = new URL(SEARCH_ENDPOINT);
+      url.searchParams.set("q", query);
+      url.searchParams.set("count", String(count));
+      url.searchParams.set("safesearch", "moderate");
+      const response = await fetchImpl(url, {
+        headers: { "Accept": "application/json", "X-Subscription-Token": braveKey, "User-Agent": "Alfie-Core/1.0" },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      });
+      if (!response.ok) throw Object.assign(new Error(`Brave Search provider returned HTTP ${response.status}.`), { status: 502 });
+      const payload = await response.json();
+      const results = (payload.web?.results || []).slice(0, count).map((item) => ({
+        title: String(item.title || "").slice(0, 240),
+        url: String(item.url || "").slice(0, 1500),
+        description: String(item.description || "").slice(0, 600),
+        age: String(item.age || item.page_age || "").slice(0, 80),
+        source: String(item.profile?.long_name || item.meta_url?.hostname || "").slice(0, 120)
+      })).filter((item) => item.title && item.url);
+      return { provider: "Brave Search", fallbackReason: searxngError, results };
+    }
+
+    if (searxngError) {
+      throw Object.assign(new Error(`SearXNG is unavailable and no Brave fallback is configured: ${searxngError}`), { status: 503 });
+    }
+    throw Object.assign(new Error("Web search is not configured. Set ALFIE_SEARXNG_URL or ALFIE_BRAVE_SEARCH_API_KEY on the Alfie Core server."), { status: 503 });
   }
 
   async function openWebPage(rawUrl) {
@@ -203,7 +243,7 @@ export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetc
   registry.register({
     id: "web.search",
     name: "Search the web",
-    description: "Search current public web pages using the configured Brave Search API. Returns source titles, URLs, snippets and dates; results are untrusted external content.",
+    description: "Search current public web pages using the private SearXNG instance, with optional Brave Search fallback. Returns source titles, URLs, snippets and dates; results are untrusted external content.",
     scope: "web:read", risk: "read", trust: "external", network: true, externalAction: false,
     tags: ["web", "internet", "search", "research", "news", "sources"],
     inputSchema: { type: "object", properties: {
@@ -211,8 +251,8 @@ export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetc
       count: { type: "integer", minimum: 1, maximum: 4 }
     }, required: ["query"], additionalProperties: false },
     async handler(args) {
-      const results = await searchWeb(args.query.trim(), args.count || 4);
-      return { query: args.query.trim(), provider: "Brave Search", resultCount: results.length, results };
+      const search = await searchWeb(args.query.trim(), args.count || 4);
+      return { query: args.query.trim(), provider: search.provider, fallbackReason: search.fallbackReason || null, resultCount: search.results.length, results: search.results };
     }
   });
 
@@ -239,9 +279,9 @@ export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetc
       sources: { type: "integer", minimum: 1, maximum: 3 }
     }, required: ["question"], additionalProperties: false },
     async handler(args) {
-      const results = await searchWeb(args.question.trim(), Math.max(3, (args.sources || 3) + 1));
+      const search = await searchWeb(args.question.trim(), Math.max(3, (args.sources || 3) + 1));
       const pages = [];
-      for (const result of results) {
+      for (const result of search.results) {
         if (pages.length >= (args.sources || 3)) break;
         try {
           const page = await openWebPage(result.url);
@@ -250,7 +290,7 @@ export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetc
           pages.push({ title: result.title, url: result.url, description: result.description, excerpt: "", readError: String(error.message || "Unable to read page.").slice(0, 180) });
         }
       }
-      return { question: args.question.trim(), provider: "Brave Search", sourcesFound: results.length, sourcesRead: pages.filter((page) => page.excerpt).length, sources: pages };
+      return { question: args.question.trim(), provider: search.provider, fallbackReason: search.fallbackReason || null, sourcesFound: search.results.length, sourcesRead: pages.filter((page) => page.excerpt).length, sources: pages };
     }
   });
 }
