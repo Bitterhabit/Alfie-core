@@ -203,6 +203,12 @@ It generates a fresh 256-bit Core service token and standalone identity secret w
 
 The Core port is never published to the host. Only the Interface is published, on the bind address and port selected during installation. Do not bind it to a public interface unless a firewall and trusted reverse proxy are correctly configured. Keep `ALFIE_UI_TRUST_PROXY_HEADERS=false` unless the Interface is reachable exclusively through a proxy that overwrites the relevant headers.
 
+### Web search and research
+
+Alfie includes three read-only web tools: `web.search`, `web.open`, and `web.research`. They use the Brave Search API for discovery and fetch public HTTPS pages for reading. Obtain a Brave Search API key and set `ALFIE_BRAVE_SEARCH_API_KEY` in the Core `.env`; the installer can collect it during first-run setup. Without the key, the tools remain registered but report that the integration is not configured.
+
+Grant the user the `web:read` permission in Alfie's permissions UI before use. Search results and page contents are marked as untrusted external data. The reader only accepts HTTPS on port 443, rejects private/internal destinations and redirects to them, limits page downloads to 1 MB, accepts HTML/plain text only, and applies request timeouts. It does not execute page scripts, log into websites, submit forms, or perform purchases. Web research reads up to three sources and returns their URLs and extracts; Alfie must cite those sources in its answer and distinguish evidence from inference.
+
 ### Upgrade an existing installation
 
 From the repository checkout:
