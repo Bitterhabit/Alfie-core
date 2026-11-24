@@ -474,6 +474,7 @@ class AlfieSoulController {
         // observer echo so the same change is not animated twice.
         const isExternalMoodChange = nextMood !== this._mood;
         if (isExternalMoodChange && nextMood && SOUL_MOODS.includes(nextMood)) {
+          this._mood = nextMood;
           this._syncRootMood(nextMood);
         }
         if (isExternalMoodChange && oldMood && nextMood && oldMood !== nextMood) {
