@@ -32,6 +32,7 @@ export class IdentityReplayStore {
     `);
     try { fs.chmodSync(resolvedPath, 0o600); } catch {}
     this.deleteExpired = this.db.prepare("DELETE FROM identity_replay_nonces WHERE expires_at <= ?");
+    this.findNonce = this.db.prepare("SELECT 1 AS found FROM identity_replay_nonces WHERE provider_id = ? AND user_id = ? AND nonce_hash = ?");
     this.countEntries = this.db.prepare("SELECT COUNT(*) AS count FROM identity_replay_nonces");
     this.insertNonce = this.db.prepare(`
       INSERT OR IGNORE INTO identity_replay_nonces
@@ -51,6 +52,10 @@ export class IdentityReplayStore {
     this.db.exec("BEGIN IMMEDIATE;");
     try {
       this.deleteExpired.run(now);
+      if (this.findNonce.get(providerId, userId, nonceHash)) {
+        this.db.exec("COMMIT;");
+        return false;
+      }
       const count = Number(this.countEntries.get().count);
       if (count >= limit) {
         throw Object.assign(new Error("The identity replay database is full; retry after older assertions expire."), {
