@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { safeUserKey, userDataFile, UserMutex, readUserJsonDocument, writeUserJsonDocument } from "../storage/userJsonStore.mjs";
 
 const MEMORY_ID_PATTERN = /^[a-f0-9-]{36}$/i;
-const ORIGINS = new Set(["user-seeded", "alfie-created", "integration-imported"]);
+const ORIGINS = new Set(["user-seeded", "alfie-created", "conversation-captured", "integration-imported"]);
 const RELATIONSHIP_TYPES = new Set(["similar", "supports", "contradicts", "caused_by", "follow_up", "references", "created"]);
 export const MEMORY_KINDS = Object.freeze(["fact", "decision", "preference", "temporary", "lesson", "note"]);
 export const MEMORY_TRUST_LEVELS = Object.freeze(["user_authored", "system_verified", "external_untrusted"]);
@@ -30,7 +30,7 @@ function deriveTrust(origin, requestedTrust) {
   if (origin === "integration-imported") return "external_untrusted";
   const candidate = cleanString(requestedTrust, 40).toLowerCase();
   if (MEMORY_TRUST_SET.has(candidate)) return candidate;
-  if (origin === "user-seeded") return "user_authored";
+  if (origin === "user-seeded" || origin === "conversation-captured") return "user_authored";
   return "system_verified";
 }
 
@@ -84,7 +84,7 @@ function normaliseMemory(memory, nowIso) {
     provenance: {
       ...(memory.provenance && typeof memory.provenance === "object" ? memory.provenance : {}),
       source: origin,
-      capturedBy: memory.provenance?.capturedBy || (origin === "user-seeded" ? "user" : origin === "alfie-created" ? "alfie" : "integration"),
+      capturedBy: memory.provenance?.capturedBy || (origin === "user-seeded" ? "user" : origin === "alfie-created" ? "alfie" : origin === "conversation-captured" ? "conversation" : "integration"),
       trust
     }
   };
