@@ -33,6 +33,9 @@ case "${1:-}" in
       echo "SEARXNG_SECRET=$(openssl rand -hex 32)" >> .env
       chmod 600 .env
     fi
+    if ! grep -q "^ALFIE_SEARXNG_URL=." .env; then
+      echo "ALFIE_SEARXNG_URL=http://searxng:8080" >> .env
+    fi
     command -v docker >/dev/null 2>&1 || fail "Docker is required."
     docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required."
     docker info >/dev/null 2>&1 || fail "Docker is unavailable or this user cannot access the Docker daemon."
