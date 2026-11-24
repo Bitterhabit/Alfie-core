@@ -191,7 +191,7 @@ Requirements: Linux host, Docker Engine, Docker Compose v2, OpenSSL, curl, and o
 ```sh
 git clone https://github.com/Bitterhabit/Alfie-core.git
 cd Alfie-core
-sudo ./install.sh
+sudo bash ./install.sh
 ```
 
 The installer asks for:
@@ -208,7 +208,7 @@ The Core port is never published to the host. Only the Interface is published, o
 From the repository checkout:
 
 ```sh
-sudo ./install.sh --upgrade
+sudo bash ./install.sh --upgrade
 ```
 
 Upgrade mode fast-forwards from `origin/main`, validates the existing local configuration, rebuilds the services and waits for health checks. It preserves `.env`, `compose.local.yaml` and both persistent Docker volumes. It never runs `down --volumes` or deletes user data. Review release notes before upgrading production data, and maintain independent backups.
