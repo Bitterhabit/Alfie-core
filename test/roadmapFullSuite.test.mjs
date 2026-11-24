@@ -110,7 +110,8 @@ test("Modular Integration Suite enforces strict path confinement for notes, appr
 
     // Status exposes integration metadata without secrets
     const status = getModularIntegrationsStatus();
-    assert.equal(status.length, 4);
+    assert.equal(status.length, 5);
+    assert.ok(status.some((i) => i.id === "web_research" && i.scopes.includes("web:read")));
     assert.ok(status.some((i) => i.id === "local_notes" && i.configured === true));
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
