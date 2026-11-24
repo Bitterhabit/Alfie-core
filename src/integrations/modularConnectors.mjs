@@ -90,7 +90,7 @@ export function getModularIntegrationsStatus({ petrioHarnessClient = null } = {}
       scopes: ["homelab:read"],
       tools: ["proxmox.cluster.status"],
       description: "Read-only Proxmox VE cluster node and VM/LXC resource snapshot via scoped API token."
-    }
+    },
     {
       id: "web_research",
       name: "Web Search & Research",
