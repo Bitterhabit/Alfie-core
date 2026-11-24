@@ -1,10 +1,12 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { request as httpsRequest } from "node:https";
 
 const SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
 const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_PAGE_BYTES = 1_000_000;
 const MAX_TEXT_CHARS = 1_300;
+const VALIDATED_ADDRESSES = Symbol("validatedPublicAddresses");
 
 function fail(message, status = 400) {
   throw Object.assign(new Error(message), { status });
@@ -47,6 +49,7 @@ export async function validatePublicWebUrl(value, { lookupImpl = lookup } = {}) 
     fail("The destination must resolve exclusively to public IP addresses.");
   }
   url.hash = "";
+  Object.defineProperty(url, VALIDATED_ADDRESSES, { value: addresses });
   return url;
 }
 
@@ -72,6 +75,60 @@ export function extractReadableText(html, maxChars = MAX_TEXT_CHARS) {
   return { title, description, text };
 }
 
+function requestPinnedHttps(url, { addresses, headers, signal }) {
+  const selected = addresses?.[0];
+  if (!selected || !isPublicAddress(selected.address)) {
+    return Promise.reject(new Error("A previously validated public destination is required."));
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const failOnce = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const req = httpsRequest(url, {
+      method: "GET",
+      headers,
+      signal,
+      lookup(_hostname, _options, callback) {
+        callback(null, selected.address, selected.family || isIP(selected.address));
+      }
+    }, (res) => {
+      const chunks = [];
+      let total = 0;
+      const declaredLength = Number(res.headers["content-length"] || 0);
+      if (declaredLength > MAX_PAGE_BYTES) {
+        res.destroy();
+        failOnce(Object.assign(new Error("The page is larger than the allowed 1 MB limit."), { status: 413 }));
+        return;
+      }
+      res.on("data", (chunk) => {
+        total += chunk.length;
+        if (total > MAX_PAGE_BYTES) {
+          res.destroy();
+          failOnce(Object.assign(new Error("The page exceeded the allowed 1 MB limit."), { status: 413 }));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      res.on("end", () => {
+        if (settled) return;
+        settled = true;
+        const response = new Response(Buffer.concat(chunks), {
+          status: res.statusCode || 502,
+          headers: res.headers
+        });
+        resolve(response);
+      });
+      res.on("error", failOnce);
+    });
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error("The page request timed out.")));
+    req.on("error", failOnce);
+    req.end();
+  });
+}
+
 async function readResponseText(response, maxBytes = MAX_PAGE_BYTES) {
   const length = Number(response.headers.get("content-length") || 0);
   if (length > maxBytes) fail("The page is larger than the allowed 1 MB limit.", 413);
@@ -92,7 +149,7 @@ async function readResponseText(response, maxBytes = MAX_PAGE_BYTES) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetch, lookupImpl = lookup } = {}) {
+export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetch, lookupImpl = lookup, requestImpl = requestPinnedHttps } = {}) {
   async function searchWeb(query, count = 6) {
     const apiKey = String(process.env.ALFIE_BRAVE_SEARCH_API_KEY || "").trim();
     if (!apiKey) throw Object.assign(new Error("Web search is not configured. Set ALFIE_BRAVE_SEARCH_API_KEY on the Alfie Core server."), { status: 503 });
@@ -118,9 +175,9 @@ export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetc
   async function openWebPage(rawUrl) {
     let target = await validatePublicWebUrl(rawUrl, { lookupImpl });
     for (let redirects = 0; redirects <= 3; redirects += 1) {
-      const response = await fetchImpl(target, {
+      const response = await requestImpl(target, {
+        addresses: target[VALIDATED_ADDRESSES],
         headers: { "Accept": "text/html, text/plain;q=0.9", "User-Agent": "Alfie-Core/1.0 (+https://github.com/Bitterhabit/Alfie-core)" },
-        redirect: "manual",
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
       });
       if ([301, 302, 303, 307, 308].includes(response.status)) {
