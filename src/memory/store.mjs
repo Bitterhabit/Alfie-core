@@ -173,6 +173,24 @@ export class MemoryStore {
     if (store.schemaVersion !== 1 || store.ownerId !== userId || !Array.isArray(store.memories)) {
       throw new Error("Memory store failed its integrity check.");
     }
+    // Reclassify legacy auto-captured chat statements. Older versions stored
+    // these as Alfie-created/system-verified even though the source was the user.
+    let migrated = false;
+    for (const memory of store.memories) {
+      const isLegacyAutoCapture = memory?.origin === "alfie-created"
+        && (memory?.metadata?.autoCaptured === true || memory?.source === "auto-memory");
+      if (!isLegacyAutoCapture) continue;
+      memory.origin = "conversation-captured";
+      memory.trust = "user_authored";
+      memory.provenance = {
+        ...(memory.provenance && typeof memory.provenance === "object" ? memory.provenance : {}),
+        source: "conversation-captured",
+        capturedBy: "conversation",
+        trust: "user_authored"
+      };
+      migrated = true;
+    }
+    if (migrated) await this.save(userId, store);
     return store;
   }
 
