@@ -154,7 +154,7 @@ function securityHeaders(res) {
     res.setHeader("x-frame-options", "SAMEORIGIN");
   }
   res.setHeader("referrer-policy", "same-origin");
-  res.setHeader("permissions-policy", "camera=(), microphone=(self), geolocation=()");
+  res.setHeader("permissions-policy", "camera=(), microphone=(self), geolocation=(self)");
   res.setHeader("cross-origin-opener-policy", "same-origin");
   res.setHeader("cross-origin-resource-policy", "same-origin");
   res.setHeader("x-permitted-cross-domain-policies", "none");
@@ -282,7 +282,7 @@ export function createAlfieInterfaceServer({
     }
   }
 
-  return createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
     securityHeaders(res);
     const url = new URL(req.url || "/", "http://alfie-interface.local");
     const method = req.method || "GET";
@@ -773,6 +773,8 @@ export function createAlfieInterfaceServer({
         }
         if (method === "POST" && url.pathname === "/api/core/chat/stream") {
           requireCsrf(req, session);
+          req.socket?.setNoDelay?.(true);
+          res.socket?.setNoDelay?.(true);
           const streamController = new AbortController();
           const abortUpstream = () => {
             if (!streamController.signal.aborted) streamController.abort(new Error("Browser client disconnected."));
@@ -803,7 +805,10 @@ export function createAlfieInterfaceServer({
               res.write(chunk);
             }
           } catch (error) {
-            if (!streamController.signal.aborted) throw error;
+            if (!streamController.signal.aborted && !res.writableEnded && !res.destroyed) {
+              const message = error?.message || "Connection to Alfie Core was interrupted while generating the response.";
+              res.write(`${JSON.stringify({ type: "error", error: message, code: "STREAM_INTERRUPTED" })}\n`);
+            }
           }
           if (!res.writableEnded) res.end();
           return;
@@ -892,6 +897,15 @@ export function createAlfieInterfaceServer({
           requireCsrf(req, session);
           return json(res, 200, await coreClient.previewCloudAgentPrivacy(userId, cloudPreviewMatch[1], await readJson(req)));
         }
+        const cloudCredentialMatch = /^\/api\/core\/cloud-agents\/(gemini|openai)\/credential$/.exec(url.pathname);
+        if (method === "PUT" && cloudCredentialMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.setCloudAgentCredential(userId, cloudCredentialMatch[1], await readJson(req)));
+        }
+        if (method === "DELETE" && cloudCredentialMatch) {
+          requireCsrf(req, session);
+          return json(res, 200, await coreClient.clearCloudAgentCredential(userId, cloudCredentialMatch[1]));
+        }
         if (method === "POST" && url.pathname === "/api/core/images/generate") {
           requireCsrf(req, session);
           const body = await readJson(req);
@@ -943,6 +957,11 @@ export function createAlfieInterfaceServer({
       return json(res, 404, { error: "Interface asset not found." });
     }
   });
+  server.requestTimeout = 0;
+  server.timeout = 0;
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 70_000;
+  return server;
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {

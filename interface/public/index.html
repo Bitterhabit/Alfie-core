@@ -554,55 +554,112 @@
 
       <section id="view-chat" class="view view-chat">
         <div id="chat-context-bar" class="chat-context-bar">
-          <div class="chat-context-selectors">
-            <div class="chat-project-assign">
-              <label class="chat-project-label" for="chat-project-select">Project</label>
-              <select id="chat-project-select" class="chat-project-select" aria-label="Assign conversation to project">
-                <option value="">No project</option>
-              </select>
-              <button id="chat-project-dossier-btn" class="chat-dossier-btn" type="button" title="View or edit the active project dossier" hidden>Dossier</button>
-            </div>
-            <div class="chat-mode-assign">
-              <label class="chat-project-label" for="working-mode-select">Posture</label>
-              <select id="working-mode-select" class="chat-project-select" aria-label="Select Alfie working mode">
-                <option value="companion">Companion</option>
-                <option value="engineer">Engineer</option>
-                <option value="investigator">Investigator</option>
-                <option value="researcher">Researcher</option>
-                <option value="planner">Planner</option>
-                <option value="thinking-partner">Thinking Partner</option>
-                <option value="creator">Creator</option>
-                <option value="tutor">Tutor</option>
-              </select>
-            </div>
-            <div class="chat-mode-assign">
-              <label class="chat-project-label" for="learning-mode-select">Learn</label>
-              <select id="learning-mode-select" class="chat-project-select" aria-label="Select learning companion posture">
-                <option value="solve">Solve it</option>
-                <option value="explain" selected>Explain as you go</option>
-                <option value="tutor">Tutor me</option>
-                <option value="challenge">Challenge me</option>
-                <option value="attempt_first">Attempt first</option>
-              </select>
-            </div>
-            <div class="chat-mode-assign" id="chat-capsule-wrap" hidden>
-              <label class="chat-project-label" for="chat-capsule-select">Capsule</label>
-              <select id="chat-capsule-select" class="chat-project-select" aria-label="Switch active Context Capsule">
-                <option value="">Manual setup</option>
-              </select>
-            </div>
+          <div class="chat-context-summary-wrap">
+            <span id="chat-context-summary" class="chat-context-summary">Companion · Auto</span>
+            <button id="chat-location-pill-btn" class="chat-location-quick-btn" type="button" title="Set or update your opt-in location for weather, trains, and local news">Set location</button>
           </div>
-          <div class="chat-context-actions">
-            <button id="vram-status-btn" class="vram-readout-btn" type="button" title="Inspect GPU VRAM status in Settings">
-              <span class="vram-readout-label">VRAM</span>
-              <span id="vram-readout-value" class="vram-readout-value">—</span>
+          <div class="chat-context-menu-anchor">
+            <button id="chat-options-menu-btn" class="chat-options-menu-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="chat-options-drawer" aria-label="Open chat options">
+              <svg class="burger-icon" width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
+                <line x1="2.5" y1="4.5" x2="15.5" y2="4.5"/>
+                <line x1="2.5" y1="9" x2="15.5" y2="9"/>
+                <line x1="2.5" y1="13.5" x2="15.5" y2="13.5"/>
+              </svg>
+              <span>Options</span>
             </button>
-            <button id="export-chat-btn" class="export-chat-btn" type="button" aria-label="Export conversation as Markdown" title="Export current conversation history as a Markdown (.md) file" disabled>
-              <span aria-hidden="true">↓</span> Export .md
-            </button>
-            <button id="continue-chat-btn" class="continue-chat-btn" type="button" title="Create a new chat seeded with context from this conversation" disabled>
-              Continue in new chat ↗
-            </button>
+
+            <div id="chat-options-drawer" class="chat-options-drawer" role="region" aria-label="Chat options" hidden>
+              <div class="chat-options-drawer-head">
+                <strong>Chat options</strong>
+                <button id="chat-options-close-btn" class="chat-options-close-btn" type="button" aria-label="Close chat options">×</button>
+              </div>
+
+              <div class="chat-options-section" id="chat-location-section">
+                <span class="chat-options-section-title">Location · Weather, Local News &amp; Trains</span>
+                <label class="chat-options-checkbox">
+                  <input id="chat-location-enabled" type="checkbox">
+                  <span>Use my location for local answers</span>
+                </label>
+                <div class="chat-location-input-row">
+                  <input id="chat-location-input" type="text" maxlength="120" placeholder="Town, city or postcode (e.g. Manchester, UK)" aria-label="Your town, city or postcode">
+                  <button id="chat-location-detect-btn" class="secondary-button chat-location-btn" type="button" title="Use browser GPS location">Use GPS</button>
+                </div>
+                <div class="chat-location-actions-row">
+                  <button id="chat-location-save-btn" class="primary-button chat-location-btn" type="button">Save location</button>
+                  <button id="chat-location-clear-btn" class="secondary-button chat-location-btn" type="button">Clear</button>
+                  <span id="chat-location-status" class="chat-location-status muted" role="status" aria-live="polite">Location off</span>
+                </div>
+              </div>
+
+              <div class="chat-options-section">
+                <span class="chat-options-section-title">Workspace Context</span>
+                <div class="chat-context-selectors">
+                  <div class="chat-project-assign">
+                    <label class="chat-project-label" for="chat-project-select">Project</label>
+                    <div class="chat-options-inline-field">
+                      <select id="chat-project-select" class="chat-project-select" aria-label="Assign conversation to project">
+                        <option value="">No project</option>
+                      </select>
+                      <button id="chat-project-dossier-btn" class="chat-dossier-btn" type="button" title="View or edit the active project dossier" hidden>Dossier</button>
+                    </div>
+                  </div>
+                  <div class="chat-mode-assign">
+                    <label class="chat-project-label" for="working-mode-select">Posture</label>
+                    <select id="working-mode-select" class="chat-project-select" aria-label="Select Alfie working mode">
+                      <option value="companion">Companion</option>
+                      <option value="engineer">Engineer</option>
+                      <option value="investigator">Investigator</option>
+                      <option value="researcher">Researcher</option>
+                      <option value="planner">Planner</option>
+                      <option value="thinking-partner">Thinking Partner</option>
+                      <option value="creator">Creator</option>
+                      <option value="tutor">Tutor</option>
+                    </select>
+                  </div>
+                  <div class="chat-mode-assign">
+                    <label class="chat-project-label" for="learning-mode-select">Learn</label>
+                    <select id="learning-mode-select" class="chat-project-select" aria-label="Select learning companion posture">
+                      <option value="solve">Solve it</option>
+                      <option value="explain" selected>Explain as you go</option>
+                      <option value="tutor">Tutor me</option>
+                      <option value="challenge">Challenge me</option>
+                      <option value="attempt_first">Attempt first</option>
+                    </select>
+                  </div>
+                  <div class="chat-mode-assign" id="chat-capsule-wrap" hidden>
+                    <label class="chat-project-label" for="chat-capsule-select">Capsule</label>
+                    <select id="chat-capsule-select" class="chat-project-select" aria-label="Switch active Context Capsule">
+                      <option value="">Manual setup</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="chat-options-section">
+                <span class="chat-options-section-title">Model &amp; Run Mode</span>
+                <div class="chat-options-grid">
+                  <label class="mode-control agent-control" for="agent-provider">Agent<select id="agent-provider" name="agentProvider" aria-label="Select AI agent"><option value="local">Alfie Local</option><option value="gemini" disabled>Gemini (off)</option><option value="openai" disabled>ChatGPT (off)</option></select></label>
+                  <label class="mode-control" for="model-mode">Mode<select id="model-mode" name="mode"><option value="auto">Auto</option><option value="light">Light</option><option value="standard">Standard</option><option value="work">Work</option></select></label>
+                </div>
+                <label class="background-task-toggle chat-options-checkbox" title="Keep working after you leave this chat"><input id="background-task-toggle" type="checkbox"> <span>Run in background (best for large website builds)</span></label>
+              </div>
+
+              <div class="chat-options-section">
+                <span class="chat-options-section-title">Session &amp; System</span>
+                <div class="chat-context-actions">
+                  <button id="export-chat-btn" class="export-chat-btn" type="button" aria-label="Export conversation as Markdown" title="Export current conversation history as a Markdown (.md) file" disabled>
+                    <span aria-hidden="true">↓</span> Export .md
+                  </button>
+                  <button id="continue-chat-btn" class="continue-chat-btn" type="button" title="Create a new chat seeded with context from this conversation" disabled>
+                    Continue in new chat ↗
+                  </button>
+                  <button id="vram-status-btn" class="vram-readout-btn" type="button" title="Inspect GPU VRAM status in Settings">
+                    <span class="vram-readout-label">VRAM</span>
+                    <span id="vram-readout-value" class="vram-readout-value">—</span>
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         <section id="vram-warning-banner" class="vram-warning-banner" role="alert" aria-live="assertive" hidden>
@@ -726,9 +783,6 @@
               <button type="button" class="composer-cmd-btn" id="image-cmd-btn" title="Insert /image command into composer">🎨 /image</button>
             </div>
             <div class="composer-controls">
-              <label class="mode-control agent-control" for="agent-provider">Agent<select id="agent-provider" name="agentProvider" aria-label="Select AI agent"><option value="local">Alfie Local</option><option value="gemini" disabled>Gemini (off)</option><option value="openai" disabled>ChatGPT (off)</option></select></label>
-              <label class="mode-control" for="model-mode">Mode<select id="model-mode" name="mode"><option value="auto">Auto</option><option value="light">Light</option><option value="standard">Standard</option><option value="work">Work</option></select></label>
-              <label class="background-task-toggle" title="Keep working after you leave this chat"><input id="background-task-toggle" type="checkbox"> <span>Run in background</span></label>
               <div class="composer-action-group">
                 <button id="voice-tts-toggle" class="voice-tts-btn" type="button" aria-label="Toggle spoken replies" aria-pressed="false" title="Read Alfie's replies aloud (push-to-talk voice loop)">
                   <span aria-hidden="true">🔊</span>
@@ -1052,347 +1106,513 @@
       </section>
 
       <section id="view-tools" class="view" hidden>
-        <div class="view-intro"><p class="eyebrow">PERMISSIONS &amp; SAFETY</p><h2>Tools &amp; access</h2><p class="muted">Reads run only within granted capability leases. Changes wait for approval, and deterministic watchers route alerts by attention budget.</p></div>
-        <div class="two-column">
-          <section class="surface">
-            <div class="surface-head-stack">
-              <h3>Registered tools &amp; capability leases</h3>
-              <div class="lease-selector-bar" aria-label="Capability lease defaults when granting access">
-                <label class="lease-select-field">Grant duration
-                  <select id="permission-lease-ttl" aria-label="Capability lease duration">
-                    <option value="">Permanent</option>
-                    <option value="60">1 hour lease</option>
-                    <option value="1440">24 hour lease</option>
-                    <option value="10080">7 day lease</option>
-                  </select>
-                </label>
-                <label class="lease-select-field">Project scope
-                  <select id="permission-lease-project" aria-label="Capability lease project lock">
-                    <option value="">All projects</option>
-                  </select>
-                </label>
+        <div class="view-intro tools-view-intro">
+          <div>
+            <p class="eyebrow">PERMISSIONS, KEYS &amp; AUTOMATION</p>
+            <h2>Tools &amp; access</h2>
+            <p class="muted">Manage tool permissions, encrypted server-side API keys for Gemini &amp; OpenAI, workspace capsules, and monitors from one organized view.</p>
+          </div>
+          <div class="tools-intro-actions">
+            <button id="tools-quick-add-key-btn" class="primary-button" type="button">Add API key</button>
+            <button id="tools-open-providers-settings-btn" class="secondary-button" type="button">Model routing</button>
+          </div>
+        </div>
+
+        <div id="tools-summary-strip" class="tools-summary-strip" aria-label="Tools and access summary">
+          <div class="tools-stat-card">
+            <span class="tools-stat-label">Granted scopes</span>
+            <strong id="tools-stat-granted" class="tools-stat-value">—</strong>
+            <span id="tools-stat-leases" class="tools-stat-sub">Loading leases…</span>
+          </div>
+          <div class="tools-stat-card" id="tools-stat-pending-card">
+            <span class="tools-stat-label">Pending approvals</span>
+            <strong id="tools-stat-pending" class="tools-stat-value">0</strong>
+            <span class="tools-stat-sub">Changes wait for review</span>
+          </div>
+          <div class="tools-stat-card">
+            <span class="tools-stat-label">Server API keys</span>
+            <strong id="tools-stat-keys" class="tools-stat-value">—</strong>
+            <span id="tools-stat-keys-sub" class="tools-stat-sub">Encrypted on server only</span>
+          </div>
+          <div class="tools-stat-card">
+            <span class="tools-stat-label">Monitors &amp; capsules</span>
+            <strong id="tools-stat-monitors" class="tools-stat-value">—</strong>
+            <span class="tools-stat-sub">Deterministic &amp; scoped</span>
+          </div>
+        </div>
+
+        <div id="tools-section-tabs" class="tools-section-tabs" role="tablist" aria-label="Tools and access sections">
+          <button type="button" class="tools-section-tab active" data-tools-tab="permissions" role="tab" aria-selected="true" aria-controls="tools-panel-permissions">
+            <span>Permissions &amp; Approvals</span>
+            <span id="tools-tab-pending-count" class="tools-tab-count" hidden>0</span>
+          </button>
+          <button type="button" class="tools-section-tab" data-tools-tab="keys" role="tab" aria-selected="false" aria-controls="tools-panel-keys">
+            <span>API Keys &amp; Providers</span>
+            <span id="tools-tab-keys-count" class="tools-tab-count" hidden>0</span>
+          </button>
+          <button type="button" class="tools-section-tab" data-tools-tab="monitoring" role="tab" aria-selected="false" aria-controls="tools-panel-monitoring">
+            <span>Capsules &amp; Watchers</span>
+          </button>
+          <button type="button" class="tools-section-tab" data-tools-tab="automation" role="tab" aria-selected="false" aria-controls="tools-panel-automation">
+            <span>Workshop &amp; Integrations</span>
+          </button>
+        </div>
+
+        <div id="tools-panel-permissions" class="tools-tab-panel" data-tools-panel="permissions" role="tabpanel">
+          <div class="two-column tools-permissions-grid">
+            <section class="surface tools-permissions-surface">
+              <div class="surface-head-stack">
+                <div class="tools-surface-title-row">
+                  <div>
+                    <h3>Registered tools &amp; capability leases</h3>
+                    <p class="muted tools-surface-desc">Grant or revoke scoped access. Reads run only inside active leases.</p>
+                  </div>
+                </div>
+                <div class="lease-selector-bar" aria-label="Capability lease defaults when granting access">
+                  <label class="lease-select-field lease-search-field">Filter scopes
+                    <input id="tool-scope-filter" type="search" maxlength="80" placeholder="Search tools or scopes…" aria-label="Filter registered tools and scopes">
+                  </label>
+                  <label class="lease-select-field">Grant duration
+                    <select id="permission-lease-ttl" aria-label="Capability lease duration">
+                      <option value="">Permanent</option>
+                      <option value="60">1 hour lease</option>
+                      <option value="1440">24 hour lease</option>
+                      <option value="10080">7 day lease</option>
+                    </select>
+                  </label>
+                  <label class="lease-select-field">Project scope
+                    <select id="permission-lease-project" aria-label="Capability lease project lock">
+                      <option value="">All projects</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              <div id="tool-list" class="item-list tools-scope-list"></div>
+            </section>
+            <section class="surface tools-approvals-surface">
+              <div class="tools-surface-title-row">
+                <div>
+                  <h3>Pending approvals &amp; dry-run previews</h3>
+                  <p class="muted tools-surface-desc">Write actions pause here with dry-run impact details before running.</p>
+                </div>
+              </div>
+              <div id="pending-list" class="item-list"></div>
+              <div class="receipts-subblock">
+                <h4 class="watchers-subhead">Verified action receipts</h4>
+                <div id="receipt-list" class="item-list"></div>
+              </div>
+            </section>
+          </div>
+
+          <section class="surface activity-surface">
+            <div class="tools-surface-title-row">
+              <div>
+                <h3>Recent activity</h3>
+                <p class="muted tools-surface-desc">Tamper-evident audit entries for permission changes, keys, and actions.</p>
               </div>
             </div>
-            <div id="tool-list" class="item-list"></div>
+            <div id="audit-list" class="item-list"></div>
           </section>
-          <section class="surface">
-            <h3>Pending approvals &amp; dry-run previews</h3>
-            <div id="pending-list" class="item-list"></div>
-            <div class="receipts-subblock">
-              <h4 class="watchers-subhead">Verified action receipts</h4>
-              <div id="receipt-list" class="item-list"></div>
+        </div>
+
+        <div id="tools-panel-keys" class="tools-tab-panel" data-tools-panel="keys" role="tabpanel" hidden>
+          <section class="surface tools-api-keys-surface" id="tools-api-keys-surface" aria-labelledby="tools-api-keys-heading">
+            <div class="watchers-header">
+              <div>
+                <p class="eyebrow">SERVER-SIDE ENCRYPTED VAULT</p>
+                <h3 id="tools-api-keys-heading">API Keys for Gemini &amp; OpenAI</h3>
+                <p class="muted">Select a provider to autofill its official API URL and save your key directly on the Alfie server. Keys are encrypted at rest (AES-256-GCM) and never stored in browser storage or returned to the UI.</p>
+              </div>
+              <button id="cloud-keys-refresh-btn" class="secondary-button" type="button">Refresh status</button>
+            </div>
+
+            <div class="tools-keys-layout">
+              <form id="cloud-key-setup-form" class="tools-key-form" novalidate aria-label="Configure server-side API key">
+                <div class="tools-key-step-row">
+                  <label class="tools-key-field">Provider
+                    <select id="cloud-key-provider-select" name="provider" aria-label="Select API provider">
+                      <option value="">Select Gemini or OpenAI…</option>
+                      <option value="gemini">Google Gemini</option>
+                      <option value="openai">OpenAI (ChatGPT)</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div id="cloud-key-fields" class="tools-key-fields" hidden>
+                  <label class="tools-key-field">API Endpoint URL <span class="muted">(autofilled)</span>
+                    <input id="cloud-key-url-input" name="baseUrl" type="url" maxlength="512" placeholder="https://api.openai.com/v1" required>
+                  </label>
+                  <p id="cloud-key-url-note" class="muted tools-key-help"></p>
+
+                  <label class="tools-key-field">
+                    <span id="cloud-key-credential-label">API key</span>
+                    <input id="cloud-key-credential-input" name="providerCredential" type="password" autocomplete="off" spellcheck="false" maxlength="512" placeholder="Paste your API key" required>
+                  </label>
+
+                  <div class="tools-key-security-note">
+                    <span class="tools-key-lock-dot" aria-hidden="true"></span>
+                    <span>Encrypted on the server (AES-256-GCM) · never stored in browser localStorage, sessionStorage, or cookies.</span>
+                    <a id="cloud-key-get-link" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Get a key ↗</a>
+                  </div>
+
+                  <label class="provider-check-label tools-key-sync-check">
+                    <input id="cloud-key-sync-endpoint" name="syncProviderEndpoint" type="checkbox" checked>
+                    <span>Also add or update this provider in Model Routing so Alfie can use it directly in chat</span>
+                  </label>
+
+                  <p id="cloud-key-form-feedback" class="tools-key-feedback" role="status" aria-live="polite"></p>
+
+                  <div class="tools-key-actions">
+                    <button id="cloud-key-save-btn" class="primary-button" type="submit">Save key to server</button>
+                    <button id="cloud-key-test-btn" class="secondary-button" type="button">Test connection</button>
+                    <button id="cloud-key-remove-btn" class="secondary-button" type="button" hidden>Remove saved key</button>
+                  </div>
+                </div>
+
+                <div id="cloud-key-empty-prompt" class="tools-key-empty-prompt">
+                  <p class="muted">Choose <strong>Google Gemini</strong> or <strong>OpenAI (ChatGPT)</strong> above (or click a provider card on the right) to autofill the official API endpoint URL and enter your key.</p>
+                </div>
+              </form>
+
+              <div class="tools-key-status-col">
+                <h4 class="watchers-subhead">Connected providers</h4>
+                <div id="cloud-key-status-cards" class="tools-key-cards" aria-live="polite">
+                  <p class="muted">Loading server key status…</p>
+                </div>
+                <div class="tools-key-routing-footnote">
+                  <p class="muted">Need custom self-hosted endpoints (Ollama, vLLM, LM Studio) or routing priority tiers?</p>
+                  <button id="tools-keys-manage-endpoints-btn" class="secondary-button" type="button">Open Model Routing in Settings</button>
+                </div>
+              </div>
             </div>
           </section>
         </div>
 
-        <section class="surface capsules-surface" id="capsules-surface" aria-labelledby="capsules-heading">
-          <div class="watchers-header">
-            <div>
-              <p class="eyebrow">SWITCHABLE WORKSPACES</p>
-              <h3 id="capsules-heading">Context Capsules</h3>
-              <p class="muted">Bind a project dossier, working posture, learning style, privacy boundary, and scoped capability lease into one switchable workspace.</p>
-            </div>
-            <button id="refresh-capsules" class="secondary-button" type="button">Refresh</button>
-          </div>
-
-          <form id="capsule-form" class="watcher-form" aria-label="Create context capsule">
-            <div class="capsule-form-row">
-              <label>Capsule name
-                <input id="capsule-name-input" name="name" maxlength="80" placeholder="e.g. Architecture Deep Work" required>
-              </label>
-              <label>Project dossier
-                <select id="capsule-project-select" name="projectId">
-                  <option value="">No project</option>
-                </select>
-              </label>
-              <label>Working posture
-                <select id="capsule-mode-select" name="workingMode">
-                  <option value="companion">Companion</option>
-                  <option value="engineer" selected>Engineer</option>
-                  <option value="investigator">Investigator</option>
-                  <option value="researcher">Researcher</option>
-                  <option value="planner">Planner</option>
-                  <option value="thinking-partner">Thinking Partner</option>
-                  <option value="creator">Creator</option>
-                  <option value="tutor">Tutor</option>
-                </select>
-              </label>
-              <label>Learning posture
-                <select id="capsule-learning-select" name="learningMode">
-                  <option value="solve">Solve it</option>
-                  <option value="explain" selected>Explain as you go</option>
-                  <option value="tutor">Tutor me</option>
-                  <option value="challenge">Challenge me</option>
-                  <option value="attempt_first">Attempt first</option>
-                </select>
-              </label>
-            </div>
-            <div class="capsule-form-row secondary-row">
-              <label>Privacy posture
-                <select id="capsule-privacy-select" name="privacyPosture">
-                  <option value="local_only" selected>Local only</option>
-                  <option value="cloud_isolated">Cloud (private data locked)</option>
-                  <option value="cloud_scoped">Cloud (explicit sections)</option>
-                </select>
-              </label>
-              <label>Lease scope (optional)
-                <select id="capsule-lease-scope" name="leaseScope">
-                  <option value="">No automatic lease</option>
-                  <option value="memory:read">memory:read</option>
-                  <option value="memory:write">memory:write</option>
-                  <option value="image:generate">image:generate</option>
-                </select>
-              </label>
-              <label>Lease TTL
-                <select id="capsule-lease-ttl" name="leaseTtl">
-                  <option value="60" selected>1 hour</option>
-                  <option value="1440">24 hours</option>
-                  <option value="10080">7 days</option>
-                </select>
-              </label>
-              <label>Description (optional)
-                <input id="capsule-desc-input" name="description" maxlength="240" placeholder="Short note on when to use this workspace">
-              </label>
-            </div>
-            <div class="watcher-form-footer">
-              <span class="muted watcher-form-note">Activating a capsule switches project, posture, learning mode, and scoped leases with a full audit entry.</span>
-              <button class="primary-button" type="submit">Save capsule</button>
-            </div>
-          </form>
-
-          <div id="capsule-list" class="item-list"></div>
-        </section>
-
-        <section class="surface watchers-surface" id="watchers-surface" aria-labelledby="watchers-heading">
-          <div class="watchers-header">
-            <div>
-              <p class="eyebrow">PROACTIVE MONITORING</p>
-              <h3 id="watchers-heading">Deterministic Watchers &amp; Attention Budget</h3>
-              <p class="muted">Monitors run deterministically with zero LLM calls and route findings across Quiet log, Digest, Notify, and Urgent tiers.</p>
-            </div>
-            <button id="refresh-watchers" class="secondary-button" type="button">Refresh</button>
-          </div>
-
-          <form id="watcher-form" class="watcher-form" aria-label="Create deterministic watcher">
-            <div class="watcher-form-row">
-              <label class="watcher-field-grow">Watcher name
-                <input id="watcher-name-input" name="name" maxlength="100" placeholder="e.g. Active project stall monitor" required>
-              </label>
-              <label class="watcher-field-compact">Monitor type
-                <select id="watcher-kind-select" name="kind">
-                  <option value="project_stall">Project stall</option>
-                  <option value="vram_threshold">GPU VRAM threshold</option>
-                  <option value="push_metric">Push metric</option>
-                  <option value="http_probe">HTTP endpoint probe</option>
-                </select>
-              </label>
-              <label class="watcher-field-compact">Alert tier
-                <select id="watcher-tier-select" name="tier">
-                  <option value="notify" selected>Notify</option>
-                  <option value="digest">Digest</option>
-                  <option value="urgent">Urgent</option>
-                  <option value="quiet_log">Quiet log</option>
-                </select>
-              </label>
-              <label class="watcher-field-mini">Cooldown (m)
-                <input id="watcher-cooldown-input" name="cooldownMinutes" type="number" min="0" max="1440" value="30">
-              </label>
-            </div>
-            <div id="watcher-config-fields" class="watcher-config-fields"></div>
-            <div class="watcher-quiet-row" aria-label="Quiet hours schedule">
-              <label class="watcher-quiet-toggle">
-                <input id="watcher-quiet-enabled" name="quietEnabled" type="checkbox">
-                <span>Quiet hours (downgrade Notify → Digest)</span>
-              </label>
-              <label class="watcher-quiet-time">Start
-                <input id="watcher-quiet-start" name="quietStart" type="time" value="22:00" disabled>
-              </label>
-              <label class="watcher-quiet-time">End
-                <input id="watcher-quiet-end" name="quietEnd" type="time" value="07:00" disabled>
-              </label>
-              <label class="watcher-quiet-tz">Timezone (IANA)
-                <select id="watcher-quiet-timezone" name="quietTimezone" disabled>
-                  <option value="UTC" selected>UTC</option>
-                  <option value="Europe/London">Europe/London</option>
-                  <option value="Europe/Berlin">Europe/Berlin</option>
-                  <option value="Europe/Paris">Europe/Paris</option>
-                  <option value="America/New_York">America/New_York</option>
-                  <option value="America/Chicago">America/Chicago</option>
-                  <option value="America/Denver">America/Denver</option>
-                  <option value="America/Los_Angeles">America/Los_Angeles</option>
-                  <option value="Asia/Tokyo">Asia/Tokyo</option>
-                  <option value="Asia/Singapore">Asia/Singapore</option>
-                  <option value="Australia/Sydney">Australia/Sydney</option>
-                  <option value="__custom__">Custom IANA…</option>
-                </select>
-              </label>
-              <label id="watcher-quiet-custom-tz-wrap" class="watcher-quiet-custom-tz" hidden>Custom IANA
-                <input id="watcher-quiet-custom-tz" name="quietCustomTimezone" maxlength="64" placeholder="e.g. Pacific/Auckland">
-              </label>
-            </div>
-            <div class="watcher-form-footer">
-              <span class="muted watcher-form-note">External probes validate DNS &amp; pin public IPs only, and stamp readings as external untrusted data.</span>
-              <button class="primary-button" type="submit">Add watcher</button>
-            </div>
-          </form>
-
-          <div class="watchers-grid">
-            <div class="watchers-col">
-              <h4 class="watchers-subhead">Configured watchers</h4>
-              <div id="watcher-list" class="item-list"></div>
-            </div>
-            <div class="watchers-col">
-              <div class="watchers-feed-head">
-                <h4 class="watchers-subhead">Attention feed</h4>
-                <div id="watcher-event-tabs" class="segmented-tabs compact-tabs" role="tablist" aria-label="Filter watcher events by attention tier">
-                  <button type="button" class="segmented-tab active" data-watcher-tier="all" role="tab" aria-selected="true">All</button>
-                  <button type="button" class="segmented-tab" data-watcher-tier="urgent" role="tab" aria-selected="false">Urgent</button>
-                  <button type="button" class="segmented-tab" data-watcher-tier="notify" role="tab" aria-selected="false">Notify</button>
-                  <button type="button" class="segmented-tab" data-watcher-tier="digest" role="tab" aria-selected="false">Digest</button>
-                  <button type="button" class="segmented-tab" data-watcher-tier="quiet_log" role="tab" aria-selected="false">Quiet log</button>
-                </div>
+        <div id="tools-panel-monitoring" class="tools-tab-panel" data-tools-panel="monitoring" role="tabpanel" hidden>
+          <section class="surface capsules-surface" id="capsules-surface" aria-labelledby="capsules-heading">
+            <div class="watchers-header">
+              <div>
+                <p class="eyebrow">SWITCHABLE WORKSPACES</p>
+                <h3 id="capsules-heading">Context Capsules</h3>
+                <p class="muted">Bind a project dossier, working posture, learning style, privacy boundary, and scoped capability lease into one switchable workspace.</p>
               </div>
-              <div id="watcher-event-list" class="item-list"></div>
+              <button id="refresh-capsules" class="secondary-button" type="button">Refresh</button>
             </div>
-          </div>
-        </section>
 
-        <section class="surface workshop-surface" id="workshop-surface" aria-labelledby="workshop-heading">
-          <div class="watchers-header">
-            <div>
-              <p class="eyebrow">BOUNDED SUB-AGENTS &amp; ASYNC JOBS</p>
-              <h3 id="workshop-heading">Multi-Agent Workshop</h3>
-              <p class="muted">Delegate focused specialist jobs under a strict capability ceiling (never wider than your granted leases) with full taint tracking and audit trails.</p>
-            </div>
-            <button id="refresh-workshop" class="secondary-button" type="button">Refresh</button>
-          </div>
-          <form id="workshop-form" class="watcher-form" aria-label="Delegate specialist job">
-            <div class="workshop-form-row">
-              <label>Specialist role
-                <select id="workshop-role-select" name="roleId">
-                  <option value="researcher" selected>Researcher (read-only synthesis)</option>
-                  <option value="auditor">Auditor (security &amp; governance review)</option>
-                  <option value="planner">Planner (milestones &amp; next actions)</option>
-                  <option value="developer">Developer (code &amp; notes drafting)</option>
-                </select>
-              </label>
-              <label>Project scope
-                <select id="workshop-project-select" name="projectId">
-                  <option value="">All projects</option>
-                </select>
-              </label>
-              <label class="workshop-objective-field">Objective
-                <input id="workshop-objective-input" name="objective" maxlength="400" placeholder="e.g. Synthesize blockers and security risks across active projects" required>
-              </label>
-            </div>
-            <div class="watcher-form-footer">
-              <span class="muted watcher-form-note">Sub-agents run deterministically inside your granted scope intersection and log checkpoints to SQLite WAL.</span>
-              <button class="primary-button" type="submit">Delegate job</button>
-            </div>
-          </form>
-          <div id="workshop-job-list" class="item-list" aria-live="polite"></div>
-        </section>
+            <details class="tools-create-drawer">
+              <summary class="tools-create-summary">+ Create context capsule</summary>
+              <form id="capsule-form" class="watcher-form" aria-label="Create context capsule">
+                <div class="capsule-form-row">
+                  <label>Capsule name
+                    <input id="capsule-name-input" name="name" maxlength="80" placeholder="e.g. Architecture Deep Work" required>
+                  </label>
+                  <label>Project dossier
+                    <select id="capsule-project-select" name="projectId">
+                      <option value="">No project</option>
+                    </select>
+                  </label>
+                  <label>Working posture
+                    <select id="capsule-mode-select" name="workingMode">
+                      <option value="companion">Companion</option>
+                      <option value="engineer" selected>Engineer</option>
+                      <option value="investigator">Investigator</option>
+                      <option value="researcher">Researcher</option>
+                      <option value="planner">Planner</option>
+                      <option value="thinking-partner">Thinking Partner</option>
+                      <option value="creator">Creator</option>
+                      <option value="tutor">Tutor</option>
+                    </select>
+                  </label>
+                  <label>Learning posture
+                    <select id="capsule-learning-select" name="learningMode">
+                      <option value="solve">Solve it</option>
+                      <option value="explain" selected>Explain as you go</option>
+                      <option value="tutor">Tutor me</option>
+                      <option value="challenge">Challenge me</option>
+                      <option value="attempt_first">Attempt first</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="capsule-form-row secondary-row">
+                  <label>Privacy posture
+                    <select id="capsule-privacy-select" name="privacyPosture">
+                      <option value="local_only" selected>Local only</option>
+                      <option value="cloud_isolated">Cloud (private data locked)</option>
+                      <option value="cloud_scoped">Cloud (explicit sections)</option>
+                    </select>
+                  </label>
+                  <label>Lease scope (optional)
+                    <select id="capsule-lease-scope" name="leaseScope">
+                      <option value="">No automatic lease</option>
+                      <option value="memory:read">memory:read</option>
+                      <option value="memory:write">memory:write</option>
+                      <option value="image:generate">image:generate</option>
+                    </select>
+                  </label>
+                  <label>Lease TTL
+                    <select id="capsule-lease-ttl" name="leaseTtl">
+                      <option value="60" selected>1 hour</option>
+                      <option value="1440">24 hours</option>
+                      <option value="10080">7 days</option>
+                    </select>
+                  </label>
+                  <label>Description (optional)
+                    <input id="capsule-desc-input" name="description" maxlength="240" placeholder="Short note on when to use this workspace">
+                  </label>
+                </div>
+                <div class="watcher-form-footer">
+                  <span class="muted watcher-form-note">Activating a capsule switches project, posture, learning mode, and scoped leases with a full audit entry.</span>
+                  <button class="primary-button" type="submit">Save capsule</button>
+                </div>
+              </form>
+            </details>
 
-        <section class="surface integrations-surface" id="integrations-surface" aria-labelledby="integrations-heading">
-          <div class="watchers-header">
-            <div>
-              <p class="eyebrow">CONNECTOR ECOSYSTEM</p>
-              <h3 id="integrations-heading">Modular Integration Suite</h3>
-              <p class="muted">Schema-validated, scope-gated connectors for local notes, Petrio drafts, GitHub, and Proxmox homelab metrics — all using dry-run previews and action receipts.</p>
-            </div>
-            <button id="refresh-integrations" class="secondary-button" type="button">Refresh</button>
-          </div>
-          <div id="integrations-grid" class="integrations-grid" aria-live="polite"></div>
-        </section>
+            <div id="capsule-list" class="item-list"></div>
+          </section>
 
-        <section class="surface playbooks-surface" id="playbooks-surface" aria-labelledby="playbooks-heading">
-          <div class="watchers-header">
-            <div>
-              <p class="eyebrow">PHASE 6 · DETERMINISTIC AUTOMATION</p>
-              <h3 id="playbooks-heading">Deterministic Playbooks</h3>
-              <p class="muted">Zero-shell, zero-autonomous-write automation rules that delegate bounded specialists, snapshot reflections, or park ideas with dry-run previews.</p>
+          <section class="surface watchers-surface" id="watchers-surface" aria-labelledby="watchers-heading">
+            <div class="watchers-header">
+              <div>
+                <p class="eyebrow">PROACTIVE MONITORING</p>
+                <h3 id="watchers-heading">Deterministic Watchers &amp; Attention Budget</h3>
+                <p class="muted">Monitors run deterministically with zero LLM calls and route findings across Quiet log, Digest, Notify, and Urgent tiers.</p>
+              </div>
+              <button id="refresh-watchers" class="secondary-button" type="button">Refresh</button>
             </div>
-            <button id="refresh-playbooks" class="secondary-button" type="button">Refresh</button>
-          </div>
-          <form id="playbook-form" class="watcher-form">
-            <div class="playbook-form-row">
-              <label>Playbook name
-                <input name="name" type="text" maxlength="100" placeholder="e.g. Weekly governance sweep" required>
-              </label>
-              <label>Trigger
-                <select name="trigger" aria-label="Playbook trigger">
-                  <option value="manual_run">Manual run</option>
-                  <option value="weekly_cadence">Weekly cadence</option>
-                  <option value="watcher_alert">Watcher alert</option>
-                  <option value="project_stalled">Project stalled</option>
-                </select>
-              </label>
-              <label>Safe action
-                <select id="playbook-action-select" name="action" aria-label="Playbook safe action">
-                  <option value="delegate_workshop">Delegate specialist job</option>
-                  <option value="generate_reflection">Save continuity reflection</option>
-                  <option value="park_idea">Park follow-up idea</option>
-                  <option value="emit_attention_digest">Log calm digest note</option>
-                </select>
-              </label>
-              <label>Specialist / Period
-                <select name="roleId" aria-label="Playbook specialist role">
-                  <option value="auditor">Auditor</option>
-                  <option value="researcher">Researcher</option>
-                  <option value="planner">Planner</option>
-                  <option value="developer">Developer</option>
-                </select>
-              </label>
-            </div>
-            <div class="playbook-form-subrow">
-              <label>Objective / Title
-                <input name="objective" type="text" maxlength="320" placeholder="e.g. Review active leases, watchers, and project blockers">
-              </label>
-              <button class="primary-button" type="submit">Create playbook</button>
-            </div>
-          </form>
-          <p id="playbook-preview-feedback" class="muted virtual-room-feedback" role="status" aria-live="polite"></p>
-          <div id="playbooks-list" class="item-list" aria-live="polite"></div>
-        </section>
 
-        <section class="surface peer-tokens-surface" id="peer-tokens-surface" aria-labelledby="peer-tokens-heading">
-          <div class="watchers-header">
-            <div>
-              <p class="eyebrow">PHASE 6 · PEER CLIENTS &amp; QUICK-CAPTURE CLI</p>
-              <h3 id="peer-tokens-heading">Scoped Peer Client Tokens</h3>
-              <p class="muted">Mint narrow, revocable tokens (stored strictly as SHA-256 hashes) for the standalone CLI (<code>bin/alfie-cli.mjs</code>) or companion capture scripts.</p>
-            </div>
-            <button id="refresh-peer-tokens" class="secondary-button" type="button">Refresh</button>
-          </div>
-          <form id="peer-token-form" class="watcher-form">
-            <div class="peer-token-form-row">
-              <label>Client label
-                <input name="name" type="text" maxlength="80" placeholder="e.g. Laptop CLI or Phone Shortcut" required>
-              </label>
-              <label>Expires in (days)
-                <input name="expiresInDays" type="number" min="1" max="365" value="90" aria-label="Token expiry in days">
-              </label>
-              <button class="primary-button" type="submit">Mint peer token</button>
-            </div>
-            <fieldset class="peer-scopes-fieldset">
-              <legend class="muted">Token scopes (least privilege)</legend>
-              <label class="peer-scope-check"><input type="checkbox" name="scopes" value="capture:write" checked> capture:write</label>
-              <label class="peer-scope-check"><input type="checkbox" name="scopes" value="status:read" checked> status:read</label>
-              <label class="peer-scope-check"><input type="checkbox" name="scopes" value="search:read"> search:read</label>
-              <label class="peer-scope-check"><input type="checkbox" name="scopes" value="projects:read"> projects:read</label>
-            </fieldset>
-          </form>
-          <div id="peer-token-reveal-box" class="recovery-codes-box" hidden>
-            <div class="recovery-codes-head">
-              <strong>Copy this peer token now — it will never be shown again</strong>
-              <button id="peer-token-copy-btn" class="secondary-button" type="button">Copy token</button>
-            </div>
-            <pre id="peer-token-reveal-pre" class="recovery-codes-pre"></pre>
-          </div>
-          <div id="peer-tokens-list" class="item-list" aria-live="polite"></div>
-        </section>
+            <details class="tools-create-drawer">
+              <summary class="tools-create-summary">+ Add deterministic watcher</summary>
+              <form id="watcher-form" class="watcher-form" aria-label="Create deterministic watcher">
+                <div class="watcher-form-row">
+                  <label class="watcher-field-grow">Watcher name
+                    <input id="watcher-name-input" name="name" maxlength="100" placeholder="e.g. Active project stall monitor" required>
+                  </label>
+                  <label class="watcher-field-compact">Monitor type
+                    <select id="watcher-kind-select" name="kind">
+                      <option value="project_stall">Project stall</option>
+                      <option value="vram_threshold">GPU VRAM threshold</option>
+                      <option value="push_metric">Push metric</option>
+                      <option value="http_probe">HTTP endpoint probe</option>
+                    </select>
+                  </label>
+                  <label class="watcher-field-compact">Alert tier
+                    <select id="watcher-tier-select" name="tier">
+                      <option value="notify" selected>Notify</option>
+                      <option value="digest">Digest</option>
+                      <option value="urgent">Urgent</option>
+                      <option value="quiet_log">Quiet log</option>
+                    </select>
+                  </label>
+                  <label class="watcher-field-mini">Cooldown (m)
+                    <input id="watcher-cooldown-input" name="cooldownMinutes" type="number" min="0" max="1440" value="30">
+                  </label>
+                </div>
+                <div id="watcher-config-fields" class="watcher-config-fields"></div>
+                <div class="watcher-quiet-row" aria-label="Quiet hours schedule">
+                  <label class="watcher-quiet-toggle">
+                    <input id="watcher-quiet-enabled" name="quietEnabled" type="checkbox">
+                    <span>Quiet hours (downgrade Notify → Digest)</span>
+                  </label>
+                  <label class="watcher-quiet-time">Start
+                    <input id="watcher-quiet-start" name="quietStart" type="time" value="22:00" disabled>
+                  </label>
+                  <label class="watcher-quiet-time">End
+                    <input id="watcher-quiet-end" name="quietEnd" type="time" value="07:00" disabled>
+                  </label>
+                  <label class="watcher-quiet-tz">Timezone (IANA)
+                    <select id="watcher-quiet-timezone" name="quietTimezone" disabled>
+                      <option value="UTC" selected>UTC</option>
+                      <option value="Europe/London">Europe/London</option>
+                      <option value="Europe/Berlin">Europe/Berlin</option>
+                      <option value="Europe/Paris">Europe/Paris</option>
+                      <option value="America/New_York">America/New_York</option>
+                      <option value="America/Chicago">America/Chicago</option>
+                      <option value="America/Denver">America/Denver</option>
+                      <option value="America/Los_Angeles">America/Los_Angeles</option>
+                      <option value="Asia/Tokyo">Asia/Tokyo</option>
+                      <option value="Asia/Singapore">Asia/Singapore</option>
+                      <option value="Australia/Sydney">Australia/Sydney</option>
+                      <option value="__custom__">Custom IANA…</option>
+                    </select>
+                  </label>
+                  <label id="watcher-quiet-custom-tz-wrap" class="watcher-quiet-custom-tz" hidden>Custom IANA
+                    <input id="watcher-quiet-custom-tz" name="quietCustomTimezone" maxlength="64" placeholder="e.g. Pacific/Auckland">
+                  </label>
+                </div>
+                <div class="watcher-form-footer">
+                  <span class="muted watcher-form-note">External probes validate DNS &amp; pin public IPs only, and stamp readings as external untrusted data.</span>
+                  <button class="primary-button" type="submit">Add watcher</button>
+                </div>
+              </form>
+            </details>
 
-        <section class="surface activity-surface"><h3>Recent activity</h3><div id="audit-list" class="item-list"></div></section>
+            <div class="watchers-grid">
+              <div class="watchers-col">
+                <h4 class="watchers-subhead">Configured watchers</h4>
+                <div id="watcher-list" class="item-list"></div>
+              </div>
+              <div class="watchers-col">
+                <div class="watchers-feed-head">
+                  <h4 class="watchers-subhead">Attention feed</h4>
+                  <div id="watcher-event-tabs" class="segmented-tabs compact-tabs" role="tablist" aria-label="Filter watcher events by attention tier">
+                    <button type="button" class="segmented-tab active" data-watcher-tier="all" role="tab" aria-selected="true">All</button>
+                    <button type="button" class="segmented-tab" data-watcher-tier="urgent" role="tab" aria-selected="false">Urgent</button>
+                    <button type="button" class="segmented-tab" data-watcher-tier="notify" role="tab" aria-selected="false">Notify</button>
+                    <button type="button" class="segmented-tab" data-watcher-tier="digest" role="tab" aria-selected="false">Digest</button>
+                    <button type="button" class="segmented-tab" data-watcher-tier="quiet_log" role="tab" aria-selected="false">Quiet log</button>
+                  </div>
+                </div>
+                <div id="watcher-event-list" class="item-list"></div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div id="tools-panel-automation" class="tools-tab-panel" data-tools-panel="automation" role="tabpanel" hidden>
+          <section class="surface workshop-surface" id="workshop-surface" aria-labelledby="workshop-heading">
+            <div class="watchers-header">
+              <div>
+                <p class="eyebrow">BOUNDED SUB-AGENTS &amp; ASYNC JOBS</p>
+                <h3 id="workshop-heading">Multi-Agent Workshop</h3>
+                <p class="muted">Delegate focused specialist jobs under a strict capability ceiling (never wider than your granted leases) with full taint tracking and audit trails.</p>
+              </div>
+              <button id="refresh-workshop" class="secondary-button" type="button">Refresh</button>
+            </div>
+            <details class="tools-create-drawer">
+              <summary class="tools-create-summary">+ Delegate specialist job</summary>
+              <form id="workshop-form" class="watcher-form" aria-label="Delegate specialist job">
+                <div class="workshop-form-row">
+                  <label>Specialist role
+                    <select id="workshop-role-select" name="roleId">
+                      <option value="researcher" selected>Researcher (read-only synthesis)</option>
+                      <option value="auditor">Auditor (security &amp; governance review)</option>
+                      <option value="planner">Planner (milestones &amp; next actions)</option>
+                      <option value="developer">Developer (code &amp; notes drafting)</option>
+                    </select>
+                  </label>
+                  <label>Project scope
+                    <select id="workshop-project-select" name="projectId">
+                      <option value="">All projects</option>
+                    </select>
+                  </label>
+                  <label class="workshop-objective-field">Objective
+                    <input id="workshop-objective-input" name="objective" maxlength="400" placeholder="e.g. Synthesize blockers and security risks across active projects" required>
+                  </label>
+                </div>
+                <div class="watcher-form-footer">
+                  <span class="muted watcher-form-note">Sub-agents run deterministically inside your granted scope intersection and log checkpoints to SQLite WAL.</span>
+                  <button class="primary-button" type="submit">Delegate job</button>
+                </div>
+              </form>
+            </details>
+            <div id="workshop-job-list" class="item-list" aria-live="polite"></div>
+          </section>
+
+          <section class="surface integrations-surface" id="integrations-surface" aria-labelledby="integrations-heading">
+            <div class="watchers-header">
+              <div>
+                <p class="eyebrow">CONNECTOR ECOSYSTEM</p>
+                <h3 id="integrations-heading">Modular Integration Suite</h3>
+                <p class="muted">Schema-validated, scope-gated connectors for local notes, Petrio drafts, GitHub, and Proxmox homelab metrics — all using dry-run previews and action receipts.</p>
+              </div>
+              <button id="refresh-integrations" class="secondary-button" type="button">Refresh</button>
+            </div>
+            <div id="integrations-grid" class="integrations-grid" aria-live="polite"></div>
+          </section>
+
+          <section class="surface playbooks-surface" id="playbooks-surface" aria-labelledby="playbooks-heading">
+            <div class="watchers-header">
+              <div>
+                <p class="eyebrow">DETERMINISTIC AUTOMATION</p>
+                <h3 id="playbooks-heading">Deterministic Playbooks</h3>
+                <p class="muted">Zero-shell, zero-autonomous-write automation rules that delegate bounded specialists, snapshot reflections, or park ideas with dry-run previews.</p>
+              </div>
+              <button id="refresh-playbooks" class="secondary-button" type="button">Refresh</button>
+            </div>
+            <details class="tools-create-drawer">
+              <summary class="tools-create-summary">+ Create playbook</summary>
+              <form id="playbook-form" class="watcher-form">
+                <div class="playbook-form-row">
+                  <label>Playbook name
+                    <input name="name" type="text" maxlength="100" placeholder="e.g. Weekly governance sweep" required>
+                  </label>
+                  <label>Trigger
+                    <select name="trigger" aria-label="Playbook trigger">
+                      <option value="manual_run">Manual run</option>
+                      <option value="weekly_cadence">Weekly cadence</option>
+                      <option value="watcher_alert">Watcher alert</option>
+                      <option value="project_stalled">Project stalled</option>
+                    </select>
+                  </label>
+                  <label>Safe action
+                    <select id="playbook-action-select" name="action" aria-label="Playbook safe action">
+                      <option value="delegate_workshop">Delegate specialist job</option>
+                      <option value="generate_reflection">Save continuity reflection</option>
+                      <option value="park_idea">Park follow-up idea</option>
+                      <option value="emit_attention_digest">Log calm digest note</option>
+                    </select>
+                  </label>
+                  <label>Specialist / Period
+                    <select name="roleId" aria-label="Playbook specialist role">
+                      <option value="auditor">Auditor</option>
+                      <option value="researcher">Researcher</option>
+                      <option value="planner">Planner</option>
+                      <option value="developer">Developer</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="playbook-form-subrow">
+                  <label>Objective / Title
+                    <input name="objective" type="text" maxlength="320" placeholder="e.g. Review active leases, watchers, and project blockers">
+                  </label>
+                  <button class="primary-button" type="submit">Create playbook</button>
+                </div>
+              </form>
+            </details>
+            <p id="playbook-preview-feedback" class="muted virtual-room-feedback" role="status" aria-live="polite"></p>
+            <div id="playbooks-list" class="item-list" aria-live="polite"></div>
+          </section>
+
+          <section class="surface peer-tokens-surface" id="peer-tokens-surface" aria-labelledby="peer-tokens-heading">
+            <div class="watchers-header">
+              <div>
+                <p class="eyebrow">PEER CLIENTS &amp; QUICK-CAPTURE CLI</p>
+                <h3 id="peer-tokens-heading">Scoped Peer Client Tokens</h3>
+                <p class="muted">Mint narrow, revocable tokens (stored strictly as SHA-256 hashes) for the standalone CLI (<code>bin/alfie-cli.mjs</code>) or companion capture scripts.</p>
+              </div>
+              <button id="refresh-peer-tokens" class="secondary-button" type="button">Refresh</button>
+            </div>
+            <details class="tools-create-drawer">
+              <summary class="tools-create-summary">+ Mint peer token</summary>
+              <form id="peer-token-form" class="watcher-form">
+                <div class="peer-token-form-row">
+                  <label>Client label
+                    <input name="name" type="text" maxlength="80" placeholder="e.g. Laptop CLI or Phone Shortcut" required>
+                  </label>
+                  <label>Expires in (days)
+                    <input name="expiresInDays" type="number" min="1" max="365" value="90" aria-label="Token expiry in days">
+                  </label>
+                  <button class="primary-button" type="submit">Mint peer token</button>
+                </div>
+                <fieldset class="peer-scopes-fieldset">
+                  <legend class="muted">Token scopes (least privilege)</legend>
+                  <label class="peer-scope-check"><input type="checkbox" name="scopes" value="capture:write" checked> capture:write</label>
+                  <label class="peer-scope-check"><input type="checkbox" name="scopes" value="status:read" checked> status:read</label>
+                  <label class="peer-scope-check"><input type="checkbox" name="scopes" value="search:read"> search:read</label>
+                  <label class="peer-scope-check"><input type="checkbox" name="scopes" value="projects:read"> projects:read</label>
+                </fieldset>
+              </form>
+            </details>
+            <div id="peer-token-reveal-box" class="recovery-codes-box" hidden>
+              <div class="recovery-codes-head">
+                <strong>Copy this peer token now — it will never be shown again</strong>
+                <button id="peer-token-copy-btn" class="secondary-button" type="button">Copy token</button>
+              </div>
+              <pre id="peer-token-reveal-pre" class="recovery-codes-pre"></pre>
+            </div>
+            <div id="peer-tokens-list" class="item-list" aria-live="polite"></div>
+          </section>
+        </div>
       </section>
 
       <section id="view-settings" class="view" hidden>
@@ -1444,16 +1664,18 @@
                   </label>
                   <label>Provider type
                     <select id="provider-field-type" name="provider">
-                      <option value="ollama">Ollama (/api/tags, /api/chat)</option>
-                      <option value="openai-compatible">OpenAI-compatible</option>
+                      <option value="ollama">Ollama (Local /api/tags, /api/chat)</option>
                       <option value="google-gemini">Google Gemini (API key)</option>
+                      <option value="openai">OpenAI / ChatGPT (API key)</option>
+                      <option value="openai-compatible">Custom OpenAI-compatible</option>
                     </select>
                   </label>
                   <label class="provider-field-wide">Endpoint URL
                     <input id="provider-field-url" name="baseUrl" type="url" maxlength="1024" placeholder="http://127.0.0.1:11434" required>
                   </label>
-                  <p id="provider-url-help" class="muted provider-field-wide">For Gemini, choose Google Gemini above and Alfie will fill in the API URL. For other services, enter the provider's OpenAI-compatible API root.</p>
-                  <a id="provider-gemini-key-link" class="muted provider-field-wide" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" hidden>Get a Gemini API key from Google AI Studio</a>
+                  <p id="provider-url-help" class="muted provider-field-wide">Choose Google Gemini or OpenAI above to autofill the official API URL and save your key encrypted on the server. For other services, enter the OpenAI-compatible API root.</p>
+                  <a id="provider-gemini-key-link" class="muted provider-field-wide" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" hidden>Get a Gemini API key from Google AI Studio ↗</a>
+                  <a id="provider-openai-key-link" class="muted provider-field-wide" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" hidden>Get an OpenAI API key from OpenAI Platform ↗</a>
                   <label>Routing tier
                     <select id="provider-field-mode" name="mode">
                       <option value="light">Light (Fast)</option>
@@ -1822,6 +2044,16 @@
                   <input id="wf-auto-memory" name="autoMemoryEnabled" type="checkbox" checked>
                   <span>Auto-remember durable facts, preferences &amp; decisions from chat</span>
                 </label>
+                <label class="workflow-toggle-label">
+                  <input id="wf-location-enabled" name="locationEnabled" type="checkbox">
+                  <span>Use saved location for local weather, local news &amp; train times (opt-in)</span>
+                </label>
+              </div>
+              <div class="workflow-location-row">
+                <label class="workflow-notes-field">Saved location (optional)
+                  <input id="wf-location-label" name="locationLabel" maxlength="120" placeholder="e.g. Manchester, UK">
+                </label>
+                <button id="wf-location-detect-btn" class="secondary-button" type="button">Use my location</button>
               </div>
               <div class="watcher-form-footer">
                 <span class="muted watcher-form-note">Injected transparently into prompt assembly and visible in Turn Provenance.</span>

@@ -26,13 +26,60 @@ function hasExactKeys(value, expected) {
   return keys.length === expected.length && expected.every((key) => keys.includes(key));
 }
 
-function parseModelAction(content) {
-  const raw = String(content || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+function unescapeRecoveredJsonString(raw) {
+  return String(raw || "")
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\r")
+    .replace(/\\t/g, "\t")
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, "\\");
+}
+
+function tryRecoverFinalText(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  // Never silently recover malformed tool_call attempts; those must self-correct strictly.
+  if (/"type"\s*:\s*"tool_call"/i.test(trimmed)) return null;
+
+  // Case 1: Model started a valid {"type":"final","message":"..."} envelope, but a large
+  // HTML/CSS/JS response included unescaped quotes/newlines or hit max_tokens before closing.
+  const finalEnvelopeMatch = /^\{\s*"type"\s*:\s*"final"\s*,\s*"message"\s*:\s*"([\s\S]+)$/.exec(trimmed);
+  if (finalEnvelopeMatch) {
+    let body = finalEnvelopeMatch[1];
+    body = body.replace(/"\s*\}\s*$/, "");
+    const recovered = unescapeRecoveredJsonString(body).trim();
+    if (recovered.length >= 20) {
+      return { type: "final", message: recovered };
+    }
+    return null;
+  }
+
+  // Case 2: Model replied directly with substantive Markdown/HTML/code instead of JSON wrapper
+  // (very common when asked to build a full website). Only recover when it does NOT start with "{",
+  // so broken JSON fragments like "{not json" still trigger structured self-correction.
+  if (!trimmed.startsWith("{")) {
+    const looksLikeSubstantiveCodeOrProse =
+      trimmed.includes("```") ||
+      /<!doctype\s+html|<html[\s>]/i.test(trimmed) ||
+      trimmed.length >= 80;
+    if (looksLikeSubstantiveCodeOrProse) {
+      return { type: "final", message: trimmed };
+    }
+  }
+  return null;
+}
+
+export function parseModelAction(content) {
+  const original = String(content || "").trim();
+  const raw = original.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   try {
     const value = JSON.parse(raw);
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected one JSON object.");
     return value;
   } catch (error) {
+    const recovered = tryRecoverFinalText(original) || tryRecoverFinalText(raw);
+    if (recovered) return recovered;
     throw Object.assign(new Error(`Malformed JSON from model: ${error.message}. Return exactly one valid JSON object.`), { code: "MODEL_JSON_INVALID" });
   }
 }
@@ -42,6 +89,18 @@ export function formatToolAction(toolId, toolDef) {
   const name = String(toolDef?.name || "").toLowerCase();
   const desc = String(toolDef?.description || "").toLowerCase();
 
+  if (id === "web.weather" || id.includes("weather") || name.includes("weather")) {
+    return "Checking local weather…";
+  }
+  if (id === "web.search") {
+    return "Searching the web…";
+  }
+  if (id === "web.research") {
+    return "Researching web sources…";
+  }
+  if (id === "web.open") {
+    return "Reading web page…";
+  }
   if (id.includes("calendar") || name.includes("calendar") || desc.includes("calendar")) {
     return "Browsing calendar…";
   }
@@ -353,13 +412,18 @@ export class AgentLoop {
 
         let selected;
         if (cloudAgent) {
+          const resolvedCredential = typeof this.cloudAgentStore?.resolveCredential === "function"
+            ? await this.cloudAgentStore.resolveCredential(userId, cloudAgent.provider)
+            : null;
           selected = await awaitWithAbort(
             this.cloudAdapters.complete({
               provider: cloudAgent.provider,
               model: cloudAgent.model,
               messages: context.messages,
               hasTools: context.tools.length > 0,
-              signal: controller.signal
+              signal: controller.signal,
+              apiKey: resolvedCredential?.apiKey || "",
+              baseUrl: resolvedCredential?.baseUrl || ""
             }),
             controller.signal
           );
@@ -435,7 +499,7 @@ export class AgentLoop {
           };
           return {
             status: "completed",
-            message: action.message.slice(0, 12000),
+            message: action.message.slice(0, 36000),
             steps,
             model: selected.endpoint?.model,
             provider: selected.endpoint?.provider,

@@ -4,10 +4,50 @@ import { request as httpsRequest } from "node:https";
 import { isPrivateOrReservedIpv4, isPrivateOrReservedIpv6 } from "../watchers/engine.mjs";
 
 const SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
-const REQUEST_TIMEOUT_MS = 12_000;
+const OPEN_METEO_GEOCODE_ENDPOINT = "https://geocoding-api.open-meteo.com/v1/search";
+const OPEN_METEO_FORECAST_ENDPOINT = "https://api.open-meteo.com/v1/forecast";
+const REQUEST_TIMEOUT_MS = 8_000;
+const SEARXNG_FALLBACK_TIMEOUT_MS = 5_000;
+const PAGE_READ_TIMEOUT_MS = 7_000;
 const MAX_PAGE_BYTES = 1_000_000;
 const MAX_TEXT_CHARS = 1_300;
 const VALIDATED_ADDRESSES = Symbol("validatedPublicAddresses");
+
+const WMO_WEATHER_LABELS = Object.freeze({
+  0: "Clear sky",
+  1: "Mainly clear",
+  2: "Partly cloudy",
+  3: "Overcast",
+  45: "Fog",
+  48: "Depositing rime fog",
+  51: "Light drizzle",
+  53: "Moderate drizzle",
+  55: "Dense drizzle",
+  56: "Light freezing drizzle",
+  57: "Dense freezing drizzle",
+  61: "Light rain",
+  63: "Moderate rain",
+  65: "Heavy rain",
+  66: "Light freezing rain",
+  67: "Heavy freezing rain",
+  71: "Light snow",
+  73: "Moderate snow",
+  75: "Heavy snow",
+  77: "Snow grains",
+  80: "Light rain showers",
+  81: "Moderate rain showers",
+  82: "Heavy rain showers",
+  85: "Light snow showers",
+  86: "Heavy snow showers",
+  95: "Thunderstorm",
+  96: "Thunderstorm with slight hail",
+  99: "Thunderstorm with heavy hail"
+});
+
+export function describeWeatherCode(code) {
+  const numeric = Number(code);
+  return WMO_WEATHER_LABELS[numeric] || "Mixed conditions";
+}
 const BLOCKED_METADATA_HOSTS = new Set([
   "169.254.169.254",
   "100.100.100.200",
@@ -169,10 +209,11 @@ export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetc
         url.searchParams.set("format", "json");
         url.searchParams.set("safesearch", "1");
         url.searchParams.set("language", "en-GB");
+        const searxngTimeout = braveKey ? SEARXNG_FALLBACK_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
         const response = await fetchImpl(url, {
           headers: { "Accept": "application/json", "User-Agent": "Alfie-Core/1.0" },
           redirect: "error",
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+          signal: AbortSignal.timeout(searxngTimeout)
         });
         if (!response.ok) throw new Error(`SearXNG returned HTTP ${response.status}.`);
         const payload = await response.json();
@@ -223,7 +264,7 @@ export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetc
       const response = await requestImpl(target, {
         addresses: target[VALIDATED_ADDRESSES],
         headers: { "Accept": "text/html, text/plain;q=0.9", "User-Agent": "Alfie-Core/1.0 (+https://github.com/Bitterhabit/Alfie-core)" },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+        signal: AbortSignal.timeout(PAGE_READ_TIMEOUT_MS)
       });
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         const location = response.headers.get("location");
@@ -307,6 +348,107 @@ export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetc
         };
       });
       return { question: args.question.trim(), provider: search.provider, fallbackReason: search.fallbackReason || null, sourcesFound: search.results.length, sourcesRead: pages.filter((page) => page.excerpt).length, sources: pages };
+    }
+  });
+
+  async function fetchPublicJson(rawUrl) {
+    const target = await validatePublicWebUrl(rawUrl, { lookupImpl });
+    const response = requestImpl === requestPinnedHttps
+      ? await requestImpl(target, {
+          addresses: target[VALIDATED_ADDRESSES],
+          headers: { "Accept": "application/json", "User-Agent": "Alfie-Core/1.0" },
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+        })
+      : await fetchImpl(target, {
+          headers: { "Accept": "application/json", "User-Agent": "Alfie-Core/1.0" },
+          redirect: "error",
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+        });
+    if (!response.ok) {
+      throw Object.assign(new Error(`Weather service returned HTTP ${response.status}.`), { status: 502 });
+    }
+    return await response.json();
+  }
+
+  async function fetchWeather({ location = "", latitude = null, longitude = null } = {}) {
+    let lat = latitude !== null && latitude !== undefined ? Number(latitude) : null;
+    let lon = longitude !== null && longitude !== undefined ? Number(longitude) : null;
+    let resolvedName = String(location || "").trim().slice(0, 120);
+    let resolvedTimezone = "auto";
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      if (!resolvedName) {
+        fail("Provide a location name (for example 'Manchester, UK') or latitude and longitude.", 400);
+      }
+      const geocodeUrl = new URL(OPEN_METEO_GEOCODE_ENDPOINT);
+      geocodeUrl.searchParams.set("name", resolvedName);
+      geocodeUrl.searchParams.set("count", "1");
+      geocodeUrl.searchParams.set("language", "en");
+      geocodeUrl.searchParams.set("format", "json");
+      const geoData = await fetchPublicJson(geocodeUrl.toString());
+      const first = Array.isArray(geoData?.results) ? geoData.results[0] : null;
+      if (!first || !Number.isFinite(Number(first.latitude)) || !Number.isFinite(Number(first.longitude))) {
+        fail(`Could not find weather coordinates for "${resolvedName}". Try a nearby town or city name.`, 404);
+      }
+      lat = Number(first.latitude);
+      lon = Number(first.longitude);
+      resolvedName = [first.name, first.admin1, first.country].filter(Boolean).join(", ");
+      if (first.timezone) resolvedTimezone = String(first.timezone);
+    }
+
+    const forecastUrl = new URL(OPEN_METEO_FORECAST_ENDPOINT);
+    forecastUrl.searchParams.set("latitude", String(Math.round(lat * 10000) / 10000));
+    forecastUrl.searchParams.set("longitude", String(Math.round(lon * 10000) / 10000));
+    forecastUrl.searchParams.set("current", "temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m");
+    forecastUrl.searchParams.set("daily", "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max");
+    forecastUrl.searchParams.set("forecast_days", "2");
+    forecastUrl.searchParams.set("timezone", resolvedTimezone);
+    const data = await fetchPublicJson(forecastUrl.toString());
+    const current = data?.current || {};
+    const daily = data?.daily || {};
+    const buildDay = (index) => ({
+      date: Array.isArray(daily.time) ? String(daily.time[index] || "") : "",
+      condition: describeWeatherCode(Array.isArray(daily.weather_code) ? daily.weather_code[index] : undefined),
+      highC: Array.isArray(daily.temperature_2m_max) ? daily.temperature_2m_max[index] : null,
+      lowC: Array.isArray(daily.temperature_2m_min) ? daily.temperature_2m_min[index] : null,
+      rainChancePct: Array.isArray(daily.precipitation_probability_max) ? daily.precipitation_probability_max[index] : null
+    });
+    return {
+      location: resolvedName || `${Math.round(lat * 100) / 100}, ${Math.round(lon * 100) / 100}`,
+      latitude: Math.round(lat * 10000) / 10000,
+      longitude: Math.round(lon * 10000) / 10000,
+      timezone: String(data?.timezone || resolvedTimezone),
+      observedAt: String(current.time || ""),
+      current: {
+        temperatureC: current.temperature_2m ?? null,
+        feelsLikeC: current.apparent_temperature ?? null,
+        condition: describeWeatherCode(current.weather_code),
+        windKph: current.wind_speed_10m ?? null,
+        precipitationMm: current.precipitation ?? null
+      },
+      today: buildDay(0),
+      tomorrow: buildDay(1),
+      source: "https://open-meteo.com/"
+    };
+  }
+
+  registry.register({
+    id: "web.weather",
+    name: "Check live weather",
+    description: "Fast direct current weather and 2-day forecast lookup via Open-Meteo (no search engine crawl needed). Pass either a location name or latitude/longitude.",
+    scope: "web:read", risk: "read", trust: "external", network: true, externalAction: false,
+    tags: ["weather", "forecast", "temperature", "rain", "wind", "climate", "local", "web"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        location: { type: "string", minLength: 1, maxLength: 120 },
+        latitude: { type: "number", minimum: -90, maximum: 90 },
+        longitude: { type: "number", minimum: -180, maximum: 180 }
+      },
+      additionalProperties: false
+    },
+    async handler(args) {
+      return await fetchWeather(args || {});
     }
   });
 }

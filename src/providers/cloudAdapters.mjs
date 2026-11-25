@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { redactProviderError } from "./registry.mjs";
 
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 export const DEFAULT_CLOUD_OPENAI_TIMEOUT_MS = 5 * 60 * 1000;
@@ -42,10 +43,10 @@ function validateOpenAiBaseUrl(rawUrl) {
   try {
     parsed = new URL(candidate);
   } catch {
-    throw Object.assign(new Error("ALFIE_OPENAI_BASE_URL is not a valid HTTPS URL."), { status: 500 });
+    throw Object.assign(new Error("OpenAI API base URL is not a valid HTTPS URL."), { status: 400 });
   }
   if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash) {
-    throw Object.assign(new Error("ALFIE_OPENAI_BASE_URL must be an HTTPS URL without embedded credentials."), { status: 500 });
+    throw Object.assign(new Error("OpenAI API base URL must be an HTTPS URL without embedded credentials."), { status: 400 });
   }
   return parsed.toString().replace(/\/$/, "");
 }
@@ -61,21 +62,21 @@ export class CloudAgentAdapters {
     this.geminiClientFactory = geminiClientFactory;
   }
 
-  async complete({ provider, model, messages, hasTools = false, signal } = {}) {
+  async complete({ provider, model, messages, hasTools = false, signal, apiKey = "", baseUrl = "" } = {}) {
     if (provider === "gemini") {
-      return this.completeGemini({ model, messages, hasTools, signal });
+      return this.completeGemini({ model, messages, hasTools, signal, apiKey });
     }
     if (provider === "openai") {
-      return this.completeOpenAi({ model, messages, hasTools, signal });
+      return this.completeOpenAi({ model, messages, hasTools, signal, apiKey, baseUrl });
     }
     throw Object.assign(new Error(`Unsupported cloud agent provider "${provider}".`), { status: 400 });
   }
 
-  async completeGemini({ model = "gemini-4-hydrogen", messages = [], hasTools = false, signal } = {}) {
-    const apiKey = String(this.env?.GEMINI_API_KEY || "").trim();
+  async completeGemini({ model = "gemini-4-hydrogen", messages = [], hasTools = false, signal, apiKey: providedKey = "" } = {}) {
+    const apiKey = String(providedKey || this.env?.GEMINI_API_KEY || "").trim();
     if (!apiKey) {
       throw Object.assign(
-        new Error("Gemini API key is not configured on the server. Add GEMINI_API_KEY in Settings > Secrets or your server environment."),
+        new Error("Gemini API key is not configured on the server. Add your Gemini API key in Tools & Access → API Keys (or set GEMINI_API_KEY on the server)."),
         { status: 503, code: "CLOUD_SECRET_MISSING" }
       );
     }
@@ -124,8 +125,9 @@ export class CloudAgentAdapters {
     } catch (error) {
       if (error?.name === "AbortError") throw error;
       const status = Number.isInteger(error?.status) ? error.status : 502;
+      const safeMsg = redactProviderError(error?.message || "Unknown upstream error.", apiKey);
       throw Object.assign(
-        new Error(`Gemini API request failed: ${error?.message || "Unknown upstream error."}`),
+        new Error(`Gemini API request failed: ${safeMsg}`),
         { status: status >= 400 && status < 600 ? status : 502, code: "GEMINI_UPSTREAM_ERROR" }
       );
     }
@@ -151,16 +153,16 @@ export class CloudAgentAdapters {
     };
   }
 
-  async completeOpenAi({ model = "gpt-4.1-mini", messages = [], hasTools = false, signal } = {}) {
-    const apiKey = String(this.env?.OPENAI_API_KEY || "").trim();
+  async completeOpenAi({ model = "gpt-4.1-mini", messages = [], hasTools = false, signal, apiKey: providedKey = "", baseUrl: providedBaseUrl = "" } = {}) {
+    const apiKey = String(providedKey || this.env?.OPENAI_API_KEY || "").trim();
     if (!apiKey) {
       throw Object.assign(
-        new Error("ChatGPT (OpenAI) API key is not configured on the server. Add OPENAI_API_KEY in Settings > Secrets or your server environment."),
+        new Error("ChatGPT (OpenAI) API key is not configured on the server. Add your OpenAI API key in Tools & Access → API Keys (or set OPENAI_API_KEY on the server)."),
         { status: 503, code: "CLOUD_SECRET_MISSING" }
       );
     }
 
-    const baseUrl = validateOpenAiBaseUrl(this.env?.ALFIE_OPENAI_BASE_URL);
+    const baseUrl = validateOpenAiBaseUrl(providedBaseUrl || this.env?.ALFIE_OPENAI_BASE_URL);
     const { systemInstruction, conversation } = splitSystemAndConversation(messages);
     const codingInstruction = hasTools
       ? systemInstruction
@@ -191,15 +193,16 @@ export class CloudAgentAdapters {
       });
     } catch (error) {
       if (error?.name === "AbortError") throw error;
+      const safeMsg = redactProviderError(error?.message || "Could not reach OpenAI API.", apiKey);
       throw Object.assign(
-        new Error(`ChatGPT (OpenAI) network error: ${error?.message || "Could not reach OpenAI API."}`),
+        new Error(`ChatGPT (OpenAI) network error: ${safeMsg}`),
         { status: 502, code: "OPENAI_NETWORK_ERROR" }
       );
     }
 
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const upstreamMessage = data?.error?.message || `OpenAI API returned HTTP ${response.status}.`;
+      const upstreamMessage = redactProviderError(data?.error?.message || `OpenAI API returned HTTP ${response.status}.`, apiKey);
       throw Object.assign(
         new Error(`ChatGPT (OpenAI) API error: ${upstreamMessage}`),
         { status: response.status >= 400 && response.status < 600 ? response.status : 502, code: "OPENAI_UPSTREAM_ERROR" }

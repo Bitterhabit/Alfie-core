@@ -2935,11 +2935,20 @@ function renderCloudAgentsSettings() {
     badges.className = "cloud-agent-badges";
     const keyTag = document.createElement("span");
     keyTag.className = "cloud-status-tag " + (agent.secretConfigured ? "is-ready" : "is-missing");
-    keyTag.textContent = agent.secretConfigured ? `${agent.envVar} ready` : `Set ${agent.envVar}`;
+    keyTag.textContent = agent.secretSource === "server_vault"
+      ? "Encrypted on server"
+      : (agent.secretConfigured ? `${agent.envVar} ready` : "API key needed");
     const enabledTag = document.createElement("span");
     enabledTag.className = "cloud-status-tag" + (agent.enabled ? " is-active" : "");
     enabledTag.textContent = agent.enabled ? "Enabled" : "Disabled";
-    badges.append(keyTag, enabledTag);
+    const manageKeyBtn = document.createElement("button");
+    manageKeyBtn.type = "button";
+    manageKeyBtn.className = "secondary-button cloud-manage-key-btn";
+    manageKeyBtn.textContent = agent.secretConfigured ? "Update key" : "Add API key";
+    manageKeyBtn.addEventListener("click", () => {
+      openToolsApiKeySetup(agent.provider);
+    });
+    badges.append(keyTag, enabledTag, manageKeyBtn);
     head.append(titleWrap, badges);
     card.appendChild(head);
 
@@ -3236,6 +3245,8 @@ async function loadCloudAgents() {
     state.cloudPrivacyCategories = Array.isArray(payload?.categories) ? payload.categories : [];
     syncAgentSelector();
     renderCloudAgentsSettings();
+    renderCloudKeyStatusCards();
+    updateToolsSummaryStrip();
     return state.cloudAgents;
   } catch {
     return null;
@@ -4645,7 +4656,8 @@ async function continueChatAfterApproval({ conversationId, toolId = "", approval
       buffer = lines.pop() || "";
       for (const line of lines) {
         if (!line.trim()) continue;
-        const event = JSON.parse(line);
+        let event;
+        try { event = JSON.parse(line); } catch { continue; }
         if (event.type === "tool_start" || event.type === "tool_call") {
           thinking?.setTool(event.toolId, event.toolName, event.action || event.actionText, event.isExternal !== false);
           window.alfieSoul?.setState("working", event.isExternal ? "cyan" : "amber");
@@ -4653,7 +4665,8 @@ async function continueChatAfterApproval({ conversationId, toolId = "", approval
           thinking?.setTool(event.toolId, event.summary);
           window.alfieSoul?.setState("waiting", "amber");
         } else if (event.type === "heartbeat" && thinking) {
-          thinking.setStage("Still working…");
+          const secs = Math.max(1, Math.round((Date.now() - sendStart) / 1000));
+          thinking.setStage(`Still working (${secs}s)…`);
         } else if (event.type === "delta") {
           if (thinking) {
             thinking.stop();
@@ -4676,9 +4689,11 @@ async function continueChatAfterApproval({ conversationId, toolId = "", approval
       if (done) break;
     }
     if (buffer.trim()) {
-      const event = JSON.parse(buffer);
-      if (event.type === "delta") assistantText += event.content || "";
-      if (event.type === "done") finalEvent = event;
+      try {
+        const event = JSON.parse(buffer);
+        if (event.type === "delta") assistantText += event.content || "";
+        if (event.type === "done") finalEvent = event;
+      } catch {}
     }
     if (thinking) {
       thinking.stop();
@@ -5562,7 +5577,8 @@ async function sendMessage(rawText) {
       buffer = lines.pop() || "";
       for (const line of lines) {
         if (!line.trim()) continue;
-        const event = JSON.parse(line);
+        let event;
+        try { event = JSON.parse(line); } catch { continue; }
         if (event.type === "tool_start" || event.type === "tool_call") {
           thinking?.setTool(event.toolId, event.toolName, event.action || event.actionText, event.isExternal !== false);
           window.alfieSoul?.setState("working", event.isExternal ? "cyan" : "amber");
@@ -5580,7 +5596,8 @@ async function sendMessage(rawText) {
           }
         }
         if (event.type === "heartbeat" && thinking) {
-          thinking.setStage("Still working…");
+          const secs = Math.max(1, Math.round((Date.now() - sendStart) / 1000));
+          thinking.setStage(`Still working (${secs}s)…`);
         }
         if (event.type === "meta" && event.steps > 1 && !event.toolId) {
           thinking?.setStage("processing step " + event.steps + "…");
@@ -5617,49 +5634,35 @@ async function sendMessage(rawText) {
       if (done) break;
     }
     if (buffer.trim()) {
-      const event = JSON.parse(buffer);
-      if (event.type === "tool_start" || event.type === "tool_call") {
-        thinking?.setTool(event.toolId, event.toolName, event.action || event.actionText, event.isExternal !== false);
-        window.alfieSoul?.setState("working", event.isExternal ? "cyan" : "amber");
-        if (chatAutoScrollEnabled) {
-          const host = $("#messages");
-          if (host) host.scrollTop = host.scrollHeight;
+      try {
+        const event = JSON.parse(buffer);
+        if (event.type === "tool_start" || event.type === "tool_call") {
+          thinking?.setTool(event.toolId, event.toolName, event.action || event.actionText, event.isExternal !== false);
+          window.alfieSoul?.setState("working", event.isExternal ? "cyan" : "amber");
         }
+        if (event.type === "approval_required") {
+          thinking?.setTool(event.toolId, event.summary);
+          window.alfieSoul?.setState("waiting", "amber");
+        }
+        if (event.type === "meta" && event.steps > 1 && !event.toolId) {
+          thinking?.setStage("processing step " + event.steps + "…");
+          window.alfieSoul?.setState("working", "amber");
+        }
+        if (event.type === "delta") {
+          if (thinking) {
+            thinking.stop();
+            thinking.element.remove();
+            thinking = null;
+          }
+          assistantText += event.content || "";
+          renderMarkdown(assistantBody, assistantText);
+          updateScrollToBottomIndicator();
+        }
+        if (event.type === "error") throw new Error(event.error || "Alfie could not complete the response.");
+        if (event.type === "done") finalEvent = event;
+      } catch (parseErr) {
+        if (parseErr instanceof Error && !/JSON/i.test(parseErr.message)) throw parseErr;
       }
-      if (event.type === "approval_required") {
-        thinking?.setTool(event.toolId, event.summary);
-        window.alfieSoul?.setState("waiting", "amber");
-        if (chatAutoScrollEnabled) {
-          const host = $("#messages");
-          if (host) host.scrollTop = host.scrollHeight;
-        }
-      }
-      if (event.type === "meta" && event.steps > 1 && !event.toolId) {
-        thinking?.setStage("processing step " + event.steps + "…");
-        window.alfieSoul?.setState("working", "amber");
-        if (chatAutoScrollEnabled) {
-          const host = $("#messages");
-          if (host) host.scrollTop = host.scrollHeight;
-        }
-      }
-      if (event.type === "delta") {
-        if (thinking) {
-          thinking.stop();
-          thinking.element.remove();
-          thinking = null;
-        }
-        if (window.alfieSoul?.getAnimationState() !== "working") {
-          window.alfieSoul?.setState("working", "purple");
-        }
-        assistantText += event.content || "";
-        renderMarkdown(assistantBody, assistantText);
-        if (chatAutoScrollEnabled) {
-          const host = $("#messages");
-          if (host) host.scrollTop = host.scrollHeight;
-        }
-        updateScrollToBottomIndicator();
-      }
-      if (event.type === "done") finalEvent = event;
     }
     if (thinking) {
       thinking.stop();
@@ -5757,7 +5760,11 @@ async function sendMessage(rawText) {
     }
     if (assistantBody) {
       assistantBody.querySelector(".streaming-cursor")?.remove();
-      const errText = "I couldn't complete that response. " + error.message;
+      const rawMsg = String(error?.message || "Connection interrupted.");
+      const isConnDrop = /network|fetch|abort|connection|stream|closed|chunk/i.test(rawMsg);
+      const errText = isConnDrop
+        ? `The connection was interrupted while building that response (${rawMsg}). Tip: for large website or multi-file builds, open **Options** (☰) and enable **Run in background** so Alfie finishes cleanly even if the browser sleeps.`
+        : "I couldn't complete that response. " + rawMsg;
       renderMarkdown(assistantBody, errText);
       assistantBody.dataset.rawContent = errText.trim();
       const messageArticle = assistantBody.closest(".message");
@@ -7789,6 +7796,8 @@ async function loadToolsAndApprovals(focusActionId = null) {
       }
 
       const scopeItem = createItem(scope, summaryParts.join(" · "), scopeActions);
+      scopeItem.classList.add("tools-scope-item", hasGrants ? "is-granted" : "is-revoked");
+      scopeItem.dataset.scopeSearch = `${scope} ${names}`.toLowerCase();
       if (scopeLeases.length) {
         scopeItem.classList.add("has-lease-list");
         const leaseList = document.createElement("div");
@@ -7927,7 +7936,28 @@ async function loadToolsAndApprovals(focusActionId = null) {
       auditHost.appendChild(createItem(event.event, [event.toolId, event.status, event.at ? new Date(event.at).toLocaleString() : ""].filter(Boolean).join(" · ")));
     }
     if (!audit.events?.length) auditHost.textContent = "No recent actions.";
-    await Promise.all([loadWatchers(), loadCapsules(), loadWorkshop(), loadIntegrations(), loadPlaybooks(), loadPeerTokens()]);
+
+    state.toolsSummaryCounts = {
+      totalScopes: groups.size,
+      grantedScopes: [...groups.keys()].filter((scope) => (leasesByScope.get(scope) || []).length > 0).length,
+      activeLeases: (permissions.leases || []).length,
+      pendingApprovals: (pending.actions || []).length
+    };
+    if (focusActionId) setToolsTab("permissions");
+    applyToolScopeFilter();
+    updateToolsSummaryStrip();
+
+    await Promise.all([
+      loadCloudAgents(),
+      loadProvidersPanel().catch(() => {}),
+      loadWatchers(),
+      loadCapsules(),
+      loadWorkshop(),
+      loadIntegrations(),
+      loadPlaybooks(),
+      loadPeerTokens()
+    ]);
+    updateToolsSummaryStrip();
   } catch (error) {
     toolsHost.textContent = error.message;
     pendingHost.textContent = "Approval history unavailable.";
@@ -8974,7 +9004,9 @@ function renderWorkflowProfile() {
     statusEl.textContent = "Updated " + new Date(profile.updatedAt).toLocaleTimeString();
   }
 
+  renderLocationControls(profile);
   renderFeedbackLearningSection(profile);
+  updateChatContextSummary();
 
   const topicHost = $("#learning-topic-list");
   if (!topicHost) return;
@@ -9049,6 +9081,9 @@ function initWorkflowProfile() {
   $("#workflow-profile-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formEl = event.currentTarget;
+    const prevLoc = state.workflowProfile?.location || {};
+    const nextLabel = (formEl.elements.locationLabel?.value || "").trim();
+    const nextLocEnabled = Boolean(formEl.elements.locationEnabled?.checked) && Boolean(nextLabel || (prevLoc.latitude !== null && prevLoc.latitude !== undefined));
     const payload = {
       explanationStyle: formEl.elements.explanationStyle?.value || "balanced",
       changePresentation: formEl.elements.changePresentation?.value || "diffs_and_rollback",
@@ -9057,7 +9092,14 @@ function initWorkflowProfile() {
       learningMode: formEl.elements.learningMode?.value || "explain",
       customNotes: (formEl.elements.customNotes?.value || "").trim(),
       autoMemoryEnabled: Boolean(formEl.elements.autoMemoryEnabled?.checked),
-      learnFromFeedbackEnabled: Boolean($("#wf-learn-feedback")?.checked ?? true)
+      learnFromFeedbackEnabled: Boolean($("#wf-learn-feedback")?.checked ?? true),
+      location: {
+        enabled: nextLocEnabled,
+        label: nextLabel,
+        latitude: nextLabel && nextLabel !== prevLoc.label ? null : (prevLoc.latitude ?? null),
+        longitude: nextLabel && nextLabel !== prevLoc.label ? null : (prevLoc.longitude ?? null),
+        timezone: prevLoc.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || ""
+      }
     };
     try {
       const res = await api("/api/core/profile", { method: "PUT", body: JSON.stringify(payload) });
@@ -10939,23 +10981,20 @@ function openProviderEditor(endpoint = null) {
   $("#provider-field-id").value = isEdit ? endpoint.id : "";
   $("#provider-field-name").value = isEdit ? (endpoint.name || "") : "";
   const savedBaseUrl = isEdit ? (endpoint.baseUrl || "") : "";
-  const isGeminiEndpoint = savedBaseUrl.toLowerCase().includes("generativelanguage.googleapis.com/v1beta/openai");
-  $("#provider-field-type").value = isGeminiEndpoint ? "google-gemini" : (isEdit ? (endpoint.provider || "ollama") : "ollama");
+  const lowerSavedUrl = savedBaseUrl.toLowerCase();
+  const isGeminiEndpoint = lowerSavedUrl.includes("generativelanguage.googleapis.com/v1beta/openai");
+  const isOpenAiEndpoint = lowerSavedUrl.includes("api.openai.com");
+  const detectedType = isGeminiEndpoint
+    ? "google-gemini"
+    : (isOpenAiEndpoint ? "openai" : (isEdit ? (endpoint.provider || "ollama") : "ollama"));
+  $("#provider-field-type").value = detectedType;
   $("#provider-field-url").value = isEdit ? savedBaseUrl : "http://127.0.0.1:11434";
-  $("#provider-field-url").placeholder = $("#provider-field-type").value === "ollama" ? "http://127.0.0.1:11434" : ($("#provider-field-type").value === "google-gemini" ? "https://generativelanguage.googleapis.com/v1beta/openai" : "https://api.example.com/v1");
-  const providerHelp = $("#provider-url-help");
-  const isGemini = $("#provider-field-type").value === "google-gemini";
-  if (providerHelp) providerHelp.textContent = isGemini
-    ? "Alfie uses Google's OpenAI-compatible Gemini endpoint. Your API key is encrypted on the server."
-    : "For other services, enter the provider's OpenAI-compatible API root. For a PC on your network, use its reachable IP/hostname and port.";
-  const geminiKeyLink = $("#provider-gemini-key-link");
-  if (geminiKeyLink) geminiKeyLink.hidden = !isGemini;
-  $("#provider-field-credential").placeholder = isGemini ? "Paste your Google AI Studio API key" : "API key (leave blank only if the endpoint needs no key)";
+  applyProviderEditorPreset(detectedType, { autofillUrl: !isEdit, autofillName: false, focusCredential: false });
   $("#provider-field-mode").value = isEdit ? (endpoint.mode || "standard") : "standard";
   $("#provider-field-priority").value = String(isEdit ? (endpoint.priority ?? 50) : 60);
   $("#provider-field-temperature").value = String(isEdit ? (endpoint.temperature ?? 0.4) : 0.4);
   $("#provider-field-max-tokens").value = String(isEdit ? (endpoint.maxTokens ?? 700) : 700);
-  $("#provider-field-trusted-local").checked = isEdit ? Boolean(endpoint.trustedLocal) : true;
+  $("#provider-field-trusted-local").checked = isEdit ? Boolean(endpoint.trustedLocal) : (detectedType === "ollama");
   $("#provider-field-enabled").checked = isEdit ? endpoint.enabled !== false : true;
   $("#provider-field-credential").value = "";
   $("#provider-field-clear-key").checked = false;
@@ -11372,34 +11411,11 @@ function initProviderManagement() {
 
   $("#provider-field-type")?.addEventListener("change", (event) => {
     const type = event.target.value;
-    const urlInput = $("#provider-field-url");
-    const nameInput = $("#provider-field-name");
-    const credentialInput = $("#provider-field-credential");
-    const help = $("#provider-url-help");
-    if (!urlInput) return;
-    if (type === "google-gemini") {
-      urlInput.value = "https://generativelanguage.googleapis.com/v1beta/openai";
-      urlInput.placeholder = "https://generativelanguage.googleapis.com/v1beta/openai";
-      if (nameInput && (!nameInput.value || nameInput.value === "Local Ollama")) nameInput.value = "Google Gemini";
-      if (credentialInput) credentialInput.placeholder = "Paste your Google AI Studio API key";
-      if (help) help.textContent = "Alfie uses Google's OpenAI-compatible Gemini endpoint. Your API key is encrypted on the server.";
-      const keyLink = $("#provider-gemini-key-link");
-      if (keyLink) keyLink.hidden = false;
-      $("#provider-field-trusted-local").checked = false;
-      return;
-    }
-    urlInput.placeholder = type === "ollama" ? "http://127.0.0.1:11434" : "https://api.example.com/v1";
-    if (credentialInput) credentialInput.placeholder = "API key (leave blank only if the endpoint needs no key)";
-    if (help) help.textContent = "For other services, enter the provider's OpenAI-compatible API root. For a PC on your network, use its reachable IP/hostname and port.";
-    const keyLink = $("#provider-gemini-key-link");
-    if (keyLink) keyLink.hidden = true;
-    if (!providerPanelState.editingId) {
-      if (type === "ollama" && (!urlInput.value || urlInput.value === "http://127.0.0.1:1234/v1" || urlInput.value === "https://generativelanguage.googleapis.com/v1beta/openai")) {
-        urlInput.value = "http://127.0.0.1:11434";
-      } else if (type === "openai-compatible" && (!urlInput.value || urlInput.value === "http://127.0.0.1:11434" || urlInput.value === "https://generativelanguage.googleapis.com/v1beta/openai")) {
-        urlInput.value = "http://127.0.0.1:1234/v1";
-      }
-    }
+    applyProviderEditorPreset(type, {
+      autofillUrl: true,
+      autofillName: true,
+      focusCredential: type === "google-gemini" || type === "openai"
+    });
   });
 
   $("#provider-field-url")?.addEventListener("input", (event) => {
@@ -11524,10 +11540,816 @@ function initProviderManagement() {
   });
 }
 
+function formatLocationSummary(loc) {
+  if (!loc || !loc.enabled) return "";
+  if (loc.label) return loc.label;
+  if (Number.isFinite(Number(loc.latitude)) && Number.isFinite(Number(loc.longitude))) {
+    return `${Number(loc.latitude).toFixed(2)}, ${Number(loc.longitude).toFixed(2)}`;
+  }
+  return "";
+}
+
+function renderLocationControls(profile) {
+  const loc = profile?.location || { enabled: false, label: "", latitude: null, longitude: null, timezone: "" };
+  const summary = formatLocationSummary(loc);
+
+  const chatEnabled = $("#chat-location-enabled");
+  if (chatEnabled) chatEnabled.checked = Boolean(loc.enabled);
+  const chatInput = $("#chat-location-input");
+  if (chatInput && document.activeElement !== chatInput) {
+    chatInput.value = loc.label || (loc.latitude !== null && loc.longitude !== null ? `${loc.latitude}, ${loc.longitude}` : "");
+  }
+  const chatStatus = $("#chat-location-status");
+  if (chatStatus) {
+    chatStatus.textContent = loc.enabled && summary
+      ? `Active: ${summary}`
+      : (loc.label ? "Saved (paused)" : "Location off");
+  }
+  const quickBtn = $("#chat-location-pill-btn");
+  if (quickBtn) {
+    if (loc.enabled && summary) {
+      quickBtn.textContent = summary;
+      quickBtn.classList.add("is-active");
+      quickBtn.title = `Using ${summary} for weather, trains, and local news. Click to edit.`;
+    } else {
+      quickBtn.textContent = "Set location";
+      quickBtn.classList.remove("is-active");
+      quickBtn.title = "Set your opt-in location for weather, trains, and local news";
+    }
+  }
+
+  const wfEnabled = $("#wf-location-enabled");
+  if (wfEnabled) wfEnabled.checked = Boolean(loc.enabled);
+  const wfLabel = $("#wf-location-label");
+  if (wfLabel && document.activeElement !== wfLabel) {
+    wfLabel.value = loc.label || "";
+  }
+}
+
+function updateChatContextSummary() {
+  const summaryEl = $("#chat-context-summary");
+  if (!summaryEl) return;
+  const parts = [];
+  const projectSel = $("#chat-project-select");
+  if (projectSel && projectSel.value) {
+    const label = projectSel.options[projectSel.selectedIndex]?.textContent?.trim();
+    if (label && label !== "No project") parts.push(label);
+  }
+  const postureSel = $("#working-mode-select");
+  const postureLabel = postureSel?.options?.[postureSel.selectedIndex]?.textContent?.trim() || "Companion";
+  parts.push(postureLabel);
+
+  const agentSel = $("#agent-provider");
+  if (agentSel && agentSel.value && agentSel.value !== "local") {
+    const agentLabel = agentSel.options[agentSel.selectedIndex]?.textContent?.trim();
+    if (agentLabel) parts.push(agentLabel);
+  }
+  const modeSel = $("#model-mode");
+  const modeLabel = modeSel?.options?.[modeSel.selectedIndex]?.textContent?.trim() || "Auto";
+  parts.push(modeLabel);
+
+  if ($("#background-task-toggle")?.checked) {
+    parts.push("Background");
+  }
+  summaryEl.textContent = parts.join(" · ");
+}
+
+async function saveUserLocation(locationPayload, toastMessage = null) {
+  const res = await api("/api/core/profile", {
+    method: "PUT",
+    body: JSON.stringify({ location: locationPayload })
+  });
+  state.workflowProfile = res.profile;
+  renderWorkflowProfile();
+  if (toastMessage) toast(toastMessage);
+  return res.profile;
+}
+
+async function detectBrowserLocation({ triggerButton = null } = {}) {
+  if (!("geolocation" in navigator)) {
+    toast("Browser geolocation is unavailable here. Type your town or city instead.");
+    return;
+  }
+  const statusEl = $("#chat-location-status");
+  if (triggerButton) triggerButton.disabled = true;
+  if (statusEl) statusEl.textContent = "Detecting location…";
+  try {
+    const coords = await new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve(pos.coords),
+        (err) => reject(new Error(err?.message || "Location permission was denied.")),
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+      );
+    });
+    const lat = Math.round(Number(coords.latitude) * 10000) / 10000;
+    const lon = Math.round(Number(coords.longitude) * 10000) / 10000;
+    const typed = ($("#chat-location-input")?.value || $("#wf-location-label")?.value || "").trim();
+    const label = typed && !/^-?\d+(\.\d+)?,\s*-?\d+(\.\d+)?$/.test(typed)
+      ? typed
+      : `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    await saveUserLocation(
+      { enabled: true, label, latitude: lat, longitude: lon, timezone },
+      `Location saved (${label}).`
+    );
+  } catch (error) {
+    if (statusEl) statusEl.textContent = "Location unavailable";
+    toast(error.message || "Could not detect browser location. You can type your town or city instead.");
+  } finally {
+    if (triggerButton) triggerButton.disabled = false;
+  }
+}
+
+function initChatOptionsMenu() {
+  const menuBtn = $("#chat-options-menu-btn");
+  const drawer = $("#chat-options-drawer");
+  const closeBtn = $("#chat-options-close-btn");
+  const quickLocBtn = $("#chat-location-pill-btn");
+
+  const setOpen = (open) => {
+    if (!drawer || !menuBtn) return;
+    drawer.hidden = !open;
+    menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+
+  menuBtn?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setOpen(Boolean(drawer?.hidden));
+  });
+  closeBtn?.addEventListener("click", () => {
+    setOpen(false);
+    menuBtn?.focus();
+  });
+  quickLocBtn?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setOpen(true);
+    $("#chat-location-input")?.focus();
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!drawer || drawer.hidden) return;
+    if (drawer.contains(event.target) || menuBtn?.contains(event.target) || quickLocBtn?.contains(event.target)) return;
+    setOpen(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && drawer && !drawer.hidden) {
+      setOpen(false);
+      menuBtn?.focus();
+    }
+  });
+
+  for (const selector of ["#chat-project-select", "#working-mode-select", "#learning-mode-select", "#agent-provider", "#model-mode", "#background-task-toggle"]) {
+    $(selector)?.addEventListener("change", () => updateChatContextSummary());
+  }
+
+  $("#chat-location-enabled")?.addEventListener("change", async (event) => {
+    const checked = Boolean(event.currentTarget.checked);
+    const inputVal = ($("#chat-location-input")?.value || "").trim();
+    const prev = state.workflowProfile?.location || {};
+    if (checked && !inputVal && prev.latitude === null) {
+      $("#chat-location-input")?.focus();
+      toast("Enter a town/city or click Use GPS to enable location.");
+      event.currentTarget.checked = false;
+      return;
+    }
+    try {
+      await saveUserLocation({
+        enabled: checked,
+        label: inputVal || prev.label || "",
+        latitude: prev.latitude ?? null,
+        longitude: prev.longitude ?? null,
+        timezone: prev.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || ""
+      }, checked ? "Location enabled for local answers." : "Location paused.");
+    } catch (error) {
+      event.currentTarget.checked = !checked;
+      toast(error.message || "Could not update location.");
+    }
+  });
+
+  $("#chat-location-save-btn")?.addEventListener("click", async () => {
+    const label = ($("#chat-location-input")?.value || "").trim();
+    if (!label) {
+      toast("Type a town, city, or postcode first (or click Use GPS).");
+      $("#chat-location-input")?.focus();
+      return;
+    }
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    try {
+      await saveUserLocation(
+        { enabled: true, label, latitude: null, longitude: null, timezone },
+        `Location set to ${label}.`
+      );
+    } catch (error) {
+      toast(error.message || "Could not save location.");
+    }
+  });
+
+  $("#chat-location-input")?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      $("#chat-location-save-btn")?.click();
+    }
+  });
+
+  $("#chat-location-clear-btn")?.addEventListener("click", async () => {
+    try {
+      const inputEl = $("#chat-location-input");
+      if (inputEl) inputEl.value = "";
+      await saveUserLocation(null, "Saved location cleared.");
+    } catch (error) {
+      toast(error.message || "Could not clear location.");
+    }
+  });
+
+  $("#chat-location-detect-btn")?.addEventListener("click", (event) => {
+    detectBrowserLocation({ triggerButton: event.currentTarget });
+  });
+  $("#wf-location-detect-btn")?.addEventListener("click", (event) => {
+    detectBrowserLocation({ triggerButton: event.currentTarget });
+  });
+
+  updateChatContextSummary();
+}
+
+// ── Tools & Access Navigation, Scope Filter & Server-Side API Key Vault ──
+const CLOUD_API_PRESETS = Object.freeze({
+  gemini: Object.freeze({
+    id: "gemini",
+    name: "Google Gemini",
+    endpointName: "Google Gemini",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    defaultModel: "gemini-2.5-flash",
+    modelPlaceholder: "e.g. gemini-2.5-flash or gemini-2.5-pro",
+    keyLabel: "Google Gemini API key",
+    keyPlaceholder: "Paste your Google AI Studio API key (AIza…)",
+    urlNote: "Autofilled with Google's official OpenAI-compatible Gemini endpoint. Saved encrypted on the server.",
+    keyLinkUrl: "https://aistudio.google.com/apikey",
+    keyLinkText: "Get a Gemini API key ↗"
+  }),
+  openai: Object.freeze({
+    id: "openai",
+    name: "OpenAI (ChatGPT)",
+    endpointName: "OpenAI",
+    baseUrl: "https://api.openai.com/v1",
+    defaultModel: "gpt-4.1-mini",
+    modelPlaceholder: "e.g. gpt-4.1-mini or gpt-4.1",
+    keyLabel: "OpenAI API key",
+    keyPlaceholder: "Paste your OpenAI API key (sk-…)",
+    urlNote: "Autofilled with OpenAI's official API root. Saved encrypted on the server.",
+    keyLinkUrl: "https://platform.openai.com/api-keys",
+    keyLinkText: "Get an OpenAI API key ↗"
+  })
+});
+
+function applyProviderEditorPreset(type, { autofillUrl = true, autofillName = false, focusCredential = false } = {}) {
+  const urlInput = $("#provider-field-url");
+  const nameInput = $("#provider-field-name");
+  const credentialInput = $("#provider-field-credential");
+  const modelInput = $("#provider-field-model");
+  const help = $("#provider-url-help");
+  const geminiKeyLink = $("#provider-gemini-key-link");
+  const openaiKeyLink = $("#provider-openai-key-link");
+  const trustedLocal = $("#provider-field-trusted-local");
+  const defaultNames = new Set(["", "Local Ollama", "Google Gemini", "OpenAI"]);
+  const presetUrls = new Set([
+    "",
+    "http://127.0.0.1:11434",
+    "http://127.0.0.1:1234/v1",
+    CLOUD_API_PRESETS.gemini.baseUrl,
+    CLOUD_API_PRESETS.openai.baseUrl
+  ]);
+
+  if (type === "google-gemini") {
+    const preset = CLOUD_API_PRESETS.gemini;
+    if (urlInput) {
+      if (autofillUrl) urlInput.value = preset.baseUrl;
+      urlInput.placeholder = preset.baseUrl;
+    }
+    if (autofillName && nameInput && defaultNames.has(nameInput.value.trim())) nameInput.value = preset.endpointName;
+    if (credentialInput) credentialInput.placeholder = preset.keyPlaceholder;
+    if (modelInput) modelInput.placeholder = preset.modelPlaceholder;
+    if (help) help.textContent = preset.urlNote;
+    if (geminiKeyLink) geminiKeyLink.hidden = false;
+    if (openaiKeyLink) openaiKeyLink.hidden = true;
+    if (trustedLocal) trustedLocal.checked = false;
+    if (focusCredential) credentialInput?.focus();
+    return;
+  }
+
+  if (type === "openai") {
+    const preset = CLOUD_API_PRESETS.openai;
+    if (urlInput) {
+      if (autofillUrl) urlInput.value = preset.baseUrl;
+      urlInput.placeholder = preset.baseUrl;
+    }
+    if (autofillName && nameInput && defaultNames.has(nameInput.value.trim())) nameInput.value = preset.endpointName;
+    if (credentialInput) credentialInput.placeholder = preset.keyPlaceholder;
+    if (modelInput) modelInput.placeholder = preset.modelPlaceholder;
+    if (help) help.textContent = preset.urlNote;
+    if (geminiKeyLink) geminiKeyLink.hidden = true;
+    if (openaiKeyLink) openaiKeyLink.hidden = false;
+    if (trustedLocal) trustedLocal.checked = false;
+    if (focusCredential) credentialInput?.focus();
+    return;
+  }
+
+  if (geminiKeyLink) geminiKeyLink.hidden = true;
+  if (openaiKeyLink) openaiKeyLink.hidden = true;
+  if (urlInput) {
+    urlInput.placeholder = type === "ollama" ? "http://127.0.0.1:11434" : "https://api.example.com/v1";
+    if (autofillUrl && !providerPanelState.editingId && presetUrls.has(urlInput.value.trim())) {
+      urlInput.value = type === "ollama" ? "http://127.0.0.1:11434" : "http://127.0.0.1:1234/v1";
+    }
+  }
+  if (credentialInput) credentialInput.placeholder = "API key (leave blank only if the endpoint needs no key)";
+  if (modelInput) modelInput.placeholder = "e.g. qwen2.5:14b or llama-3.3-70b";
+  if (help) help.textContent = "Choose Google Gemini or OpenAI above to autofill the official API URL and save your key encrypted on the server. For local servers, enter the reachable IP/hostname and port.";
+  if (trustedLocal && !providerPanelState.editingId) trustedLocal.checked = type === "ollama";
+}
+
+function setToolsTab(tabId = "permissions") {
+  const validTabs = new Set(["permissions", "keys", "monitoring", "automation"]);
+  const nextTab = validTabs.has(tabId) ? tabId : "permissions";
+  state.activeToolsTab = nextTab;
+  document.querySelectorAll("#tools-section-tabs [data-tools-tab]").forEach((btn) => {
+    const active = btn.dataset.toolsTab === nextTab;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  document.querySelectorAll("#view-tools [data-tools-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.toolsPanel !== nextTab;
+  });
+}
+
+function applyToolScopeFilter() {
+  const query = ($("#tool-scope-filter")?.value || "").trim().toLowerCase();
+  document.querySelectorAll("#tool-list .tools-scope-item").forEach((item) => {
+    const hay = item.dataset.scopeSearch || item.textContent.toLowerCase();
+    item.hidden = Boolean(query) && !hay.includes(query);
+  });
+}
+
+function updateToolsSummaryStrip() {
+  const counts = state.toolsSummaryCounts || {};
+  const grantedEl = $("#tools-stat-granted");
+  const leasesEl = $("#tools-stat-leases");
+  const pendingEl = $("#tools-stat-pending");
+  const pendingCard = $("#tools-stat-pending-card");
+  const pendingTabBadge = $("#tools-tab-pending-count");
+  const keysEl = $("#tools-stat-keys");
+  const keysSubEl = $("#tools-stat-keys-sub");
+  const keysTabBadge = $("#tools-tab-keys-count");
+  const monitorsEl = $("#tools-stat-monitors");
+
+  if (grantedEl && typeof counts.grantedScopes === "number") {
+    grantedEl.textContent = `${counts.grantedScopes}/${counts.totalScopes || 0}`;
+  }
+  if (leasesEl && typeof counts.activeLeases === "number") {
+    leasesEl.textContent = `${counts.activeLeases} active ${counts.activeLeases === 1 ? "lease" : "leases"}`;
+  }
+  if (pendingEl && typeof counts.pendingApprovals === "number") {
+    pendingEl.textContent = String(counts.pendingApprovals);
+    pendingCard?.classList.toggle("is-attention", counts.pendingApprovals > 0);
+  }
+  if (pendingTabBadge && typeof counts.pendingApprovals === "number") {
+    pendingTabBadge.textContent = String(counts.pendingApprovals);
+    pendingTabBadge.hidden = counts.pendingApprovals === 0;
+  }
+
+  const agents = Array.isArray(state.cloudAgents) ? state.cloudAgents : [];
+  const configuredAgents = agents.filter((a) => a.secretConfigured);
+  if (keysEl) {
+    keysEl.textContent = `${configuredAgents.length}/${agents.length || 2}`;
+  }
+  if (keysSubEl) {
+    keysSubEl.textContent = configuredAgents.length
+      ? configuredAgents.map((a) => (a.provider === "gemini" ? "Gemini" : "OpenAI")).join(" & ") + " ready"
+      : "No cloud keys configured";
+  }
+  if (keysTabBadge) {
+    keysTabBadge.textContent = String(configuredAgents.length);
+    keysTabBadge.hidden = configuredAgents.length === 0;
+  }
+
+  if (monitorsEl) {
+    const watcherCount = document.querySelectorAll("#watcher-list .item").length;
+    const capsuleCount = document.querySelectorAll("#capsule-list .item").length;
+    monitorsEl.textContent = `${watcherCount + capsuleCount}`;
+  }
+}
+
+function selectCloudKeyProvider(providerId, { focusInput = false } = {}) {
+  const select = $("#cloud-key-provider-select");
+  const fieldsWrap = $("#cloud-key-fields");
+  const emptyPrompt = $("#cloud-key-empty-prompt");
+  const urlInput = $("#cloud-key-url-input");
+  const urlNote = $("#cloud-key-url-note");
+  const credLabel = $("#cloud-key-credential-label");
+  const credInput = $("#cloud-key-credential-input");
+  const keyLink = $("#cloud-key-get-link");
+  const removeBtn = $("#cloud-key-remove-btn");
+  const feedbackEl = $("#cloud-key-form-feedback");
+
+  if (select && select.value !== (providerId || "")) {
+    select.value = providerId || "";
+  }
+  if (feedbackEl) {
+    feedbackEl.textContent = "";
+    feedbackEl.classList.remove("is-error", "is-success");
+  }
+
+  const preset = CLOUD_API_PRESETS[providerId];
+  if (!preset) {
+    if (fieldsWrap) fieldsWrap.hidden = true;
+    if (emptyPrompt) emptyPrompt.hidden = false;
+    return;
+  }
+
+  const agent = findCloudAgent(providerId);
+  if (fieldsWrap) fieldsWrap.hidden = false;
+  if (emptyPrompt) emptyPrompt.hidden = true;
+  if (urlInput) {
+    urlInput.value = agent?.baseUrl || preset.baseUrl;
+    urlInput.placeholder = preset.baseUrl;
+  }
+  if (urlNote) urlNote.textContent = preset.urlNote;
+  if (credLabel) {
+    credLabel.textContent = agent?.vaultKeyConfigured
+      ? `${preset.keyLabel} (enter a new key to replace saved server key)`
+      : preset.keyLabel;
+  }
+  if (credInput) {
+    credInput.value = "";
+    credInput.placeholder = preset.keyPlaceholder;
+  }
+  if (keyLink) {
+    keyLink.href = preset.keyLinkUrl;
+    keyLink.textContent = preset.keyLinkText;
+  }
+  if (removeBtn) {
+    removeBtn.hidden = !agent?.vaultKeyConfigured;
+  }
+  if (focusInput) {
+    requestAnimationFrame(() => credInput?.focus());
+  }
+}
+
+function openToolsApiKeySetup(providerId = "") {
+  setView("tools");
+  setToolsTab("keys");
+  if (providerId && CLOUD_API_PRESETS[providerId]) {
+    selectCloudKeyProvider(providerId, { focusInput: true });
+  } else {
+    requestAnimationFrame(() => $("#cloud-key-provider-select")?.focus());
+  }
+}
+
+function renderCloudKeyStatusCards() {
+  const host = $("#cloud-key-status-cards");
+  if (!host) return;
+  host.replaceChildren();
+
+  const providers = ["gemini", "openai"];
+  for (const providerId of providers) {
+    const preset = CLOUD_API_PRESETS[providerId];
+    const agent = findCloudAgent(providerId);
+    const configured = Boolean(agent?.secretConfigured);
+    const fromVault = agent?.secretSource === "server_vault";
+    const fromEnv = agent?.secretSource === "environment";
+    const currentUrl = agent?.baseUrl || preset.baseUrl;
+
+    const card = document.createElement("article");
+    card.className = "tools-key-status-card" + (configured ? " is-configured" : "");
+    card.dataset.keyProvider = providerId;
+
+    const top = document.createElement("div");
+    top.className = "tools-key-card-top";
+    const nameEl = document.createElement("strong");
+    nameEl.textContent = preset.name;
+    const statusEl = document.createElement("span");
+    statusEl.className = "tools-key-status-label " + (configured ? "is-ready" : "is-missing");
+    statusEl.textContent = fromVault
+      ? "Encrypted on server"
+      : (fromEnv ? "Server environment" : "Not configured");
+    top.append(nameEl, statusEl);
+
+    const urlEl = document.createElement("code");
+    urlEl.className = "tools-key-url-preview";
+    urlEl.textContent = currentUrl;
+
+    const metaEl = document.createElement("p");
+    metaEl.className = "muted tools-key-card-meta";
+    metaEl.textContent = fromVault
+      ? "Saved in encrypted server vault · never stored in browser."
+      : (fromEnv
+        ? `Using server environment variable (${agent.envVar}). You can override it with a vault key anytime.`
+        : "Select to autofill the official URL and store a key securely on the server.");
+
+    const actions = document.createElement("div");
+    actions.className = "tools-key-card-actions";
+    const configBtn = document.createElement("button");
+    configBtn.type = "button";
+    configBtn.className = configured ? "secondary-button" : "primary-button";
+    configBtn.textContent = configured ? "Update key" : "Configure key";
+    configBtn.addEventListener("click", () => {
+      selectCloudKeyProvider(providerId, { focusInput: true });
+    });
+    actions.appendChild(configBtn);
+
+    if (fromVault) {
+      const clearBtn = document.createElement("button");
+      clearBtn.type = "button";
+      clearBtn.className = "secondary-button";
+      clearBtn.textContent = "Remove";
+      clearBtn.addEventListener("click", async () => {
+        clearBtn.disabled = true;
+        try {
+          await removeServerCloudKey(providerId);
+        } finally {
+          clearBtn.disabled = false;
+        }
+      });
+      actions.appendChild(clearBtn);
+    }
+
+    card.append(top, urlEl, metaEl, actions);
+    host.appendChild(card);
+  }
+}
+
+async function syncCloudKeyToProviderEndpoint(providerId, baseUrl, credential) {
+  const preset = CLOUD_API_PRESETS[providerId];
+  if (!preset) return;
+  let endpoints = providerPanelState.config?.endpoints;
+  if (!Array.isArray(endpoints)) {
+    try {
+      const data = await api("/api/core/providers");
+      providerPanelState.config = data;
+      endpoints = data?.endpoints || [];
+    } catch {
+      endpoints = [];
+    }
+  }
+  const matchHost = providerId === "gemini" ? "generativelanguage.googleapis.com" : "api.openai.com";
+  const existing = endpoints.find((ep) => String(ep.baseUrl || "").toLowerCase().includes(matchHost));
+  if (existing) {
+    await api(`/api/core/providers/endpoints/${encodeURIComponent(existing.id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        baseUrl,
+        enabled: true,
+        trustedLocal: false,
+        apiKey: credential
+      })
+    });
+  } else {
+    await api("/api/core/providers/endpoints", {
+      method: "POST",
+      body: JSON.stringify({
+        name: preset.endpointName,
+        provider: "openai-compatible",
+        baseUrl,
+        mode: "standard",
+        priority: 80,
+        trustedLocal: false,
+        enabled: true,
+        model: preset.defaultModel,
+        apiKey: credential
+      })
+    });
+  }
+}
+
+async function removeServerCloudKey(providerId) {
+  const preset = CLOUD_API_PRESETS[providerId];
+  if (!preset) return;
+  const feedbackEl = $("#cloud-key-form-feedback");
+  try {
+    await api(`/api/core/cloud-agents/${encodeURIComponent(providerId)}/credential`, {
+      method: "DELETE"
+    });
+    const endpoints = providerPanelState.config?.endpoints || [];
+    const matchHost = providerId === "gemini" ? "generativelanguage.googleapis.com" : "api.openai.com";
+    const existing = endpoints.find((ep) => String(ep.baseUrl || "").toLowerCase().includes(matchHost) && ep.apiKeyConfigured);
+    if (existing) {
+      await api(`/api/core/providers/endpoints/${encodeURIComponent(existing.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ clearApiKey: true })
+      }).catch(() => {});
+    }
+    await Promise.all([loadCloudAgents(), loadProvidersPanel().catch(() => {})]);
+    if ($("#cloud-key-provider-select")?.value === providerId) {
+      selectCloudKeyProvider(providerId, { focusInput: false });
+    }
+    if (feedbackEl) {
+      feedbackEl.textContent = `Removed saved server API key for ${preset.name}.`;
+      feedbackEl.classList.remove("is-error");
+      feedbackEl.classList.add("is-success");
+    }
+    toast(`Removed saved ${preset.name} API key from server.`);
+  } catch (error) {
+    if (feedbackEl) {
+      feedbackEl.textContent = error.message || "Could not remove saved key.";
+      feedbackEl.classList.remove("is-success");
+      feedbackEl.classList.add("is-error");
+    }
+    toast(error.message || "Could not remove saved key.");
+  }
+}
+
+function initToolsAndKeysUi() {
+  document.querySelectorAll("#tools-section-tabs [data-tools-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setToolsTab(btn.dataset.toolsTab);
+      if (btn.dataset.toolsTab === "keys") {
+        renderCloudKeyStatusCards();
+      }
+    });
+  });
+
+  $("#tool-scope-filter")?.addEventListener("input", applyToolScopeFilter);
+
+  $("#tools-quick-add-key-btn")?.addEventListener("click", () => {
+    setToolsTab("keys");
+    renderCloudKeyStatusCards();
+    requestAnimationFrame(() => $("#cloud-key-provider-select")?.focus());
+  });
+
+  const openRoutingInSettings = () => {
+    setView("settings");
+    requestAnimationFrame(() => {
+      $("#settings-providers-surface")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+  $("#tools-open-providers-settings-btn")?.addEventListener("click", openRoutingInSettings);
+  $("#tools-keys-manage-endpoints-btn")?.addEventListener("click", openRoutingInSettings);
+
+  $("#cloud-keys-refresh-btn")?.addEventListener("click", async () => {
+    await Promise.all([loadCloudAgents(), loadProvidersPanel().catch(() => {})]);
+    toast("Server key status refreshed.");
+  });
+
+  $("#cloud-key-provider-select")?.addEventListener("change", (event) => {
+    const providerId = event.currentTarget.value;
+    selectCloudKeyProvider(providerId, { focusInput: Boolean(providerId) });
+  });
+
+  $("#cloud-key-remove-btn")?.addEventListener("click", async () => {
+    const providerId = $("#cloud-key-provider-select")?.value;
+    if (!providerId) return;
+    await removeServerCloudKey(providerId);
+  });
+
+  $("#cloud-key-test-btn")?.addEventListener("click", async () => {
+    const providerId = $("#cloud-key-provider-select")?.value;
+    const preset = CLOUD_API_PRESETS[providerId];
+    const feedbackEl = $("#cloud-key-form-feedback");
+    const testBtn = $("#cloud-key-test-btn");
+    if (!preset) return;
+    const baseUrl = $("#cloud-key-url-input")?.value?.trim() || preset.baseUrl;
+    const credential = $("#cloud-key-credential-input")?.value?.trim() || "";
+    const endpoints = providerPanelState.config?.endpoints || [];
+    const matchHost = providerId === "gemini" ? "generativelanguage.googleapis.com" : "api.openai.com";
+    const matchingEndpoint = endpoints.find((ep) => String(ep.baseUrl || "").toLowerCase().includes(matchHost));
+
+    if (!credential && !matchingEndpoint?.apiKeyConfigured) {
+      if (feedbackEl) {
+        feedbackEl.textContent = "Paste an API key first to test the connection.";
+        feedbackEl.classList.remove("is-success");
+        feedbackEl.classList.add("is-error");
+      }
+      $("#cloud-key-credential-input")?.focus();
+      return;
+    }
+
+    if (testBtn) {
+      testBtn.disabled = true;
+      testBtn.textContent = "Testing…";
+    }
+    if (feedbackEl) {
+      feedbackEl.textContent = `Testing connection to ${baseUrl}…`;
+      feedbackEl.classList.remove("is-error", "is-success");
+    }
+    try {
+      const payload = {
+        provider: "openai-compatible",
+        baseUrl,
+        trustedLocal: false
+      };
+      if (credential) payload.apiKey = credential;
+      else if (matchingEndpoint?.id) payload.id = matchingEndpoint.id;
+
+      const res = await api("/api/core/providers/test", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      if (res?.ok) {
+        const count = Array.isArray(res.models) ? res.models.length : 0;
+        if (feedbackEl) {
+          feedbackEl.textContent = `Connection verified (${res.latencyMs ?? 0} ms) · ${count} model${count === 1 ? "" : "s"} reachable.`;
+          feedbackEl.classList.remove("is-error");
+          feedbackEl.classList.add("is-success");
+        }
+      } else if (feedbackEl) {
+        feedbackEl.textContent = res?.error || "Connection test failed. Check your API key and endpoint URL.";
+        feedbackEl.classList.remove("is-success");
+        feedbackEl.classList.add("is-error");
+      }
+    } catch (error) {
+      if (feedbackEl) {
+        feedbackEl.textContent = error.message || "Connection test failed.";
+        feedbackEl.classList.remove("is-success");
+        feedbackEl.classList.add("is-error");
+      }
+    } finally {
+      if (testBtn) {
+        testBtn.disabled = false;
+        testBtn.textContent = "Test connection";
+      }
+    }
+  });
+
+  $("#cloud-key-setup-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const providerId = $("#cloud-key-provider-select")?.value;
+    const preset = CLOUD_API_PRESETS[providerId];
+    const feedbackEl = $("#cloud-key-form-feedback");
+    const saveBtn = $("#cloud-key-save-btn");
+    const credInput = $("#cloud-key-credential-input");
+    const urlInput = $("#cloud-key-url-input");
+    const syncEndpoint = Boolean($("#cloud-key-sync-endpoint")?.checked);
+
+    if (!preset) {
+      if (feedbackEl) {
+        feedbackEl.textContent = "Select Google Gemini or OpenAI first.";
+        feedbackEl.classList.add("is-error");
+      }
+      return;
+    }
+
+    const credential = credInput?.value?.trim() || "";
+    const baseUrl = urlInput?.value?.trim() || preset.baseUrl;
+    if (!credential) {
+      if (feedbackEl) {
+        feedbackEl.textContent = `Paste your ${preset.keyLabel} before saving.`;
+        feedbackEl.classList.remove("is-success");
+        feedbackEl.classList.add("is-error");
+      }
+      credInput?.focus();
+      return;
+    }
+
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving…";
+    }
+    if (feedbackEl) {
+      feedbackEl.textContent = "Encrypting and saving key on server…";
+      feedbackEl.classList.remove("is-error", "is-success");
+    }
+
+    try {
+      await api(`/api/core/cloud-agents/${encodeURIComponent(providerId)}/credential`, {
+        method: "PUT",
+        body: JSON.stringify({ credential, baseUrl })
+      });
+      if (syncEndpoint) {
+        await syncCloudKeyToProviderEndpoint(providerId, baseUrl, credential).catch(() => {});
+      }
+      // Clear credential input immediately — never retain or persist secrets in the browser.
+      if (credInput) credInput.value = "";
+      await Promise.all([loadCloudAgents(), loadProvidersPanel().catch(() => {})]);
+      selectCloudKeyProvider(providerId, { focusInput: false });
+      if (feedbackEl) {
+        feedbackEl.textContent = `${preset.name} API key saved encrypted on server (never stored in browser).`;
+        feedbackEl.classList.remove("is-error");
+        feedbackEl.classList.add("is-success");
+      }
+      toast(`${preset.name} API key saved on server.`);
+    } catch (error) {
+      if (feedbackEl) {
+        feedbackEl.textContent = error.message || "Could not save API key.";
+        feedbackEl.classList.remove("is-success");
+        feedbackEl.classList.add("is-error");
+      }
+      toast(error.message || "Could not save API key.");
+    } finally {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Save key to server";
+      }
+    }
+  });
+
+  renderCloudKeyStatusCards();
+}
+
 initWorkingModeSelector();
 initIdeasVault();
 initWatchers();
 initWorkflowProfile();
+initChatOptionsMenu();
+initToolsAndKeysUi();
 initCapsules();
 initKnowledgeGraph();
 initVoiceLoopTts();

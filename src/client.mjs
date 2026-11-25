@@ -240,6 +240,12 @@ export function createAlfieCoreClient({
     previewCloudAgentPrivacy(userId, provider, body = {}) {
       return request(userId, "/v1/cloud-agents/" + encodeURIComponent(provider) + "/privacy-preview", { method: "POST", body });
     },
+    setCloudAgentCredential(userId, provider, body = {}) {
+      return request(userId, "/v1/cloud-agents/" + encodeURIComponent(provider) + "/credential", { method: "PUT", body });
+    },
+    clearCloudAgentCredential(userId, provider) {
+      return request(userId, "/v1/cloud-agents/" + encodeURIComponent(provider) + "/credential", { method: "DELETE" });
+    },
     generateImage(userId, body) { return request(userId, "/v1/images/generate", { method: "POST", body }); },
     async getImage(filename) {
       const url = new URL("/v1/images/" + encodeURIComponent(filename), root);

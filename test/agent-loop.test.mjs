@@ -230,3 +230,46 @@ test("interactive turns allow up to 30 minutes while retaining the four-step cap
   assert.equal(loop.wallClockTimeout, 30 * 60 * 1000);
   assert.equal(loop.maxSteps, 4);
 });
+
+test("AgentLoop recovers large website HTML/Markdown replies without burning extra retry steps", async () => {
+  const bigHtml = "<!DOCTYPE html>\n<html lang=\"en\"><head><title>Landing</title></head><body><h1>Hello World</h1></body></html>";
+  const h1 = harness([`Here is your complete website:\n\n\`\`\`html\n${bigHtml}\n\`\`\``]);
+  const res1 = await h1.loop.run({ userId: "user-1", messages: [{ role: "user", content: "Build me a website" }] });
+  assert.equal(res1.status, "completed");
+  assert.equal(h1.getCalls(), 1);
+  assert.match(res1.message, /<!DOCTYPE html>/);
+
+  // Truncated or unescaped JSON envelope around a large website response
+  const h2 = harness([`{"type":"final","message":"Here is your site:\\n\`\`\`html\\n<div class="hero">Welcome</div>`]);
+  const res2 = await h2.loop.run({ userId: "user-1", messages: [{ role: "user", content: "Build me a website" }] });
+  assert.equal(res2.status, "completed");
+  assert.equal(h2.getCalls(), 1);
+  assert.match(res2.message, /hero/);
+});
+
+test("ContextAssembler shortlists web.weather for weather and web.search for train timetables with concise guidance", () => {
+  const registry = new ToolRegistry();
+  registry.register({ id: "web.weather", trust: "external", network: true, externalAction: false, name: "Check live weather", description: "Fast direct weather lookup", scope: "web:read", risk: "read", tags: ["weather", "forecast", "temperature", "local", "web"], handler: async () => ({}) });
+  registry.register({ id: "web.search", trust: "external", network: true, externalAction: false, name: "Search the web", description: "Search public web pages", scope: "web:read", risk: "read", tags: ["web", "search", "news", "sources"], handler: async () => ({}) });
+  const assembler = new ContextAssembler();
+
+  const weatherTools = assembler.selectTools("What is the weather like today?", registry, ["web:read"]);
+  assert.equal(weatherTools[0].id, "web.weather");
+
+  const trainTools = assembler.selectTools("Next train from Leeds to Manchester station", registry, ["web:read"]);
+  assert.ok(trainTools.some((tool) => tool.id === "web.search"));
+
+  const assembled = assembler.assemble({
+    userText: "Next train to London?",
+    history: [{ role: "user", content: "Next train to London?" }],
+    registry,
+    grantedScopes: ["web:read"],
+    workflowProfile: {
+      location: { enabled: true, label: "Manchester, UK", latitude: 53.4808, longitude: -2.2426, timezone: "Europe/London" }
+    }
+  });
+  const sys = assembled.messages[0].content;
+  assert.match(sys, /Manchester, UK/);
+  assert.match(sys, /LIVE INFORMATION & SPEED RULES/);
+  assert.match(sys, /concise, scannable answer/i);
+});

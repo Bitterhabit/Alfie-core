@@ -2,7 +2,8 @@
   "name": "Alfie — Personal AI",
   "description": "A quiet space to think, make things and get things done. Your own personal AI core with memory, tool governance, and conversation management.",
   "permissions": [
-    "microphone"
+    "microphone",
+    "geolocation"
   ],
   "capabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

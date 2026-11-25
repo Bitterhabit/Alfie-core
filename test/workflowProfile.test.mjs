@@ -115,3 +115,38 @@ test("ContextAssembler and AgentLoop inject WorkflowProfile and surface learning
 
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test("WorkflowProfileStore validates, persists, injects, and clears opt-in user location", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-profile-loc-"));
+  const store = new WorkflowProfileStore({ dataDirectory: dir });
+  try {
+    const initial = await store.get("alice");
+    assert.equal(initial.location.enabled, false);
+    assert.equal(initial.location.label, "");
+
+    // Invalid coordinates are rejected
+    await assert.rejects(() => store.update("alice", { location: { enabled: true, latitude: 120, longitude: 0 } }), (err) => err.status === 400);
+    await assert.rejects(() => store.update("alice", { location: { enabled: true, latitude: 53.4, longitude: -220 } }), (err) => err.status === 400);
+
+    const saved = await store.update("alice", {
+      location: { enabled: true, label: "Manchester, UK", latitude: 53.4808, longitude: -2.2426, timezone: "Europe/London" }
+    });
+    assert.equal(saved.location.enabled, true);
+    assert.equal(saved.location.label, "Manchester, UK");
+    assert.equal(saved.location.latitude, 53.4808);
+    assert.equal(saved.location.longitude, -2.2426);
+
+    const promptWithLoc = buildWorkflowProfilePrompt(saved);
+    assert.match(promptWithLoc, /User saved location \(opt-in\): Manchester, UK/);
+    assert.match(promptWithLoc, /53\.4808, -2\.2426/);
+
+    // Clearing location disables and removes it from prompt
+    const cleared = await store.update("alice", { location: null });
+    assert.equal(cleared.location.enabled, false);
+    assert.equal(cleared.location.label, "");
+    assert.equal(cleared.location.latitude, null);
+    assert.doesNotMatch(buildWorkflowProfilePrompt(cleared), /User saved location/);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

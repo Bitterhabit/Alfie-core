@@ -106,8 +106,8 @@ export function getModularIntegrationsStatus({ petrioHarnessClient = null, env =
       })(),
       requiredEnv: ["ALFIE_SEARXNG_URL", "ALFIE_BRAVE_SEARCH_API_KEY"],
       scopes: ["web:read"],
-      tools: ["web.search", "web.open", "web.research"],
-      description: "Search the public web via private SearXNG or Brave Search and read HTTPS pages with private-network protections and untrusted-source handling."
+      tools: ["web.search", "web.open", "web.research", "web.weather"],
+      description: "Fast direct live weather via Open-Meteo plus public web search via private SearXNG or Brave Search with private-network protections and untrusted-source handling."
     }
   ];
 }

@@ -62,6 +62,14 @@ const CHUNK_SET = new Set(CHUNK_SIZES.map((item) => item.id));
 const LEARNING_SET = new Set(LEARNING_MODES.map((item) => item.id));
 const CONFIDENCE_SET = new Set(TOPIC_CONFIDENCE_LEVELS.map((item) => item.id));
 
+export const DEFAULT_USER_LOCATION = Object.freeze({
+  enabled: false,
+  label: "",
+  latitude: null,
+  longitude: null,
+  timezone: ""
+});
+
 export const DEFAULT_WORKFLOW_PROFILE = Object.freeze({
   explanationStyle: "balanced",
   changePresentation: "diffs_and_rollback",
@@ -71,6 +79,7 @@ export const DEFAULT_WORKFLOW_PROFILE = Object.freeze({
   customNotes: "",
   autoMemoryEnabled: true,
   learnFromFeedbackEnabled: true,
+  location: DEFAULT_USER_LOCATION,
   learnedStyle: createDefaultLearnedStyle(),
   learningTopics: []
 });
@@ -89,6 +98,33 @@ function normaliseTopic(raw, fallbackIso) {
     confidence,
     notes: cleanText(raw?.notes, 280),
     updatedAt: cleanText(raw?.updatedAt, 40) || fallbackIso
+  };
+}
+
+function normaliseCoord(value, min, max) {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < min || num > max) return null;
+  return Math.round(num * 10000) / 10000;
+}
+
+export function normaliseUserLocation(raw = {}) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ...DEFAULT_USER_LOCATION };
+  }
+  const label = cleanText(raw.label, 120).replace(/\s+/g, " ");
+  const latitude = normaliseCoord(raw.latitude, -90, 90);
+  const longitude = normaliseCoord(raw.longitude, -180, 180);
+  const hasCoords = latitude !== null && longitude !== null;
+  const timezone = cleanText(raw.timezone, 64).replace(/[^A-Za-z0-9_/+:-]/g, "");
+  const hasLocationData = Boolean(label || hasCoords);
+  const enabled = Boolean(raw.enabled) && hasLocationData;
+  return {
+    enabled,
+    label,
+    latitude: hasCoords ? latitude : null,
+    longitude: hasCoords ? longitude : null,
+    timezone
   };
 }
 
@@ -111,6 +147,7 @@ export function normaliseWorkflowProfile(raw = {}, nowIso = new Date().toISOStri
   const customNotes = cleanText(raw?.customNotes, 400);
   const autoMemoryEnabled = raw?.autoMemoryEnabled !== false;
   const learnFromFeedbackEnabled = raw?.learnFromFeedbackEnabled !== false;
+  const location = normaliseUserLocation(raw?.location);
   const learnedStyle = normaliseLearnedStyle(raw?.learnedStyle);
   const learningTopics = Array.isArray(raw?.learningTopics)
     ? raw.learningTopics.map((item) => normaliseTopic(item, nowIso)).filter((item) => item.topic).slice(0, MAX_TOPICS)
@@ -124,6 +161,7 @@ export function normaliseWorkflowProfile(raw = {}, nowIso = new Date().toISOStri
     customNotes,
     autoMemoryEnabled,
     learnFromFeedbackEnabled,
+    location,
     learnedStyle,
     learningTopics,
     updatedAt: cleanText(raw?.updatedAt, 40) || nowIso
@@ -154,6 +192,15 @@ export function buildWorkflowProfilePrompt(profile) {
   ];
   if (safe.customNotes) {
     lines.push(`- User workflow note: ${safe.customNotes}`);
+  }
+  if (safe.location?.enabled && (safe.location.label || (safe.location.latitude !== null && safe.location.longitude !== null))) {
+    const locParts = [];
+    if (safe.location.label) locParts.push(safe.location.label);
+    if (safe.location.latitude !== null && safe.location.longitude !== null) {
+      locParts.push(`coordinates ${safe.location.latitude}, ${safe.location.longitude}`);
+    }
+    if (safe.location.timezone) locParts.push(`timezone ${safe.location.timezone}`);
+    lines.push(`- User saved location (opt-in): ${locParts.join(" · ")}. Use this automatically for local weather, local news, nearby places, and transit/train origin queries unless the user specifies a different place.`);
   }
   if (safe.learningTopics.length) {
     const summary = safe.learningTopics.slice(0, 6).map((t) => `${t.topic} (${t.confidence})`).join(", ");
@@ -231,6 +278,23 @@ export class WorkflowProfileStore {
     if (patch.feedbackSensitivity !== undefined && !SENSITIVITY_SET.has(String(patch.feedbackSensitivity).toLowerCase())) {
       throw Object.assign(new Error("Unsupported feedbackSensitivity value."), { status: 400 });
     }
+    if (patch.location !== undefined && patch.location !== null) {
+      if (typeof patch.location !== "object" || Array.isArray(patch.location)) {
+        throw Object.assign(new Error("Location must be an object or null."), { status: 400 });
+      }
+      if (patch.location.latitude !== undefined && patch.location.latitude !== null && patch.location.latitude !== "") {
+        const lat = Number(patch.location.latitude);
+        if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+          throw Object.assign(new Error("Latitude must be between -90 and 90."), { status: 400 });
+        }
+      }
+      if (patch.location.longitude !== undefined && patch.location.longitude !== null && patch.location.longitude !== "") {
+        const lon = Number(patch.location.longitude);
+        if (!Number.isFinite(lon) || lon < -180 || lon > 180) {
+          throw Object.assign(new Error("Longitude must be between -180 and 180."), { status: 400 });
+        }
+      }
+    }
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
       const nowIso = this.now();
@@ -244,6 +308,15 @@ export class WorkflowProfileStore {
           sensitivity: String(patch.feedbackSensitivity).toLowerCase()
         });
       }
+      let nextLocation = current.location;
+      if (patch.location === null) {
+        nextLocation = { ...DEFAULT_USER_LOCATION };
+      } else if (patch.location !== undefined) {
+        nextLocation = normaliseUserLocation({
+          ...current.location,
+          ...patch.location
+        });
+      }
       const next = normaliseWorkflowProfile({
         ...current,
         ...(patch.explanationStyle !== undefined ? { explanationStyle: String(patch.explanationStyle).toLowerCase() } : {}),
@@ -254,6 +327,7 @@ export class WorkflowProfileStore {
         ...(typeof patch.customNotes === "string" ? { customNotes: cleanText(patch.customNotes, 400) } : {}),
         ...(typeof patch.autoMemoryEnabled === "boolean" ? { autoMemoryEnabled: patch.autoMemoryEnabled } : {}),
         ...(typeof patch.learnFromFeedbackEnabled === "boolean" ? { learnFromFeedbackEnabled: patch.learnFromFeedbackEnabled } : {}),
+        location: nextLocation,
         learnedStyle: nextLearnedStyle,
         updatedAt: nowIso
       }, nowIso);

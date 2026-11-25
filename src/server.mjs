@@ -262,7 +262,7 @@ export function createAlfieCoreServer({
         }
       });
       if (result.status === "timeout") throw Object.assign(new Error(result.message || "Chat task exceeded its processing budget."), { code: "CHAT_TASK_TIMEOUT" });
-      const assistantMessage = String(result.message || "The background task finished without a response.").slice(0, 12000);
+      const assistantMessage = String(result.message || "The background task finished without a response.").slice(0, 36000);
       await jobEngine.reportProgress(userId, job.id, 90, "Saving the response to your conversation");
       await conversationStore.appendMessage(userId, job.conversationId, {
         role: "assistant",
@@ -288,7 +288,7 @@ export function createAlfieCoreServer({
     headers["x-petrio-user-id"]
   );
 
-  return createHttpServer(async (req, res) => {
+  const server = createHttpServer(async (req, res) => {
     const url = new URL(req.url || "/", "http://alfie-core.internal");
 
     if (req.method === "GET" && url.pathname === "/health") {
@@ -1832,7 +1832,8 @@ export function createAlfieCoreServer({
 
     const cloudAgentMatch = /^\/v1\/cloud-agents\/(gemini|openai)$/.exec(url.pathname);
     const cloudAgentPreviewMatch = /^\/v1\/cloud-agents\/(gemini|openai)\/privacy-preview$/.exec(url.pathname);
-    if (url.pathname === "/v1/cloud-agents" || cloudAgentMatch || cloudAgentPreviewMatch) {
+    const cloudAgentCredentialMatch = /^\/v1\/cloud-agents\/(gemini|openai)\/credential$/.exec(url.pathname);
+    if (url.pathname === "/v1/cloud-agents" || cloudAgentMatch || cloudAgentPreviewMatch || cloudAgentCredentialMatch) {
       let identity;
       try { identity = await resolveIdentity(identityAuth, identityLinkStore, req.headers, { method: req.method, path: url.pathname + url.search }); }
       catch (error) { return json(res, error.status || 401, { error: error.message, ...(error.code ? { code: error.code } : {}) }); }
@@ -1856,6 +1857,34 @@ export function createAlfieCoreServer({
             detail: exposed.length
               ? `Optional private access enabled for ${agent.name}: ${exposed.join(", ")}.`
               : `${agent.name} set to strict coding-only isolation (all private sections blocked).`
+          });
+          return json(res, 200, { agent });
+        }
+        if (cloudAgentCredentialMatch && req.method === "PUT") {
+          const body = await readJsonBody(req);
+          const agent = await cloudAgentStore.setCredential(identity.userId, cloudAgentCredentialMatch[1], {
+            credential: body?.credential,
+            baseUrl: body?.baseUrl
+          });
+          await auditStore.record(identity.userId, {
+            event: "cloud_agent.credential_updated",
+            actor: "user",
+            toolId: agent.provider,
+            risk: "medium",
+            status: "configured",
+            detail: `Encrypted server-side API key saved for ${agent.name} (${agent.baseUrl}).`
+          });
+          return json(res, 200, { agent });
+        }
+        if (cloudAgentCredentialMatch && req.method === "DELETE") {
+          const agent = await cloudAgentStore.clearCredential(identity.userId, cloudAgentCredentialMatch[1]);
+          await auditStore.record(identity.userId, {
+            event: "cloud_agent.credential_cleared",
+            actor: "user",
+            toolId: agent.provider,
+            risk: "low",
+            status: "cleared",
+            detail: `Saved server-side API key removed for ${agent.name}.`
           });
           return json(res, 200, { agent });
         }
@@ -1973,6 +2002,8 @@ export function createAlfieCoreServer({
     if (req.method === "POST" && url.pathname === "/v1/chat/stream") {
       const controller = new AbortController();
       let streamHeadersSent = false;
+      req.socket?.setNoDelay?.(true);
+      res.socket?.setNoDelay?.(true);
       req.on("aborted", () => controller.abort());
       res.on("close", () => { if (!res.writableEnded) controller.abort(); });
       try {
@@ -1993,14 +2024,21 @@ export function createAlfieCoreServer({
           ensureStreamHeaders(200);
           writeStreamEvent(res, event);
         };
-        // Keep reverse proxies (including Cloudflare) aware that a long model turn is alive.
-        // Heartbeats carry no model content and do not alter the conversation transcript.
-        const heartbeat = setInterval(() => {
+        // Keep reverse proxies (Cloud Run, Nginx, Cloudflare) and browsers aware that a long
+        // model turn (e.g. building a website) is actively alive. Emit an early keepalive at 2.5s
+        // and repeat every 8s while keeping sub-second fast replies free of extra frames.
+        const sendHeartbeat = () => {
           if (controller.signal.aborted || res.destroyed) return;
           ensureStreamHeaders(200);
           writeStreamEvent(res, { type: "heartbeat", at: new Date().toISOString() });
-        }, 15_000);
-        heartbeat.unref?.();
+        };
+        let heartbeatInterval = null;
+        const firstHeartbeat = setTimeout(() => {
+          sendHeartbeat();
+          heartbeatInterval = setInterval(sendHeartbeat, 8_000);
+          heartbeatInterval.unref?.();
+        }, 2_500);
+        firstHeartbeat.unref?.();
 
         const agentProvider = ["local", "gemini", "openai"].includes(body.agentProvider) ? body.agentProvider : "local";
         const workingMode = resolveWorkingMode(body.workingMode).id;
@@ -2019,7 +2057,8 @@ export function createAlfieCoreServer({
             onProgress
           });
         } finally {
-          clearInterval(heartbeat);
+          clearTimeout(firstHeartbeat);
+          if (heartbeatInterval) clearInterval(heartbeatInterval);
         }
         if (controller.signal.aborted) return;
         ensureStreamHeaders(result.status === "awaiting_user_approval" ? 202 : 200);
@@ -2076,6 +2115,11 @@ export function createAlfieCoreServer({
 
     return json(res, 404, { error: "Route not found." });
   });
+  server.requestTimeout = 0;
+  server.timeout = 0;
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 70_000;
+  return server;
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {

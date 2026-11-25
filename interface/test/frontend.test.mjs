@@ -606,6 +606,95 @@ test("Project Dossier modal wires debounced auto-save module and live status fee
   assert.match(app, /getProjectDossierAutoSaver/);
 });
 
+test("topbar Alfie Soul has a subtle hover presence animation and respects reduced motion", async () => {
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  assert.match(css, /@keyframes soul-topbar-presence/);
+  assert.match(css, /\.topbar-brand-wrap \.alfie-soul\.mini:hover/);
+  assert.match(css, /\.topbar-brand-wrap:hover \.alfie-soul\.mini/);
+  const reducedIdx = css.lastIndexOf("@media(prefers-reduced-motion:reduce)");
+  assert.ok(reducedIdx > css.indexOf("@keyframes soul-topbar-presence"));
+  assert.match(css.slice(reducedIdx), /\.topbar-brand-wrap \.alfie-soul\.mini:hover/);
+});
+
+test("chat view tucks secondary options behind a clean burger menu and exposes opt-in location controls", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+  const ifaceServer = await fs.readFile(new URL("../src/server.mjs", import.meta.url), "utf8");
+
+  for (const id of [
+    "chat-context-summary",
+    "chat-location-pill-btn",
+    "chat-options-menu-btn",
+    "chat-options-drawer",
+    "chat-options-close-btn",
+    "chat-location-enabled",
+    "chat-location-input",
+    "chat-location-detect-btn",
+    "chat-location-save-btn",
+    "chat-location-clear-btn",
+    "chat-location-status",
+    "wf-location-enabled",
+    "wf-location-label",
+    "wf-location-detect-btn"
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`), `Missing #${id} in index.html`);
+  }
+
+  assert.match(css, /\.chat-options-menu-btn/);
+  assert.match(css, /\.chat-options-drawer/);
+  assert.match(css, /\.chat-location-input-row/);
+  assert.match(app, /initChatOptionsMenu/);
+  assert.match(app, /detectBrowserLocation/);
+  assert.match(app, /saveUserLocation/);
+  assert.match(app, /updateChatContextSummary/);
+  assert.match(ifaceServer, /geolocation=\(self\)/);
+});
+
+test("Tools & Access uses organized tabs and supports server-side Gemini & OpenAI API key setup with URL autofill", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+
+  for (const id of [
+    "tools-summary-strip",
+    "tools-section-tabs",
+    "tools-panel-permissions",
+    "tools-panel-keys",
+    "tools-panel-monitoring",
+    "tools-panel-automation",
+    "tool-scope-filter",
+    "tools-api-keys-surface",
+    "cloud-key-setup-form",
+    "cloud-key-provider-select",
+    "cloud-key-url-input",
+    "cloud-key-credential-input",
+    "cloud-key-status-cards",
+    "provider-openai-key-link"
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`), `Missing #${id} in index.html`);
+  }
+
+  // OpenAI preset exists alongside Gemini in Settings Model Providers too
+  assert.match(html, /<option value="openai">OpenAI \/ ChatGPT \(API key\)<\/option>/);
+  // Strict zero-forbidden-field-name check (keys are write-only server credentials)
+  assert.doesNotMatch(html, /name="apiKey"|name="geminiApiKey"|name="openaiApiKey"/i);
+
+  // CSS styles exist cleanly
+  assert.match(css, /\.tools-summary-strip/);
+  assert.match(css, /\.tools-section-tabs/);
+  assert.match(css, /\.tools-keys-layout/);
+  assert.match(css, /\.tools-create-drawer/);
+
+  // URL autofill presets & server-only vault endpoints wired in app.js
+  assert.match(app, /https:\/\/generativelanguage\.googleapis\.com\/v1beta\/openai/);
+  assert.match(app, /https:\/\/api\.openai\.com\/v1/);
+  assert.match(app, /\/api\/core\/cloud-agents\/\$\{encodeURIComponent\(providerId\)\}\/credential/);
+  assert.match(app, /initToolsAndKeysUi/);
+  assert.match(app, /selectCloudKeyProvider/);
+  assert.match(app, /applyProviderEditorPreset/);
+});
+
 
 
 

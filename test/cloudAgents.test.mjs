@@ -384,3 +384,162 @@ test("Core server routes Gemini & ChatGPT coding agents with strict server-side 
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test("CloudAgentStore encrypts UI-configured Gemini & OpenAI API keys at rest on the server, never exposes plaintext, and powers live chat without env vars", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-cloud-vault-"));
+  const identityAuth = createPetrioIdentityAuth({ secret: IDENTITY_SECRET });
+  const memoryStore = new MemoryStore({ dataDirectory: dir });
+  const permissionStore = new PermissionStore({ dataDirectory: dir });
+  const conversationStore = new ConversationStore({ dataDirectory: dir });
+  const projectStore = new ProjectStore({ dataDirectory: dir });
+  const auditStore = new AuditStore({ dataDirectory: dir });
+  const pendingActionStore = new PendingActionStore({ dataDirectory: dir });
+  const toolRegistry = new ToolRegistry();
+  // Explicitly NO GEMINI_API_KEY or OPENAI_API_KEY in env!
+  const cloudAgentStore = new CloudAgentStore({
+    dataDirectory: dir,
+    env: {}
+  });
+
+  const seenGeminiKeys = [];
+  const seenOpenAiCalls = [];
+  const cloudAdapters = new CloudAgentAdapters({
+    env: {},
+    geminiClientFactory: ({ apiKey }) => {
+      seenGeminiKeys.push(apiKey);
+      return {
+        models: {
+          generateContent: async () => ({
+            text: "Gemini reply using encrypted server vault key.",
+            usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 12, totalTokenCount: 22 }
+          })
+        }
+      };
+    },
+    fetchImpl: async (url, init) => {
+      seenOpenAiCalls.push({ url: String(url), auth: init.headers.authorization });
+      return new Response(JSON.stringify({
+        model: "gpt-4.1-mini",
+        choices: [{ message: { content: "OpenAI reply using encrypted server vault key." } }],
+        usage: { prompt_tokens: 10, completion_tokens: 12, total_tokens: 22 }
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  });
+
+  const server = createAlfieCoreServer({
+    serviceToken: SERVICE_TOKEN,
+    identityAuth,
+    petrioIdentityAuth: identityAuth,
+    petrioHarnessClient: { enabled: false },
+    memoryStore,
+    permissionStore,
+    conversationStore,
+    projectStore,
+    auditStore,
+    toolRegistry,
+    pendingActionStore,
+    cloudAgentStore,
+    cloudAdapters
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  const client = createAlfieCoreClient({
+    baseUrl: `http://127.0.0.1:${port}`,
+    serviceToken: SERVICE_TOKEN,
+    identityAuth
+  });
+
+  const geminiSecret = "AIzaSyVaultSecretGeminiKey2026Test";
+  const openaiSecret = "sk-proj-VaultSecretOpenAiKey2026Test";
+
+  try {
+    // 1. Initially neither provider has a secret configured, and default URLs are present
+    const initial = await client.listCloudAgents("user-vault");
+    const initGemini = initial.agents.find((a) => a.provider === "gemini");
+    const initOpenAi = initial.agents.find((a) => a.provider === "openai");
+    assert.equal(initGemini.secretConfigured, false);
+    assert.equal(initGemini.defaultBaseUrl, "https://generativelanguage.googleapis.com/v1beta/openai");
+    assert.equal(initOpenAi.secretConfigured, false);
+    assert.equal(initOpenAi.defaultBaseUrl, "https://api.openai.com/v1");
+
+    // 2. Reject insecure/private URLs when saving credentials
+    await assert.rejects(
+      () => client.setCloudAgentCredential("user-vault", "openai", {
+        credential: openaiSecret,
+        baseUrl: "http://169.254.169.254/v1"
+      }),
+      (err) => err.status === 400
+    );
+
+    // 3. Save encrypted Gemini & OpenAI keys via server-side vault endpoint
+    const savedGemini = await client.setCloudAgentCredential("user-vault", "gemini", {
+      credential: geminiSecret,
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai"
+    });
+    assert.equal(savedGemini.agent.secretConfigured, true);
+    assert.equal(savedGemini.agent.vaultKeyConfigured, true);
+    assert.equal(savedGemini.agent.secretSource, "server_vault");
+    assert.equal(JSON.stringify(savedGemini).includes(geminiSecret), false);
+
+    const savedOpenAi = await client.setCloudAgentCredential("user-vault", "openai", {
+      credential: openaiSecret,
+      baseUrl: "https://api.openai.com/v1"
+    });
+    assert.equal(savedOpenAi.agent.secretConfigured, true);
+    assert.equal(savedOpenAi.agent.vaultKeyConfigured, true);
+    assert.equal(savedOpenAi.agent.secretSource, "server_vault");
+    assert.equal(JSON.stringify(savedOpenAi).includes(openaiSecret), false);
+
+    // 4. Verify on-disk file is 0600, uses aes-256-gcm, and contains ZERO plaintext secret
+    const diskText = await fs.readFile(cloudAgentStore.filePath("user-vault"), "utf8");
+    assert.equal(diskText.includes(geminiSecret), false, "Gemini plaintext key must never be stored on disk");
+    assert.equal(diskText.includes(openaiSecret), false, "OpenAI plaintext key must never be stored on disk");
+    assert.match(diskText, /"alg":\s*"aes-256-gcm"/);
+    const stat = await fs.stat(cloudAgentStore.filePath("user-vault"));
+    assert.equal(stat.mode & 0o777, 0o600);
+
+    // 5. Verify user isolation (another user sees secretConfigured: false)
+    const otherUserState = await client.listCloudAgents("user-other");
+    assert.equal(otherUserState.agents.find((a) => a.provider === "gemini").secretConfigured, false);
+    assert.equal(otherUserState.agents.find((a) => a.provider === "openai").secretConfigured, false);
+
+    // 6. Enable both and run live chat turns — verify server-resolved vault keys are passed cleanly
+    await client.updateCloudAgent("user-vault", "gemini", { privacyWarningAccepted: true, enabled: true });
+    await client.updateCloudAgent("user-vault", "openai", { privacyWarningAccepted: true, enabled: true });
+
+    const geminiChat = await client.chat("user-vault", {
+      agentProvider: "gemini",
+      messages: [{ role: "user", content: "Ping Gemini" }]
+    });
+    assert.equal(geminiChat.status, "completed");
+    assert.match(geminiChat.message, /Gemini reply using encrypted server vault key/);
+    assert.deepEqual(seenGeminiKeys, [geminiSecret]);
+
+    const openaiChat = await client.chat("user-vault", {
+      agentProvider: "openai",
+      messages: [{ role: "user", content: "Ping OpenAI" }]
+    });
+    assert.equal(openaiChat.status, "completed");
+    assert.match(openaiChat.message, /OpenAI reply using encrypted server vault key/);
+    assert.equal(seenOpenAiCalls.length, 1);
+    assert.equal(seenOpenAiCalls[0].url, "https://api.openai.com/v1/chat/completions");
+    assert.equal(seenOpenAiCalls[0].auth, `Bearer ${openaiSecret}`);
+
+    // 7. Audit events record updates without leaking any secret
+    const auditEvents = await auditStore.list("user-vault", { limit: 20 });
+    const serializedAudit = JSON.stringify(auditEvents);
+    assert.equal(serializedAudit.includes(geminiSecret), false);
+    assert.equal(serializedAudit.includes(openaiSecret), false);
+    assert.ok(auditEvents.some((e) => e.event === "cloud_agent.credential_updated"));
+
+    // 8. Clearing credential removes key cleanly
+    const cleared = await client.clearCloudAgentCredential("user-vault", "openai");
+    assert.equal(cleared.agent.secretConfigured, false);
+    assert.equal(cleared.agent.vaultKeyConfigured, false);
+    assert.equal(cleared.agent.secretSource, null);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

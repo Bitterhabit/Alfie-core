@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -9,6 +9,7 @@ import {
   stripPersonalVisibility,
   summarizePrivacy
 } from "../privacy/policy.mjs";
+import { validateProviderUrl } from "./registry.mjs";
 
 export const CLOUD_PROVIDER_CATALOG = Object.freeze({
   gemini: Object.freeze({
@@ -16,6 +17,7 @@ export const CLOUD_PROVIDER_CATALOG = Object.freeze({
     name: "Gemini API",
     vendor: "Google",
     envVar: "GEMINI_API_KEY",
+    defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
     defaultModel: "gemini-4-hydrogen",
     models: Object.freeze([
       { id: "gemini-4-hydrogen", label: "Gemini 4 Hydrogen (Recommended coding)" },
@@ -28,6 +30,7 @@ export const CLOUD_PROVIDER_CATALOG = Object.freeze({
     name: "ChatGPT (OpenAI)",
     vendor: "OpenAI",
     envVar: "OPENAI_API_KEY",
+    defaultBaseUrl: "https://api.openai.com/v1",
     defaultModel: "gpt-4.1-mini",
     models: Object.freeze([
       { id: "gpt-4.1-mini", label: "GPT-4.1 mini (Fast coding)" },
@@ -41,12 +44,76 @@ export const CLOUD_PROVIDER_CATALOG = Object.freeze({
 
 const ALLOWED_PROVIDER_IDS = Object.keys(CLOUD_PROVIDER_CATALOG);
 const FORBIDDEN_SECRET_KEYS = new Set(["apiKey", "apikey", "api_key", "secret", "token", "accessToken", "bearerToken"]);
+const SECRET_INFO = Buffer.from("alfie-cloud-agent-credential-v1", "utf8");
+const SECRET_SALT = Buffer.from("alfie-core-cloud-vault-salt", "utf8");
+const SECRET_FILENAME = ".provider-secret.key";
 
 function userHash(userId) {
   if (typeof userId !== "string" || !userId.trim()) {
     throw Object.assign(new Error("A valid user ID is required."), { status: 400 });
   }
   return createHash("sha256").update(userId.trim()).digest("hex");
+}
+
+function deriveEncryptionKey(masterMaterial) {
+  return Buffer.from(hkdfSync("sha256", Buffer.from(String(masterMaterial), "utf8"), SECRET_SALT, SECRET_INFO, 32));
+}
+
+function encryptSecret(plaintext, key) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const ciphertext = Buffer.concat([cipher.update(String(plaintext), "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return {
+    alg: "aes-256-gcm",
+    iv: iv.toString("base64"),
+    tag: tag.toString("base64"),
+    data: ciphertext.toString("base64")
+  };
+}
+
+function decryptSecret(envelope, key) {
+  if (!envelope || typeof envelope !== "object" || envelope.alg !== "aes-256-gcm") return "";
+  try {
+    const iv = Buffer.from(String(envelope.iv || ""), "base64");
+    const tag = Buffer.from(String(envelope.tag || ""), "base64");
+    const data = Buffer.from(String(envelope.data || ""), "base64");
+    const decipher = createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
+  } catch {
+    return "";
+  }
+}
+
+function normaliseEncryptedEnvelope(value) {
+  if (!value || typeof value !== "object" || value.alg !== "aes-256-gcm") return null;
+  if (typeof value.iv !== "string" || typeof value.tag !== "string" || typeof value.data !== "string") return null;
+  return {
+    alg: "aes-256-gcm",
+    iv: value.iv,
+    tag: value.tag,
+    data: value.data
+  };
+}
+
+function validateCloudBaseUrl(rawUrl, fallbackUrl) {
+  const candidate = typeof rawUrl === "string" && rawUrl.trim() ? rawUrl.trim() : fallbackUrl;
+  const check = validateProviderUrl(candidate, { trustedLocal: false });
+  if (!check.valid) {
+    throw Object.assign(new Error(check.error || "Cloud API URL must be a valid public HTTPS endpoint."), {
+      status: 400,
+      code: check.code || "CLOUD_URL_INVALID"
+    });
+  }
+  const parsed = new URL(check.url);
+  if (parsed.protocol !== "https:") {
+    throw Object.assign(new Error("Cloud API URL must use HTTPS."), {
+      status: 400,
+      code: "CLOUD_URL_HTTPS_REQUIRED"
+    });
+  }
+  return check.url;
 }
 
 function defaultAgentRecord(providerId) {
@@ -59,6 +126,9 @@ function defaultAgentRecord(providerId) {
     privateAccessOptIn: false,
     privateAccessOptInAt: null,
     model: catalog.defaultModel,
+    baseUrl: catalog.defaultBaseUrl,
+    credentialEncrypted: null,
+    credentialUpdatedAt: null,
     role: "coding",
     visibility: normaliseVisibility(DEFAULT_CLOUD_VISIBILITY),
     updatedAt: null
@@ -78,6 +148,14 @@ function normaliseAgentRecord(providerId, record) {
   // Fail-closed: private section flags can only stay active when privateAccessOptIn is explicitly true.
   const privateAccessOptIn = source.privateAccessOptIn === true;
   const visibility = privateAccessOptIn ? rawVisibility : stripPersonalVisibility(rawVisibility);
+  const credentialEncrypted = normaliseEncryptedEnvelope(source.credentialEncrypted);
+  let baseUrl = catalog.defaultBaseUrl;
+  if (typeof source.baseUrl === "string" && source.baseUrl.trim()) {
+    const checked = validateProviderUrl(source.baseUrl.trim(), { trustedLocal: false });
+    if (checked.valid && typeof checked.url === "string" && checked.url.startsWith("https://")) {
+      baseUrl = checked.url;
+    }
+  }
 
   return {
     provider: providerId,
@@ -91,6 +169,11 @@ function normaliseAgentRecord(providerId, record) {
       ? source.privateAccessOptInAt
       : null,
     model,
+    baseUrl,
+    credentialEncrypted,
+    credentialUpdatedAt: credentialEncrypted && typeof source.credentialUpdatedAt === "string"
+      ? source.credentialUpdatedAt
+      : null,
     role: "coding",
     visibility,
     updatedAt: typeof source.updatedAt === "string" ? source.updatedAt : null
@@ -101,10 +184,13 @@ export class CloudAgentStore {
   constructor({
     dataDirectory = process.env.ALFIE_CORE_DATA_DIR || path.resolve(process.cwd(), "data"),
     env = process.env,
+    secretKey = process.env.ALFIE_PROVIDER_SECRET_KEY || "",
     now = () => new Date().toISOString()
   } = {}) {
     this.dataDirectory = dataDirectory;
     this.env = env;
+    this.explicitSecretKey = String(secretKey || "").trim();
+    this.cachedKey = null;
     this.now = now;
   }
 
@@ -112,11 +198,49 @@ export class CloudAgentStore {
     return path.join(this.dataDirectory, "users", userHash(userId), "cloud-agents.json");
   }
 
-  secretConfigured(providerId) {
+  async ensureEncryptionKey() {
+    if (this.cachedKey) return this.cachedKey;
+    if (this.explicitSecretKey) {
+      this.cachedKey = deriveEncryptionKey(this.explicitSecretKey);
+      return this.cachedKey;
+    }
+    const keyPath = path.join(this.dataDirectory, SECRET_FILENAME);
+    await fs.mkdir(this.dataDirectory, { recursive: true, mode: 0o700 });
+    try {
+      const existing = (await fs.readFile(keyPath, "utf8")).trim();
+      if (existing.length >= 32) {
+        this.cachedKey = deriveEncryptionKey(existing);
+        return this.cachedKey;
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    const generated = randomBytes(32).toString("hex");
+    try {
+      await fs.writeFile(keyPath, `${generated}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      await fs.chmod(keyPath, 0o600).catch(() => {});
+      this.cachedKey = deriveEncryptionKey(generated);
+      return this.cachedKey;
+    } catch (error) {
+      if (error?.code === "EEXIST") {
+        const existing = (await fs.readFile(keyPath, "utf8")).trim();
+        this.cachedKey = deriveEncryptionKey(existing);
+        return this.cachedKey;
+      }
+      throw error;
+    }
+  }
+
+  envSecretConfigured(providerId) {
     const catalog = CLOUD_PROVIDER_CATALOG[providerId];
     if (!catalog) return false;
     const value = this.env?.[catalog.envVar];
     return typeof value === "string" && value.trim().length > 0;
+  }
+
+  secretConfigured(providerId, record = null) {
+    const hasVault = Boolean(record?.credentialEncrypted);
+    return hasVault || this.envSecretConfigured(providerId);
   }
 
   async readRaw(userId) {
@@ -153,13 +277,31 @@ export class CloudAgentStore {
   toPublicAgent(providerId, record) {
     const catalog = CLOUD_PROVIDER_CATALOG[providerId];
     const normalised = normaliseAgentRecord(providerId, record);
-    const configured = this.secretConfigured(providerId);
+    const vaultKeyConfigured = Boolean(normalised.credentialEncrypted);
+    const envKeyConfigured = this.envSecretConfigured(providerId);
+    const configured = vaultKeyConfigured || envKeyConfigured;
+    const secretSource = vaultKeyConfigured ? "server_vault" : (envKeyConfigured ? "environment" : null);
     return {
-      ...normalised,
+      provider: normalised.provider,
+      enabled: normalised.enabled,
+      privacyWarningAccepted: normalised.privacyWarningAccepted,
+      privacyWarningAcceptedAt: normalised.privacyWarningAcceptedAt,
+      privateAccessOptIn: normalised.privateAccessOptIn,
+      privateAccessOptInAt: normalised.privateAccessOptInAt,
+      model: normalised.model,
+      baseUrl: normalised.baseUrl || catalog.defaultBaseUrl,
+      defaultBaseUrl: catalog.defaultBaseUrl,
+      role: normalised.role,
+      visibility: normalised.visibility,
+      updatedAt: normalised.updatedAt,
+      credentialUpdatedAt: normalised.credentialUpdatedAt,
       name: catalog.name,
       vendor: catalog.vendor,
       envVar: catalog.envVar,
       secretConfigured: configured,
+      vaultKeyConfigured,
+      envKeyConfigured,
+      secretSource,
       ready: normalised.enabled && normalised.privacyWarningAccepted && configured,
       models: catalog.models,
       privacyWarning: catalog.privacyWarning,
@@ -188,6 +330,88 @@ export class CloudAgentStore {
     return this.toPublicAgent(providerId, raw[providerId]);
   }
 
+  async setCredential(userId, providerId, { credential, baseUrl } = {}) {
+    if (!ALLOWED_PROVIDER_IDS.includes(providerId)) {
+      throw Object.assign(new Error("Unknown cloud agent provider. Supported providers are gemini and openai."), {
+        status: 404,
+        code: "CLOUD_PROVIDER_UNKNOWN"
+      });
+    }
+    const cleaned = typeof credential === "string" ? credential.trim() : "";
+    if (!cleaned || cleaned.length < 6 || cleaned.length > 512 || /[\r\n\t\s]/.test(cleaned)) {
+      throw Object.assign(
+        new Error("Enter a valid API key (6–512 characters with no spaces or line breaks)."),
+        { status: 400, code: "CLOUD_CREDENTIAL_INVALID" }
+      );
+    }
+
+    const catalog = CLOUD_PROVIDER_CATALOG[providerId];
+    const validatedUrl = validateCloudBaseUrl(baseUrl, catalog.defaultBaseUrl);
+    const key = await this.ensureEncryptionKey();
+    const raw = await this.readRaw(userId);
+    const current = raw[providerId];
+    const timestamp = this.now();
+
+    const updated = {
+      ...current,
+      baseUrl: validatedUrl,
+      credentialEncrypted: encryptSecret(cleaned, key),
+      credentialUpdatedAt: timestamp,
+      updatedAt: timestamp
+    };
+
+    raw[providerId] = updated;
+    await this.writeRaw(userId, raw);
+    return this.toPublicAgent(providerId, updated);
+  }
+
+  async clearCredential(userId, providerId) {
+    if (!ALLOWED_PROVIDER_IDS.includes(providerId)) {
+      throw Object.assign(new Error("Unknown cloud agent provider. Supported providers are gemini and openai."), {
+        status: 404,
+        code: "CLOUD_PROVIDER_UNKNOWN"
+      });
+    }
+    const raw = await this.readRaw(userId);
+    const current = raw[providerId];
+    const updated = {
+      ...current,
+      credentialEncrypted: null,
+      credentialUpdatedAt: null,
+      updatedAt: this.now()
+    };
+    raw[providerId] = updated;
+    await this.writeRaw(userId, raw);
+    return this.toPublicAgent(providerId, updated);
+  }
+
+  async resolveCredential(userId, providerId) {
+    if (!ALLOWED_PROVIDER_IDS.includes(providerId)) return null;
+    const catalog = CLOUD_PROVIDER_CATALOG[providerId];
+    const raw = await this.readRaw(userId);
+    const record = raw[providerId];
+    if (record?.credentialEncrypted) {
+      const key = await this.ensureEncryptionKey();
+      const decrypted = decryptSecret(record.credentialEncrypted, key).trim();
+      if (decrypted) {
+        return {
+          apiKey: decrypted,
+          baseUrl: record.baseUrl || catalog.defaultBaseUrl,
+          source: "server_vault"
+        };
+      }
+    }
+    const envValue = typeof this.env?.[catalog.envVar] === "string" ? this.env[catalog.envVar].trim() : "";
+    if (envValue) {
+      return {
+        apiKey: envValue,
+        baseUrl: record?.baseUrl || catalog.defaultBaseUrl,
+        source: "environment"
+      };
+    }
+    return null;
+  }
+
   async updateAgent(userId, providerId, patch = {}) {
     if (!ALLOWED_PROVIDER_IDS.includes(providerId)) {
       throw Object.assign(new Error("Unknown cloud agent provider. Supported providers are gemini and openai."), {
@@ -201,7 +425,7 @@ export class CloudAgentStore {
     for (const key of Object.keys(patch)) {
       if (FORBIDDEN_SECRET_KEYS.has(key)) {
         throw Object.assign(
-          new Error(`API keys cannot be submitted from the browser. Configure ${CLOUD_PROVIDER_CATALOG[providerId].envVar} in your server environment or Settings > Secrets.`),
+          new Error(`API keys cannot be submitted on privacy updates. Save keys through the encrypted server key vault or ${CLOUD_PROVIDER_CATALOG[providerId].envVar}.`),
           { status: 400, code: "SECRET_IN_CLIENT_FORBIDDEN" }
         );
       }
@@ -288,6 +512,9 @@ export class CloudAgentStore {
       privateAccessOptIn: nextPrivateOptIn,
       privateAccessOptInAt: nextPrivateOptInAt,
       model: nextModel,
+      baseUrl: current.baseUrl || catalog.defaultBaseUrl,
+      credentialEncrypted: current.credentialEncrypted || null,
+      credentialUpdatedAt: current.credentialUpdatedAt || null,
       role: "coding",
       visibility: nextVisibility,
       updatedAt: this.now()
