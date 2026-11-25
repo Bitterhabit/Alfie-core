@@ -849,8 +849,19 @@ export function createAlfieInterfaceServer({
         }
         if (method === "POST" && url.pathname === "/api/core/tools/approve") {
           requireCsrf(req, session);
+          const approveController = new AbortController();
+          const abortApprove = () => {
+            if (!approveController.signal.aborted) approveController.abort(new Error("Browser client disconnected during approval."));
+          };
+          req.on("aborted", abortApprove);
+          res.on("close", () => { if (!res.writableEnded) abortApprove(); });
           const body = await readJson(req);
-          return json(res, 200, await coreClient.approveAction(userId, body.actionId));
+          try {
+            return json(res, 200, await coreClient.approveAction(userId, body.actionId, { signal: approveController.signal }));
+          } catch (error) {
+            if (approveController.signal.aborted) return;
+            throw error;
+          }
         }
         if (method === "POST" && url.pathname === "/api/core/tools/reject") {
           requireCsrf(req, session);
@@ -929,6 +940,7 @@ export function createAlfieInterfaceServer({
       "voice-waveform.mjs": "text/javascript; charset=utf-8",
       "knowledge-graph.mjs": "text/javascript; charset=utf-8",
       "virtual-room.mjs": "text/javascript; charset=utf-8",
+      "chat-lifecycle.mjs": "text/javascript; charset=utf-8",
       "styles.css": "text/css; charset=utf-8",
       "sw.js": "application/javascript; charset=utf-8",
       "manifest.webmanifest": "application/manifest+json; charset=utf-8",

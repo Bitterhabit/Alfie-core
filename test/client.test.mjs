@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createAlfieCoreClient, CHAT_REQUEST_TIMEOUT_MS } from "../src/client.mjs";
+import { createAlfieCoreClient, CHAT_REQUEST_TIMEOUT_MS, APPROVAL_REQUEST_TIMEOUT_MS } from "../src/client.mjs";
 import { createSignedIdentityAuth } from "../src/auth/signedIdentity.mjs";
 
 const serviceToken = "test-service-token-with-at-least-32-characters";
@@ -116,8 +116,10 @@ test("chat and streaming calls use the long request budget while ordinary calls 
     await client.whoami("user-1");
     await client.stream("user-1", { messages: [] });
     await client.chat("user-1", { messages: [] });
-    assert.deepEqual(observed, [30_000, CHAT_REQUEST_TIMEOUT_MS, CHAT_REQUEST_TIMEOUT_MS]);
+    await client.approveAction("user-1", "action-1");
+    assert.deepEqual(observed, [30_000, CHAT_REQUEST_TIMEOUT_MS, CHAT_REQUEST_TIMEOUT_MS, APPROVAL_REQUEST_TIMEOUT_MS]);
     assert.equal(CHAT_REQUEST_TIMEOUT_MS, 35 * 60 * 1000);
+    assert.equal(APPROVAL_REQUEST_TIMEOUT_MS, 5 * 60 * 1000);
   } finally { AbortSignal.timeout = originalTimeout; }
 });
 

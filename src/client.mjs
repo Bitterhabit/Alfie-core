@@ -3,6 +3,7 @@ function configurationError(message) {
 }
 
 export const CHAT_REQUEST_TIMEOUT_MS = 35 * 60 * 1000;
+export const APPROVAL_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 
 export function createAlfieCoreClient({
   baseUrl = process.env.ALFIE_CORE_URL || "http://alfie-core:8780",
@@ -158,7 +159,9 @@ export function createAlfieCoreClient({
     listPermissions(userId) { return request(userId, "/v1/permissions"); },
     listPendingActions(userId) { return request(userId, "/v1/tools/pending"); },
     listActionReceipts(userId, limit = 25) { return request(userId, "/v1/tools/receipts?limit=" + encodeURIComponent(limit)); },
-    approveAction(userId, actionId) { return request(userId, "/v1/tools/approve", { method: "POST", body: { actionId } }); },
+    approveAction(userId, actionId, options = {}) {
+      return request(userId, "/v1/tools/approve", { method: "POST", body: { actionId }, ...options, timeoutMs: options.timeoutMs ?? APPROVAL_REQUEST_TIMEOUT_MS });
+    },
     rejectAction(userId, actionId) { return request(userId, "/v1/tools/reject", { method: "POST", body: { actionId } }); },
     listAudit(userId, limit = 50) { return request(userId, "/v1/audit?limit=" + encodeURIComponent(limit)); },
     getStorageStatus(userId) { return request(userId, "/v1/storage/status"); },

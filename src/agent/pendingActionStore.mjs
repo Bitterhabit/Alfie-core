@@ -30,7 +30,7 @@ export class PendingActionStore {
     await writeUserJsonDocument(this.dataDirectory, userId, "pending-actions.json", store, { pretty: false });
   }
 
-  async create(userId, action, ttlMs = 5 * 60 * 1000) {
+  async create(userId, action, ttlMs = 15 * 60 * 1000) {
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
       const now = this.now();

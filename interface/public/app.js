@@ -4607,6 +4607,16 @@ function findConversationIdForAction(actionId) {
   return null;
 }
 
+const chatLifecycle = (typeof globalThis.AlfieChatLifecycle?.createChatTurnLifecycle === "function")
+  ? globalThis.AlfieChatLifecycle.createChatTurnLifecycle({
+      onChange(snapshot) {
+        state.sending = snapshot.busy;
+        state.chatLifecyclePhase = snapshot.phase;
+        syncChatCancelButton(snapshot.busy);
+      }
+    })
+  : null;
+
 let activeChatRequest = null;
 
 function syncChatCancelButton(isSending) {
@@ -4616,14 +4626,21 @@ function syncChatCancelButton(isSending) {
   if (stopBtn) stopBtn.hidden = !isSending;
 }
 
-function beginChatRequest() {
+function beginChatRequest(options = {}) {
+  if (chatLifecycle) {
+    const turn = chatLifecycle.beginTurn(options);
+    activeChatRequest = turn;
+    return turn;
+  }
   if (activeChatRequest) {
     cancelActiveChatRequest({ silent: true });
   }
   const request = {
     controller: new AbortController(),
     abortedByUser: false,
-    silent: false
+    silent: false,
+    transition() {},
+    finish() { return true; }
   };
   activeChatRequest = request;
   state.sending = true;
@@ -4632,6 +4649,15 @@ function beginChatRequest() {
 }
 
 function cancelActiveChatRequest({ silent = false } = {}) {
+  const input = $("#chat-form")?.elements?.message;
+  if (chatLifecycle) {
+    const cancelled = chatLifecycle.cancelActiveTurn({ silent });
+    if (cancelled) {
+      activeChatRequest = null;
+      if (input) input.disabled = false;
+    }
+    return cancelled;
+  }
   const request = activeChatRequest;
   if (!request) return false;
   request.abortedByUser = true;
@@ -4639,7 +4665,6 @@ function cancelActiveChatRequest({ silent = false } = {}) {
   activeChatRequest = null;
   state.sending = false;
   syncChatCancelButton(false);
-  const input = $("#chat-form")?.elements?.message;
   if (input) input.disabled = false;
   try {
     request.controller.abort(new Error("Request cancelled by user."));
@@ -4647,7 +4672,14 @@ function cancelActiveChatRequest({ silent = false } = {}) {
   return true;
 }
 
-function finishChatRequest(request) {
+function finishChatRequest(request, { outcome = "completed" } = {}) {
+  if (chatLifecycle && typeof request?.finish === "function") {
+    const isLatest = request.finish({ outcome });
+    if (activeChatRequest === request) {
+      activeChatRequest = null;
+    }
+    return isLatest;
+  }
   if (activeChatRequest && activeChatRequest !== request) {
     return false;
   }
@@ -4661,40 +4693,34 @@ function finishChatRequest(request) {
 
 async function continueChatAfterApproval({ conversationId, actionId = "", toolId = "", approvalResult = null, summary = "" } = {}) {
   if (!conversationId || !state.linked) return;
-  if (state.sending) {
-    // Wait briefly if a prior streaming turn is wrapping up its finally block
-    const waitDeadline = Date.now() + 3000;
-    while (state.sending && Date.now() < waitDeadline) {
-      await new Promise((resolve) => setTimeout(resolve, 120));
+  const runContinuation = async () => {
+    if (chatLifecycle) {
+      await chatLifecycle.waitForActiveTurn();
     }
-    if (state.sending) {
-      toast("Alfie is finishing another reply. Send a follow-up once it completes.");
-      return;
+    setView("chat");
+    if (state.activeConversationId !== conversationId) {
+      await loadConversation(conversationId);
     }
-  }
-  setView("chat");
-  if (state.activeConversationId !== conversationId) {
-    await loadConversation(conversationId);
-  }
-  if (actionId) {
-    markChatApprovalCardResolved(actionId, {
-      state: "success",
-      headingText: approvalResult?.receipt?.verified ? "Approved and verified" : "Approved and executed",
-      detailText: toolId
-        ? `Approved ${toolId}. Alfie is continuing the conversation below.`
-        : "Approved and executed. Alfie is continuing the conversation below.",
-      result: approvalResult?.result
-    });
-  }
+    if (actionId) {
+      markChatApprovalCardResolved(actionId, {
+        state: "success",
+        headingText: approvalResult?.receipt?.verified ? "Approved and verified" : "Approved and executed",
+        detailText: toolId
+          ? `Approved ${toolId}. Alfie is continuing the conversation below.`
+          : "Approved and executed. Alfie is continuing the conversation below.",
+        result: approvalResult?.result
+      });
+    }
 
-  const form = $("#chat-form");
-  const input = form?.elements?.message;
-  const chatRequest = beginChatRequest();
-  if (input) input.disabled = true;
-  const sendStart = Date.now();
-  let assistantBody = null;
-  let thinking = null;
-  let assistantText = "";
+    const form = $("#chat-form");
+    const input = form?.elements?.message;
+    const chatRequest = beginChatRequest({ kind: "approval_continuation", conversationId, actionId });
+    if (input) input.disabled = true;
+    const sendStart = Date.now();
+    let assistantBody = null;
+    let thinking = null;
+    let assistantText = "";
+    let turnOutcome = "completed";
 
   try {
     assistantBody = appendMessageElement({ role: "assistant", content: "" });
@@ -4759,6 +4785,7 @@ async function continueChatAfterApproval({ conversationId, actionId = "", toolId
       const failure = await response.json().catch(() => ({}));
       throw new Error(failure.error || "Alfie could not continue the conversation.");
     }
+    chatRequest.transition?.("streaming");
 
     let buffer = "";
     let finalEvent = null;
@@ -4876,54 +4903,70 @@ async function continueChatAfterApproval({ conversationId, actionId = "", toolId
       thinking.element.remove();
       thinking = null;
     }
-    if (chatRequest.abortedByUser) {
-      if (!chatRequest.silent && assistantBody) {
-        assistantBody.querySelector(".streaming-cursor")?.remove();
-        const stoppedText = assistantText.trim() || "*Stopped.*";
-        renderMarkdown(assistantBody, stoppedText);
-        assistantBody.dataset.rawContent = stoppedText;
-        if (assistantText.trim()) {
-          try { await persistMessage("assistant", assistantText.trim(), conversationId); } catch {}
+      if (chatRequest.abortedByUser) {
+        turnOutcome = "cancelled";
+        if (!chatRequest.silent && assistantBody) {
+          assistantBody.querySelector(".streaming-cursor")?.remove();
+          const stoppedText = assistantText.trim() || "*Stopped.*";
+          renderMarkdown(assistantBody, stoppedText);
+          assistantBody.dataset.rawContent = stoppedText;
+          if (assistantText.trim()) {
+            try { await persistMessage("assistant", assistantText.trim(), conversationId); } catch {}
+          }
+          window.alfieSoul?.setState("idle", "purple");
+          toast("Generation stopped.");
         }
-        window.alfieSoul?.setState("idle", "purple");
-        toast("Generation stopped.");
+        return;
       }
-      return;
+      turnOutcome = "failed";
+      const fallbackResult = formatApprovedToolResultForContinuation(toolId, approvalResult?.result);
+      const fallbackText = `The approved action (${toolId || "tool"}) finished, though Alfie could not generate a follow-up summary (${error.message}).\n\n${fallbackResult}`;
+      if (assistantBody) {
+        renderMarkdown(assistantBody, fallbackText);
+        assistantBody.dataset.rawContent = fallbackText.trim();
+        try { await persistMessage("assistant", fallbackText, conversationId); } catch {}
+      }
+      window.alfieSoul?.pulse("completed", 1600, "idle", "purple");
+      toast("Action ran; showed tool output directly.");
+    } finally {
+      if (thinking) {
+        thinking.stop();
+        thinking.element.remove();
+        thinking = null;
+      }
+      if (finishChatRequest(chatRequest, { outcome: turnOutcome }) && input) {
+        input.disabled = false;
+        if (!chatRequest.silent) input.focus();
+      }
     }
-    const fallbackResult = formatApprovedToolResultForContinuation(toolId, approvalResult?.result);
-    const fallbackText = `The approved action (${toolId || "tool"}) finished, though Alfie could not generate a follow-up summary (${error.message}).\n\n${fallbackResult}`;
-    if (assistantBody) {
-      renderMarkdown(assistantBody, fallbackText);
-      assistantBody.dataset.rawContent = fallbackText.trim();
-      try { await persistMessage("assistant", fallbackText, conversationId); } catch {}
-    }
-    window.alfieSoul?.pulse("completed", 1600, "idle", "purple");
-    toast("Action ran; showed tool output directly.");
-  } finally {
-    if (thinking) {
-      thinking.stop();
-      thinking.element.remove();
-      thinking = null;
-    }
-    if (finishChatRequest(chatRequest) && input) {
-      input.disabled = false;
-      if (!chatRequest.silent) input.focus();
-    }
+  };
+
+  if (chatLifecycle) {
+    return chatLifecycle.enqueueContinuation(runContinuation);
   }
+  return runContinuation();
 }
 
 async function approvePendingActionAndContinue(actionId, { toolId = "", summary = "", conversationId = null, cardElement = null } = {}) {
   if (!actionId) return;
+  const approvalHandle = chatLifecycle ? chatLifecycle.beginApproval(actionId) : { accepted: true, signal: undefined, finish() {} };
+  if (!approvalHandle.accepted) return;
+
   const buttons = cardElement ? [...cardElement.querySelectorAll("button")] : [];
   buttons.forEach((btn) => { btn.disabled = true; });
+  let approvedResult = null;
+  let resolvedToolId = toolId;
+  let targetConversationId = null;
   try {
     window.alfieSoul?.setState("working", "cyan");
     const res = await api("/api/core/tools/approve", {
       method: "POST",
+      signal: approvalHandle.signal,
       body: JSON.stringify({ actionId })
     });
-    const resolvedToolId = res.toolId || toolId;
-    const targetConversationId =
+    approvedResult = res;
+    resolvedToolId = res.toolId || toolId;
+    targetConversationId =
       conversationId ||
       res.conversationId ||
       findConversationIdForAction(actionId) ||
@@ -4939,17 +4982,6 @@ async function approvePendingActionAndContinue(actionId, { toolId = "", summary 
     });
     toast(targetConversationId ? "Action approved — Alfie is continuing your chat." : (res.receipt?.verified ? "Action approved & verified." : "Action approved and executed."));
     loadToolsAndApprovals().catch(() => {});
-    if (targetConversationId) {
-      await continueChatAfterApproval({
-        conversationId: targetConversationId,
-        actionId,
-        toolId: resolvedToolId,
-        approvalResult: res,
-        summary
-      });
-    } else {
-      window.alfieSoul?.pulse("completed", 2000, "idle", "purple");
-    }
   } catch (error) {
     if (error.actionConsumed) {
       state.pendingApprovalConversations.delete(actionId);
@@ -4966,6 +4998,21 @@ async function approvePendingActionAndContinue(actionId, { toolId = "", summary 
       window.alfieSoul?.setState("error", "red");
       toast(error.message);
     }
+    return;
+  } finally {
+    approvalHandle.finish();
+  }
+
+  if (targetConversationId) {
+    await continueChatAfterApproval({
+      conversationId: targetConversationId,
+      actionId,
+      toolId: resolvedToolId,
+      approvalResult: approvedResult,
+      summary
+    });
+  } else {
+    window.alfieSoul?.pulse("completed", 2000, "idle", "purple");
   }
 }
 
@@ -5541,13 +5588,17 @@ async function sendMessage(rawText) {
     return;
   }
 
-  const chatRequest = beginChatRequest();
+  const chatRequest = beginChatRequest({
+    kind: content.startsWith("/image") ? "image" : "chat",
+    conversationId: state.activeConversationId
+  });
   const form = $("#chat-form");
   const input = form.elements.message;
   input.disabled = true;
   let assistantBody = null;
   let thinking = null;
   let assistantText = "";
+  let turnOutcome = "completed";
   let activeConversationIdForTurn = state.activeConversationId;
   const sendStart = Date.now();
   window.alfieSoul?.setState("thinking", "amber");
@@ -5698,6 +5749,7 @@ async function sendMessage(rawText) {
       const failure = await response.json().catch(() => ({}));
       throw new Error(failure.error || "Alfie could not complete the response.");
     }
+    chatRequest.transition?.("streaming");
     let buffer = "";
     let finalEvent = null;
     const reader = response.body.getReader();
@@ -5870,15 +5922,16 @@ async function sendMessage(rawText) {
         if (provEl) messageArticle.appendChild(provEl);
       }
     }
-    await loadConversations();
-    await refreshVramStatus();
+    loadConversations().catch(() => {});
+    refreshVramStatus().catch(() => {});
     window.alfieSoul?.pulse("completed", 2200, "idle", "purple");
     if (finalText) {
       speakAssistantReply?.(finalText);
     }
     if (finalEvent?.status === "awaiting_user_approval") {
+      turnOutcome = "awaiting_approval";
       toast("Alfie is waiting for your approval.");
-      await loadToolsAndApprovals();
+      loadToolsAndApprovals().catch(() => {});
     }
     if (chatAutoScrollEnabled) {
       scrollChatToBottom();
@@ -5891,6 +5944,7 @@ async function sendMessage(rawText) {
       thinking = null;
     }
     if (chatRequest.abortedByUser) {
+      turnOutcome = "cancelled";
       if (!chatRequest.silent && assistantBody) {
         assistantBody.querySelector(".streaming-cursor")?.remove();
         const partial = assistantText.trim();
@@ -5912,6 +5966,7 @@ async function sendMessage(rawText) {
       }
       return;
     }
+    turnOutcome = "failed";
     if (assistantBody) {
       assistantBody.querySelector(".streaming-cursor")?.remove();
       const rawMsg = String(error?.message || "Connection interrupted.");
@@ -5944,7 +5999,7 @@ async function sendMessage(rawText) {
       thinking = null;
     }
     assistantBody?.querySelector(".streaming-cursor")?.remove();
-    if (finishChatRequest(chatRequest)) {
+    if (finishChatRequest(chatRequest, { outcome: turnOutcome })) {
       input.disabled = false;
       if (!chatRequest.abortedByUser) {
         input.value = "";
@@ -11861,7 +11916,7 @@ function initChatOptionsMenu() {
       menuBtn?.focus();
       return;
     }
-    if (state.sending && activeChatRequest && !document.querySelector(".modal-backdrop:not([hidden]), .dossier-backdrop:not([hidden])")) {
+    if ((chatLifecycle ? chatLifecycle.busy : Boolean(state.sending && activeChatRequest)) && !document.querySelector(".modal-backdrop:not([hidden]), .dossier-backdrop:not([hidden])")) {
       event.preventDefault();
       cancelActiveChatRequest();
     }

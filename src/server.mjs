@@ -516,9 +516,16 @@ export function createAlfieCoreServer({
           }
         }
         if (isToolApproval && req.method === "POST") {
+          const approveController = new AbortController();
+          const abortApprove = () => {
+            if (!approveController.signal.aborted) approveController.abort(new Error("Client disconnected during approval."));
+          };
+          req.on("aborted", abortApprove);
+          res.on("close", () => { if (!res.writableEnded) abortApprove(); });
           const body = await readJsonBody(req);
           const actionId = body.actionId || body.approvalId;
-          const result = await toolDispatcher.approve(identity.userId, actionId);
+          const result = await toolDispatcher.approve(identity.userId, actionId, { signal: approveController.signal });
+          if (approveController.signal.aborted || res.destroyed) return;
           let linkedConversationId = null;
           try {
             const cardUpdate = await conversationStore.updateActionCardState(identity.userId, actionId, {

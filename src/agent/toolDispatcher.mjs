@@ -215,10 +215,10 @@ export class ToolDispatcher {
     return { status: "completed", toolId, result: tool.trust === "external" || tool.untrustedOutput ? wrapUntrustedData(bounded, { maxChars: this.maxOutputChars }) : bounded };
   }
 
-  async approve(userId, actionId) {
+  async approve(userId, actionId, { signal } = {}) {
     const action = await this.pendingActionStore.take(userId, actionId);
     try {
-      return await this.#executeConsumedApproval(userId, actionId, action);
+      return await this.#executeConsumedApproval(userId, actionId, action, { signal });
     } catch (error) {
       // The pending record is deliberately consumed before validation/execution.
       // Never invite a second click: a failing integration may have partially acted.
@@ -239,7 +239,7 @@ export class ToolDispatcher {
     }
   }
 
-  async #executeConsumedApproval(userId, actionId, action) {
+  async #executeConsumedApproval(userId, actionId, action, { signal } = {}) {
     const tool = this.registry.tools.get(action.toolId);
     if (!tool) throw Object.assign(new Error("The approved tool is no longer registered."), { status: 404 });
     if (hashCall(action.toolId, action.arguments) !== action.argumentsHash) {
@@ -300,8 +300,10 @@ export class ToolDispatcher {
       detail: "Explicit user approval recorded before execution"
     });
     let result;
+    const safetyCeiling = AbortSignal.timeout(300_000);
+    const executionSignal = signal ? AbortSignal.any([signal, safetyCeiling]) : safetyCeiling;
     try {
-      result = await this.executeWithMiddleware(tool, action.arguments, { userId, toolId: tool.id, approved: true, approvalGuard: action.approvalGuard }, AbortSignal.timeout(30_000));
+      result = await this.executeWithMiddleware(tool, action.arguments, { userId, toolId: tool.id, approved: true, approvalGuard: action.approvalGuard }, executionSignal);
     } catch (error) {
       if (this.pendingActionStore.recordReceipt) {
         try {

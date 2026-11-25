@@ -229,7 +229,14 @@ test("Frontend app.js, index.html, and styles.css contain history, approval cont
   const stylesCss = await fs.readFile(path.resolve("interface/public/styles.css"), "utf8");
 
   assert.doesNotMatch(appJs, /\bopenConversation\s*\(/, "Undefined openConversation() call should not exist");
+  assert.doesNotMatch(appJs, /\bwaitDeadline\b/, "Polling waitDeadline timeout loop must be replaced by request lifecycle");
+  assert.doesNotMatch(appJs, /Date\.now\(\)\s*\+\s*3000\b/, "Short 3-second approval wait timeout must be removed");
+  assert.match(indexHtml, /chat-lifecycle\.mjs/);
   assert.match(indexHtml, /id="stop-stream-btn"/);
+  assert.match(appJs, /createChatTurnLifecycle\(/);
+  assert.match(appJs, /chatLifecycle\.waitForActiveTurn\(/);
+  assert.match(appJs, /chatLifecycle\.enqueueContinuation\(/);
+  assert.match(appJs, /chatLifecycle\.beginApproval\(/);
   assert.match(appJs, /function beginChatRequest\(/);
   assert.match(appJs, /function cancelActiveChatRequest\(/);
   assert.match(appJs, /signal:\s*chatRequest\.controller\.signal/);

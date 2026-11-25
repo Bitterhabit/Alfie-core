@@ -11,6 +11,7 @@ const STATIC_ASSETS = [
   "/voice-waveform.mjs?v=alfie-workspace-0.10.1",
   "/knowledge-graph.mjs?v=alfie-workspace-0.10.1",
   "/virtual-room.mjs?v=alfie-workspace-0.10.1",
+  "/chat-lifecycle.mjs?v=alfie-workspace-0.10.1",
   "/app.js?v=alfie-workspace-0.10.1",
   "/manifest.webmanifest",
   "/icon.svg",
