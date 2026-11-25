@@ -20,6 +20,7 @@ export const CHAT_LIFECYCLE_PHASES = Object.freeze({
 export function createChatTurnLifecycle({ onChange = () => {} } = {}) {
   let seq = 0;
   let activeTurn = null;
+  const unsettledTurns = new Set();
   let phase = CHAT_LIFECYCLE_PHASES.IDLE;
   const inFlightApprovals = new Map(); // actionId -> { actionId, controller, startedAt }
   let continuationChain = Promise.resolve();
@@ -34,7 +35,8 @@ export function createChatTurnLifecycle({ onChange = () => {} } = {}) {
       activeConversationId: activeTurn?.conversationId || null,
       activeActionId: activeTurn?.actionId || null,
       inFlightApprovalCount: inFlightApprovals.size,
-      queuedContinuations
+      queuedContinuations,
+      unsettledTurnCount: unsettledTurns.size
     };
   }
 
@@ -62,15 +64,17 @@ export function createChatTurnLifecycle({ onChange = () => {} } = {}) {
    * Uses the active turn's settlement promise directly — zero polling, zero timeout.
    */
   async function waitForActiveTurn() {
-    while (activeTurn) {
-      const current = activeTurn;
-      await current.settled;
+    // Include cancelled/superseded turns that are still unwinding. Aborting a
+    // request is a signal, not proof that its async work and persistence settled.
+    while (unsettledTurns.size > 0) {
+      const pending = [...unsettledTurns];
+      await Promise.all(pending.map((turn) => turn.settled));
     }
   }
 
   /**
-   * Cancel the active turn immediately, aborting its AbortController and resolving
-   * its settlement promise so any waiting continuation or conversation switch can proceed.
+   * Request cancellation without settling the turn. The request's finally block
+   * must call finish() after stream consumption and persistence cleanup have ended.
    */
   function cancelActiveTurn({ silent = false, reason = "Request cancelled by user." } = {}) {
     const turn = activeTurn;
@@ -84,10 +88,7 @@ export function createChatTurnLifecycle({ onChange = () => {} } = {}) {
     try {
       turn.controller.abort(new Error(reason));
     } catch {}
-    if (!turn.isSettled) {
-      turn.isSettled = true;
-      turn.resolveSettled({ outcome: "cancelled", abortedByUser: true, silent: turn.silent });
-    }
+    // Keep the turn in unsettledTurns until its owner finishes real cleanup.
     recomputeIdlePhase("cancelled");
     return true;
   }
@@ -126,6 +127,7 @@ export function createChatTurnLifecycle({ onChange = () => {} } = {}) {
     };
 
     activeTurn = turn;
+    unsettledTurns.add(turn);
     phase = initialPhase;
     emit();
 
@@ -157,8 +159,9 @@ export function createChatTurnLifecycle({ onChange = () => {} } = {}) {
         }
         if (!turn.isSettled) {
           turn.isSettled = true;
+          unsettledTurns.delete(turn);
           turn.resolveSettled({
-            outcome,
+            outcome: turn.abortedByUser ? "cancelled" : outcome,
             abortedByUser: turn.abortedByUser,
             silent: turn.silent
           });
