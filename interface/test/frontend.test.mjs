@@ -724,7 +724,7 @@ test("chat presents a temporary friendly permission card and retries only after 
   assert.ok(app.includes('state: "permission"'));
   assert.ok(app.includes('grantChatPermissionAndRetry(card'));
   assert.ok(app.includes('ttlMinutes: card.durationMinutes || 10'));
-  assert.ok(app.includes('await sendMessage(card.retryPrompt)'));
+  assert.ok(app.includes('await sendMessage(card.retryPrompt, { skipPersistUser: true, forceForeground: true })'));
   assert.ok(app.includes('No permission granted'));
 });
 
