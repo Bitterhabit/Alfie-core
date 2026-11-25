@@ -54,7 +54,12 @@ export function createAlfieCoreClient({
       throw Object.assign(new Error(payload.error || "Alfie Core request failed."), {
         status: response.status,
         code: payload.code,
-        revision: payload.revision
+        revision: payload.revision,
+        actionConsumed: payload.actionConsumed === true,
+        actionCompleted: payload.actionCompleted === true,
+        retryable: payload.retryable !== false,
+        actionId: payload.actionId || null,
+        toolId: payload.toolId || null
       });
     }
     if (stream) return response;

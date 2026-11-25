@@ -63,3 +63,44 @@ jobs:
           docker compose up -d --wait
           docker compose exec -T alfie-core node -e "if(require('node:fs').readFileSync('/data/backup-smoke-test.txt','utf8')!=='core-volume-ok')process.exit(1);console.log('Core volume restore verified')"
           docker compose exec -T alfie-interface node -e "if(!require('node:fs').existsSync('/data/accounts.json'))process.exit(1);console.log('Interface account restore verified')"
+
+  installer-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+      - name: Set up Docker
+        run: docker info
+      - name: Exercise clean installation and non-destructive upgrade
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          TEST_ROOT="$(mktemp -d)"
+          trap 'if [[ -f "$TEST_ROOT/checkout/compose.yaml" && -f "$TEST_ROOT/checkout/compose.local.yaml" ]]; then docker compose -f "$TEST_ROOT/checkout/compose.yaml" -f "$TEST_ROOT/checkout/compose.local.yaml" down -v --remove-orphans || true; fi; rm -rf "$TEST_ROOT"' EXIT
+          git init --bare "$TEST_ROOT/origin.git"
+          mkdir -p "$TEST_ROOT/checkout"
+          git archive HEAD | tar -x -C "$TEST_ROOT/checkout"
+          cd "$TEST_ROOT/checkout"
+          git init -b main
+          git config user.name "Alfie CI"
+          git config user.email "alfie-ci@example.invalid"
+          git add -A
+          git commit -m "CI installer fixture"
+          git remote add origin "$TEST_ROOT/origin.git"
+          git push -u origin main
+
+          printf '\n127.0.0.1\n18781\n\n' | bash ./install.sh
+          docker compose -f compose.yaml -f compose.local.yaml exec -T alfie-core node -e "require('node:fs').writeFileSync('/data/installer-upgrade-marker.txt','persistent-volume-ok')"
+          LOCAL_CONFIG_HASH="$(sha256sum compose.local.yaml | cut -d ' ' -f 1)"
+
+          printf 'upgrade fixture\n' > upgrade-fixture.txt
+          git add upgrade-fixture.txt
+          git commit -m "CI simulated upstream update"
+          git push origin main
+
+          bash ./install.sh --upgrade
+
+          test -f upgrade-fixture.txt
+          test "$LOCAL_CONFIG_HASH" = "$(sha256sum compose.local.yaml | cut -d ' ' -f 1)"
+          docker compose -f compose.yaml -f compose.local.yaml exec -T alfie-core node -e "if(require('node:fs').readFileSync('/data/installer-upgrade-marker.txt','utf8')!=='persistent-volume-ok')process.exit(1);console.log('Persistent Core data survived upgrade')"
+          echo "Clean install and non-destructive upgrade passed."

@@ -11,7 +11,7 @@ const MAX_CONTENT_LENGTH = 50000;
 function cleanActionCard(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const safeCard = {
-    state: ["success", "read", "cancelled", "rejected", "error", "approval"].includes(raw.state) ? raw.state : "error",
+    state: ["success", "read", "cancelled", "rejected", "error", "approval", "failed"].includes(raw.state) ? raw.state : "error",
     label: String(raw.label || "Alfie Action").slice(0, 120),
     detail: String(raw.detail || (["confirm", "working"].includes(raw.state) ? "This temporary action state expired when the conversation was restored." : "")).slice(0, 1000)
   };
@@ -474,7 +474,7 @@ export class ConversationStore {
         if (!Array.isArray(conversation.messages)) continue;
         for (const message of conversation.messages) {
           if (message?.actionCard?.actionId === targetActionId) {
-            const nextState = ["success", "read", "cancelled", "rejected", "error", "approval"].includes(patch.state)
+            const nextState = ["success", "read", "cancelled", "rejected", "error", "approval", "failed"].includes(patch.state)
               ? patch.state
               : message.actionCard.state;
             message.actionCard = {

@@ -181,9 +181,11 @@ export class ToolDispatcher {
     const untrustedContext = typeof explicitUntrustedContext === "boolean"
       ? explicitUntrustedContext
       : containsUntrustedData(contextMessages);
-    const requiresApproval = tool.risk === "write" || tool.externalAction ||
+    // The registry is the single source of truth for baseline approval policy.
+    // Add the contextual gate for non-read tools handling untrusted content.
+    const requiresApproval = Boolean(tool.requiresApproval) ||
       (untrustedContext && tool.risk !== "read") ||
-      (tool.network && untrustedContext);
+      (Boolean(tool.approvalWhenUntrusted) && untrustedContext);
     if (requiresApproval) {
       const preview = tool.approvalPreview
         ? String(await tool.approvalPreview(args, { userId, toolId })).slice(0, 500)
@@ -215,6 +217,29 @@ export class ToolDispatcher {
 
   async approve(userId, actionId) {
     const action = await this.pendingActionStore.take(userId, actionId);
+    try {
+      return await this.#executeConsumedApproval(userId, actionId, action);
+    } catch (error) {
+      // The pending record is deliberately consumed before validation/execution.
+      // Never invite a second click: a failing integration may have partially acted.
+      const safeError = new Error(
+        error instanceof Error ? error.message : String(error || "Approved action failed."),
+        error instanceof Error ? { cause: error } : undefined
+      );
+      if (error instanceof Error) {
+        safeError.name = error.name;
+        if (Number.isInteger(error.status)) safeError.status = error.status;
+        if (error.code) safeError.code = error.code;
+        if (error.actionCompleted === true) safeError.actionCompleted = true;
+      }
+      safeError.actionConsumed = true;
+      safeError.actionId = actionId;
+      safeError.toolId = action.toolId;
+      throw safeError;
+    }
+  }
+
+  async #executeConsumedApproval(userId, actionId, action) {
     const tool = this.registry.tools.get(action.toolId);
     if (!tool) throw Object.assign(new Error("The approved tool is no longer registered."), { status: 404 });
     if (hashCall(action.toolId, action.arguments) !== action.argumentsHash) {

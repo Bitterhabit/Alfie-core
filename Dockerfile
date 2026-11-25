@@ -1,6 +1,6 @@
 FROM node:22-bookworm-slim
 
-ENV NODE_ENV=production
+ENV NODE_ENV=production ALFIE_CORE_DATA_DIR=/data
 LABEL org.opencontainers.image.title="Alfie Core" \
       org.opencontainers.image.version="1.0.0" \
       org.opencontainers.image.source="https://github.com/Bitterhabit/Alfie-core"

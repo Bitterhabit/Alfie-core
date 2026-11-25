@@ -128,6 +128,13 @@ function sendError(res, error) {
   return json(res, Number.isInteger(error?.status) ? error.status : 502, {
     error: error?.message || "Alfie interface request failed.",
     ...(error?.code ? { code: error.code } : {}),
+    ...(error?.actionConsumed ? {
+      actionConsumed: true,
+      retryable: false,
+      actionId: error.actionId || null,
+      toolId: error.toolId || null,
+      ...(error.actionCompleted === true ? { actionCompleted: true } : {})
+    } : {}),
     ...(Number.isInteger(error?.revision) ? { revision: error.revision } : {})
   });
 }
