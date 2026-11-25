@@ -14,7 +14,13 @@ export class IdentityReplayStore {
       throw new TypeError("A persistent identity replay database path is required.");
     }
     const resolvedPath = path.resolve(filePath);
-    fs.mkdirSync(path.dirname(resolvedPath), { recursive: true, mode: 0o700 });
+    const replayDirectory = path.dirname(resolvedPath);
+    fs.mkdirSync(replayDirectory, { recursive: true, mode: 0o700 });
+    try {
+      fs.chmodSync(replayDirectory, 0o700);
+    } catch (error) {
+      throw new Error(`Unable to secure identity replay storage directory: ${error.message}`, { cause: error });
+    }
     this.db = new DatabaseSync(resolvedPath);
     this.db.exec("PRAGMA busy_timeout = 5000;");
     this.db.exec("PRAGMA journal_mode = WAL;");
@@ -30,7 +36,12 @@ export class IdentityReplayStore {
       CREATE INDEX IF NOT EXISTS identity_replay_expiry
         ON identity_replay_nonces (expires_at);
     `);
-    try { fs.chmodSync(resolvedPath, 0o600); } catch {}
+    try {
+      fs.chmodSync(resolvedPath, 0o600);
+    } catch (error) {
+      this.db.close();
+      throw new Error(`Unable to secure identity replay database permissions: ${error.message}`, { cause: error });
+    }
     this.deleteExpired = this.db.prepare("DELETE FROM identity_replay_nonces WHERE expires_at <= ?");
     this.findNonce = this.db.prepare("SELECT 1 AS found FROM identity_replay_nonces WHERE provider_id = ? AND user_id = ? AND nonce_hash = ?");
     this.countEntries = this.db.prepare("SELECT COUNT(*) AS count FROM identity_replay_nonces");
