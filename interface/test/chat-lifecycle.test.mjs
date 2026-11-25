@@ -107,7 +107,7 @@ test("ChatTurnLifecycle deduplicates concurrent approvals per actionId and track
   assert.equal(lifecycle.phase, CHAT_LIFECYCLE_PHASES.IDLE);
 });
 
-test("cancelActiveTurn immediately aborts signal, resolves settled promise, and unblocks queued continuation", async () => {
+test("cancelActiveTurn aborts immediately but continuation waits for actual request settlement", async () => {
   const lifecycle = createChatTurnLifecycle();
   const turn = lifecycle.beginTurn({ kind: "chat", conversationId: "conv-1" });
 
@@ -122,8 +122,15 @@ test("cancelActiveTurn immediately aborts signal, resolves settled promise, and 
   assert.equal(turn.signal.aborted, true);
   assert.equal(turn.abortedByUser, true);
   assert.equal(lifecycle.busy, false);
+  assert.equal(lifecycle.getSnapshot().unsettledTurnCount, 1);
 
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(continued, false, "Abort must not release continuation before cleanup settles");
+
+  turn.finish({ outcome: "cancelled" });
   const outcome = await contPromise;
   assert.equal(continued, true);
   assert.equal(outcome, "unblocked");
+  assert.equal(lifecycle.getSnapshot().unsettledTurnCount, 0);
 });
