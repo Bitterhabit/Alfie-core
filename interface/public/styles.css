@@ -8719,6 +8719,9 @@ input:focus,textarea:focus,select:focus{
 }
 button,input,textarea,select{border-radius:12px}
 button:active:not(:disabled){transform:scale(.985);box-shadow:none!important}
+.secondary-button{border-radius:12px;box-shadow:none}
+.icon-button{border-radius:10px}
+.nav-item{border-radius:12px}
 button,.composer,.surface,.list-item,.chat-approval-card,.message.user .message-body,
 .new-chat-button,.mobile-action,.connection-state,.composer-suggestions,
 .view :is(.panel,.settings-panel,.surface-card,.settings-section,.provider-card){

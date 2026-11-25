@@ -6054,7 +6054,8 @@ async function sendMessage(rawText) {
     }
 
     const provenance = finalEvent?.provenance || null;
-    const savedMessage = await persistMessage("assistant", assistantText || assistantBody.textContent, conversationId, metrics, provenance, null, approvalActionCard);
+    const persistedActionCard = approvalActionCard?.state === "permission" ? null : approvalActionCard;
+    const savedMessage = await persistMessage("assistant", assistantText || assistantBody.textContent, conversationId, metrics, provenance, null, persistedActionCard);
     if (messageArticle) {
       messageArticle.querySelector(".message-actions")?.remove();
       messageArticle.appendChild(createReactionControls(savedMessage || { role: "assistant", content: assistantText, metrics, provenance }));

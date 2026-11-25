@@ -747,3 +747,10 @@ test("workspace uses softer rounded controls, surfaces, composer and in-chat app
   const reducedMotionIdx = css.lastIndexOf("@media(prefers-reduced-motion:reduce)");
   assert.ok(reducedMotionIdx > css.length - 350, "reduced motion must remain the final stylesheet block");
 });
+
+ 
+test("temporary permission prompts are not persisted as reusable approval actions", async () => {
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+  assert.ok(app.includes('const persistedActionCard = approvalActionCard?.state === "permission" ? null : approvalActionCard'));
+  assert.ok(app.includes("persistedActionCard"));
+});
