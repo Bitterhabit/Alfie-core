@@ -76,7 +76,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           TEST_ROOT="$(mktemp -d)"
-          trap 'if [[ -f "$TEST_ROOT/checkout/compose.yaml" ]]; then docker compose -f "$TEST_ROOT/checkout/compose.yaml" -f "$TEST_ROOT/checkout/compose.local.yaml" down -v --remove-orphans || true; fi; rm -rf "$TEST_ROOT"' EXIT
+          trap 'if [[ -f "$TEST_ROOT/checkout/compose.yaml" && -f "$TEST_ROOT/checkout/compose.local.yaml" ]]; then docker compose -f "$TEST_ROOT/checkout/compose.yaml" -f "$TEST_ROOT/checkout/compose.local.yaml" down -v --remove-orphans || true; fi; rm -rf "$TEST_ROOT"' EXIT
           git init --bare "$TEST_ROOT/origin.git"
           mkdir -p "$TEST_ROOT/checkout"
           git archive HEAD | tar -x -C "$TEST_ROOT/checkout"
@@ -98,7 +98,7 @@ jobs:
           git commit -m "CI simulated upstream update"
           git push origin main
 
-          ./install.sh --upgrade
+          bash ./install.sh --upgrade
 
           test -f upgrade-fixture.txt
           test "$LOCAL_CONFIG_HASH" = "$(sha256sum compose.local.yaml | cut -d ' ' -f 1)"
