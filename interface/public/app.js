@@ -4987,12 +4987,16 @@ async function approvePendingActionAndContinue(actionId, { toolId = "", summary 
       state.pendingApprovalConversations.delete(actionId);
       markChatApprovalCardResolved(actionId, {
         state: "failed",
-        headingText: "Approval could not be completed",
-        detailText: "This approval has been consumed to prevent duplicate execution. Check the destination before asking Alfie to propose the action again."
+        headingText: error.actionOutcomeUnknown ? "Action outcome uncertain — check destination" : "Approval could not be completed",
+        detailText: error.actionOutcomeUnknown
+          ? "The approval was consumed, but the external action may have partially completed. Check the destination before retrying; do not approve a duplicate yet."
+          : "This approval has been consumed to prevent duplicate execution. Check the destination before asking Alfie to propose the action again."
       });
       buttons.forEach((btn) => { btn.disabled = true; });
       window.alfieSoul?.setState("error", "red");
-      toast(error.message || "The approved action failed. Check its destination before retrying.");
+      toast(error.actionOutcomeUnknown
+        ? "Action outcome uncertain. Check the destination before retrying."
+        : (error.message || "The approved action failed. Check its destination before retrying."));
     } else {
       buttons.forEach((btn) => { btn.disabled = false; });
       window.alfieSoul?.setState("error", "red");

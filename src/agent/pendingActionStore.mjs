@@ -86,7 +86,7 @@ export class PendingActionStore {
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
       const status = receipt.status === "failed" ? "failed" : "completed";
-      const validStates = new Set(["verified", "unverified", "verification_failed", "execution_failed"]);
+      const validStates = new Set(["verified", "unverified", "verification_failed", "execution_failed", "outcome_unknown"]);
       const fallbackState = status === "failed"
         ? "execution_failed"
         : (receipt.verified === true ? "verified" : "unverified");

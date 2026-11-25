@@ -133,7 +133,8 @@ function sendError(res, error) {
       retryable: false,
       actionId: error.actionId || null,
       toolId: error.toolId || null,
-      ...(error.actionCompleted === true ? { actionCompleted: true } : {})
+      ...(error.actionCompleted === true ? { actionCompleted: true } : {}),
+      ...(error.actionOutcomeUnknown === true ? { actionOutcomeUnknown: true } : {})
     } : {}),
     ...(Number.isInteger(error?.revision) ? { revision: error.revision } : {})
   });

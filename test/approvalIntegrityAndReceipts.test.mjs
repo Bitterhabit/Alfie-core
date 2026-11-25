@@ -367,3 +367,70 @@ test("Failed approval card state survives conversation reload", async () => {
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+
+test("External approval interruption records an unknown outcome and forbids blind retry", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-approval-unknown-"));
+  const registry = new ToolRegistry();
+  const permissionStore = new PermissionStore({ dataDirectory: dir });
+  const pendingActionStore = new PendingActionStore({ dataDirectory: dir });
+  const auditStore = new AuditStore({ dataDirectory: dir });
+  let sideEffectStarted = false;
+
+  registry.register({
+    id: "external.publish",
+    name: "Publish external item",
+    description: "Publishes an item to an external service",
+    scope: "external:write",
+    risk: "write",
+    trust: "external",
+    network: true,
+    externalAction: true,
+    inputSchema: {
+      type: "object",
+      properties: { title: { type: "string", minLength: 1 } },
+      required: ["title"],
+      additionalProperties: false
+    },
+    handler: async () => {
+      sideEffectStarted = true;
+      throw new Error("Connection dropped after the remote service accepted the request.");
+    }
+  });
+  await permissionStore.grant("alice", "external:write");
+  const dispatcher = new ToolDispatcher({ registry, permissionStore, pendingActionStore, auditStore });
+
+  try {
+    const proposal = await dispatcher.dispatch({
+      userId: "alice",
+      toolId: "external.publish",
+      args: { title: "Release notes" },
+      turnId: "unknown-outcome"
+    });
+    assert.equal(proposal.status, "awaiting_user_approval");
+
+    await assert.rejects(
+      () => dispatcher.approve("alice", proposal.actionId),
+      (error) => error.actionConsumed === true
+        && error.actionOutcomeUnknown === true
+        && error.code === "ACTION_OUTCOME_UNKNOWN"
+    );
+
+    assert.equal(sideEffectStarted, true);
+    const [receipt] = await pendingActionStore.listReceipts("alice");
+    assert.equal(receipt.status, "failed");
+    assert.equal(receipt.verified, false);
+    assert.equal(receipt.verificationState, "outcome_unknown");
+    assert.match(receipt.verificationDetail, /may have partially completed/i);
+    assert.match(receipt.verificationDetail, /check the destination before retrying/i);
+    const events = await auditStore.list("alice", { limit: 20 });
+    assert.ok(events.some((event) => event.event === "tool.approval_outcome_unknown"));
+    await assert.rejects(
+      () => dispatcher.approve("alice", proposal.actionId),
+      (error) => error.status === 404,
+      "A consumed uncertain action must never execute a second time"
+    );
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

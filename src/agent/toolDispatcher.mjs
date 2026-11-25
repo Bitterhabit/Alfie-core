@@ -231,6 +231,7 @@ export class ToolDispatcher {
         if (Number.isInteger(error.status)) safeError.status = error.status;
         if (error.code) safeError.code = error.code;
         if (error.actionCompleted === true) safeError.actionCompleted = true;
+        if (error.actionOutcomeUnknown === true) safeError.actionOutcomeUnknown = true;
       }
       safeError.actionConsumed = true;
       safeError.actionId = actionId;
@@ -305,6 +306,12 @@ export class ToolDispatcher {
     try {
       result = await this.executeWithMiddleware(tool, action.arguments, { userId, toolId: tool.id, approved: true, approvalGuard: action.approvalGuard }, executionSignal);
     } catch (error) {
+      // A network/external handler may have committed a side effect before a
+      // timeout, disconnect, or lost response. Never label that as a clean failure.
+      const outcomeUnknown = Boolean(tool.network || tool.externalAction);
+      const outcomeDetail = outcomeUnknown
+        ? "Execution was interrupted or failed after dispatch. The external action may have partially completed; check the destination before retrying."
+        : `Execution failed before a confirmed completion: ${String(error.message || "unknown error").slice(0, 180)}`;
       if (this.pendingActionStore.recordReceipt) {
         try {
           await this.pendingActionStore.recordReceipt(userId, {
@@ -317,17 +324,25 @@ export class ToolDispatcher {
             affectedResource: action.simulation?.affectedResource || tool.scope,
             rollbackPlan: action.simulation?.rollbackPlan || "",
             verified: false,
-            verificationState: "execution_failed",
-            verificationDetail: `Execution failed: ${String(error.message || "unknown error").slice(0, 220)}`
+            verificationState: outcomeUnknown ? "outcome_unknown" : "execution_failed",
+            verificationDetail: outcomeDetail
           });
         } catch {}
       }
       if (this.auditStore) {
         try { await this.auditStore.record(userId, {
-          event: "tool.approval_failed", actor: "alfie", toolId: tool.id, actionId,
-          risk: tool.risk, status: "failed", argumentsHash: action.argumentsHash,
-          detail: "Tool execution failed; sensitive arguments are not included"
+          event: outcomeUnknown ? "tool.approval_outcome_unknown" : "tool.approval_failed",
+          actor: "alfie", toolId: tool.id, actionId,
+          risk: tool.risk, status: outcomeUnknown ? "unknown" : "failed", argumentsHash: action.argumentsHash,
+          detail: outcomeDetail
         }); } catch {}
+      }
+      if (outcomeUnknown) {
+        error = Object.assign(new Error(outcomeDetail, { cause: error }), {
+          status: 502,
+          code: "ACTION_OUTCOME_UNKNOWN",
+          actionOutcomeUnknown: true
+        });
       }
       throw error;
     }

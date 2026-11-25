@@ -569,7 +569,9 @@ export function createAlfieCoreServer({
         }
       } catch (error) {
         if (error.actionConsumed && error.actionId) {
-          const failureDetail = "This approval was consumed and cannot be retried. Check the destination before proposing the action again.";
+          const failureDetail = error.actionOutcomeUnknown
+            ? "The approval was consumed, but the external outcome is uncertain. The action may have partially completed. Check the destination before retrying."
+            : "This approval was consumed and cannot be retried. Check the destination before proposing the action again.";
           try {
             await conversationStore.updateActionCardState(identity.userId, error.actionId, {
               state: "failed",
@@ -581,7 +583,7 @@ export function createAlfieCoreServer({
             for (const job of waitingJobs.filter((item) => item.pendingActionId === error.actionId)) {
               await jobStore.update(identity.userId, job.id, (current, nowIso) => current.status !== "awaiting_approval" ? current : ({
                 ...current,
-                status: error.actionCompleted === true ? "interrupted" : "failed",
+                status: error.actionCompleted === true || error.actionOutcomeUnknown === true ? "interrupted" : "failed",
                 pendingActionId: null,
                 error: String(error.message || "The approved action failed. Check the destination before retrying.").slice(0, 500),
                 checkpoints: [...current.checkpoints.slice(-24), {
@@ -599,7 +601,7 @@ export function createAlfieCoreServer({
         return json(res, error.status || 500, {
           error: error.message || "Tool permission operation failed.",
           ...(error.code ? { code: error.code } : {}),
-          ...(error.actionConsumed ? { actionConsumed: true, retryable: false, actionId: error.actionId, toolId: error.toolId, ...(error.actionCompleted === true ? { actionCompleted: true } : {}) } : {})
+          ...(error.actionConsumed ? { actionConsumed: true, retryable: false, actionId: error.actionId, toolId: error.toolId, ...(error.actionCompleted === true ? { actionCompleted: true } : {}), ...(error.actionOutcomeUnknown === true ? { actionOutcomeUnknown: true } : {}) } : {})
         });
       }
       return json(res, 405, { error: "Method not allowed." });
