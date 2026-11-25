@@ -716,3 +716,14 @@ test("switching to an online model requires an explicit privacy confirmation bef
   assert.match(html, /Stay on current model/);
   assert.match(html, /Tool permissions do not override these data restrictions/);
 });
+
+
+test("chat presents a temporary friendly permission card and retries only after explicit approval", async () => {
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+  assert.ok(app.includes('finalEvent?.status === "permission_required"'));
+  assert.ok(app.includes('state: "permission"'));
+  assert.ok(app.includes('grantChatPermissionAndRetry(card'));
+  assert.ok(app.includes('ttlMinutes: card.durationMinutes || 10'));
+  assert.ok(app.includes('await sendMessage(card.retryPrompt)'));
+  assert.ok(app.includes('No permission granted'));
+});

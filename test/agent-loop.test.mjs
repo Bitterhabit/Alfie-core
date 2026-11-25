@@ -536,3 +536,33 @@ test("AgentLoop runs weather directly from the saved profile without requiring a
   assert.equal(dispatchArgs.toolId, "web.weather");
   assert.deepEqual(dispatchArgs.args, {});
 });
+
+
+test("AgentLoop asks for temporary web permission in chat before deterministic weather lookup", async () => {
+  const registry = new ToolRegistry();
+  registry.register({
+    id: "web.weather", name: "Check live weather", description: "Fast direct weather forecast",
+    scope: "web:read", risk: "read", trust: "external", network: true, externalAction: false,
+    tags: ["weather", "forecast"], inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    handler: async () => ({})
+  });
+  let dispatchCalls = 0;
+  const loop = new AgentLoop({
+    providerRegistry: { complete: async () => { throw new Error("LLM should not be called."); } },
+    providerConfig: {}, toolRegistry: registry,
+    dispatcher: {
+      permissionStore: { list: async () => [] },
+      resetTurn() {},
+      dispatch: async () => { dispatchCalls++; throw new Error("Must not dispatch without permission."); }
+    },
+    profileStore: { get: async () => ({ location: { enabled: true, label: "Leeds, UK", latitude: 53.8, longitude: -1.5 } }) },
+    contextAssembler: new ContextAssembler()
+  });
+  const result = await loop.run({ userId: "user-1", messages: [{ role: "user", content: "What's the weather tomorrow?" }] });
+  assert.equal(result.status, "permission_required");
+  assert.equal(result.requiredScope, "web:read");
+  assert.equal(result.toolId, "web.weather");
+  assert.equal(result.permissionDurationMinutes, 10);
+  assert.match(result.message, /permission to use the internet/i);
+  assert.equal(dispatchCalls, 0);
+});

@@ -535,7 +535,16 @@ export class AgentLoop {
           if (weatherTool) {
             if (!effectiveScopes.includes(weatherTool.scope)) {
               this.dispatcher.resetTurn(turnId);
-              return { status: "permission_required", message: "I can check live weather, but Alfie needs the **Web read** permission first. Enable `web:read` in Settings → Tools & Permissions, then try again.", steps };
+              return {
+                status: "permission_required",
+                message: "I can check that for you. I just need your permission to use the internet first.",
+                requiredScope: weatherTool.scope,
+                permissionLabel: "Internet access",
+                permissionDurationMinutes: 10,
+                toolId: weatherTool.id,
+                toolName: weatherTool.name || "Check live weather",
+                steps
+              };
             }
             const requestedLocation = explicitWeatherLocation(userText);
             const savedLocation = workflowProfile?.location;

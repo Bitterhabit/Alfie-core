@@ -5117,6 +5117,37 @@ async function rejectPendingAction(actionId, { cardElement = null } = {}) {
   }
 }
 
+async function grantChatPermissionAndRetry(card, { conversationId = state.activeConversationId, cardElement = null } = {}) {
+  if (!card?.scope || !card?.retryPrompt || !conversationId) return;
+  const buttons = cardElement ? [...cardElement.querySelectorAll("button")] : [];
+  buttons.forEach((button) => { button.disabled = true; });
+  try {
+    if (state.activeConversationId !== conversationId) {
+      setView("chat");
+      await loadConversation(conversationId);
+    }
+    const projectId = getConversationProjectId(state.activeConversation) || null;
+    await api("/api/core/permissions", {
+      method: "POST",
+      body: JSON.stringify({
+        scope: card.scope,
+        ttlMinutes: card.durationMinutes || 10,
+        ...(projectId ? { projectId } : {}),
+        note: "Temporarily approved from the chat"
+      })
+    });
+    const heading = cardElement?.querySelector("strong");
+    const detail = cardElement?.querySelector(".chat-approval-detail");
+    if (heading) heading.textContent = "Permission granted";
+    if (detail) detail.textContent = "I’ll try that again now. This temporary access expires in " + (card.durationMinutes || 10) + " minutes.";
+    cardElement?.querySelector(".chat-approval-actions")?.remove();
+    await loadToolsAndApprovals().catch(() => {});
+    await sendMessage(card.retryPrompt);
+  } catch (error) {
+    buttons.forEach((button) => { button.disabled = false; });
+    toast(error.message || "I couldn’t update that permission.", { variant: "warning" });
+  }
+}
 function createChatApprovalCard(card, { conversationId = state.activeConversationId } = {}) {
   const approval = document.createElement("section");
   approval.className = "chat-approval-card";
@@ -5139,6 +5170,32 @@ function createChatApprovalCard(card, { conversationId = state.activeConversatio
     reason.className = "chat-approval-reason";
     reason.textContent = card.reason;
     approval.appendChild(reason);
+  }
+
+  if (card.state === "permission" && card.scope) {
+    const actions = document.createElement("div");
+    actions.className = "chat-approval-actions";
+
+    const allowBtn = document.createElement("button");
+    allowBtn.type = "button";
+    allowBtn.className = "primary-button";
+    allowBtn.textContent = "Allow " + (card.permissionLabel || "access") + " for " + (card.durationMinutes || 10) + " minutes";
+    allowBtn.addEventListener("click", () => {
+      grantChatPermissionAndRetry(card, { conversationId, cardElement: approval });
+    });
+
+    const declineBtn = document.createElement("button");
+    declineBtn.type = "button";
+    declineBtn.className = "secondary-button";
+    declineBtn.textContent = "Not now";
+    declineBtn.addEventListener("click", () => {
+      actions.remove();
+      heading.textContent = "No permission granted";
+      detail.textContent = "That’s fine. I haven’t used the internet or run the lookup.";
+    });
+
+    actions.append(allowBtn, declineBtn);
+    approval.appendChild(actions);
   }
 
   if (card.state === "approval" && card.actionId) {
@@ -5935,6 +5992,8 @@ async function sendMessage(rawText) {
     if (!assistantText && finalEvent?.message) assistantText = finalEvent.message;
     if (finalEvent?.status === "awaiting_user_approval") {
       assistantText = assistantText || "This action is ready for your approval. Open Tools & access to review it.";
+    } else if (finalEvent?.status === "permission_required" && finalEvent.requiredScope) {
+      assistantText = finalEvent.message || "I need your permission before I can do that.";
     }
     const finalText = assistantText || "I couldn't produce a response.";
     renderMarkdown(assistantBody, finalText);
@@ -5953,6 +6012,19 @@ async function sendMessage(rawText) {
       state.pendingApprovalConversations.set(finalEvent.actionId, conversationId);
       const approval = createChatApprovalCard(approvalActionCard, { conversationId });
       assistantBody.closest(".message")?.appendChild(approval);
+    } else if (finalEvent?.status === "permission_required" && finalEvent.requiredScope) {
+      approvalActionCard = {
+        state: "permission",
+        label: "A little permission needed",
+        scope: finalEvent.requiredScope,
+        permissionLabel: finalEvent.permissionLabel || "access",
+        durationMinutes: Math.max(1, Math.min(30, Number(finalEvent.permissionDurationMinutes) || 10)),
+        toolId: finalEvent.toolId || "",
+        retryPrompt: content,
+        detail: "I need " + (finalEvent.permissionLabel || "permission") + " before I can use " + (finalEvent.toolName || "that tool") + ". You can allow it temporarily or leave things as they are."
+      };
+      const permissionCard = createChatApprovalCard(approvalActionCard, { conversationId });
+      assistantBody.closest(".message")?.appendChild(permissionCard);
     }
     const elapsedMs = Date.now() - sendStart;
     const latencyMs = Number.isFinite(Number(finalEvent?.metrics?.latencyMs))
