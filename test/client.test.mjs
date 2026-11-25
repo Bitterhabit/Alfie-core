@@ -132,6 +132,7 @@ test("Core client preserves consumed-approval metadata for safe interface recove
       code: "APPROVED_ACTION_EXECUTION_FAILED",
       actionConsumed: true,
       retryable: false,
+      actionOutcomeUnknown: true,
       actionId: "action-123",
       toolId: "web.search"
     }), { status: 502, headers: { "content-type": "application/json" } })
@@ -141,6 +142,7 @@ test("Core client preserves consumed-approval metadata for safe interface recove
     code: "APPROVED_ACTION_EXECUTION_FAILED",
     actionConsumed: true,
     retryable: false,
+    actionOutcomeUnknown: true,
     actionId: "action-123",
     toolId: "web.search"
   });
