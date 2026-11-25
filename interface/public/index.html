@@ -1445,13 +1445,14 @@
                   <label>Provider type
                     <select id="provider-field-type" name="provider">
                       <option value="ollama">Ollama (/api/tags, /api/chat)</option>
-                      <option value="openai-compatible">OpenAI-compatible (/v1/models, /v1/chat/completions)</option>
+                      <option value="openai-compatible">OpenAI-compatible</option>
+                      <option value="google-gemini">Google Gemini (API key)</option>
                     </select>
                   </label>
                   <label class="provider-field-wide">Endpoint URL
                     <input id="provider-field-url" name="baseUrl" type="url" maxlength="1024" placeholder="http://127.0.0.1:11434" required>
                   </label>
-                  <p class="muted provider-field-wide">Gemini: https://generativelanguage.googleapis.com/v1beta/openai · OpenAI: https://api.openai.com/v1. Add the matching API key below. For a PC on your network, enter its reachable IP/hostname and port.</p>
+                  <p id="provider-url-help" class="muted provider-field-wide">For Gemini, choose Google Gemini above and Alfie will fill in the API URL. For other services, enter the provider's OpenAI-compatible API root.</p>
                   <label>Routing tier
                     <select id="provider-field-mode" name="mode">
                       <option value="light">Light (Fast)</option>
@@ -1483,7 +1484,7 @@
 
                 <div class="provider-secret-row">
                   <label class="provider-field-wide">Bearer credential / API key (optional)
-                    <input id="provider-field-credential" name="endpointCredential" type="password" autocomplete="off" maxlength="512" placeholder="Leave blank for local keyless servers">
+                    <input id="provider-field-credential" name="endpointCredential" type="password" autocomplete="off" maxlength="512" placeholder="API key (leave blank only if the endpoint needs no key)">
                   </label>
                   <div class="provider-secret-meta">
                     <span id="provider-secret-hint" class="muted">Encrypted on the server and never sent back to the browser.</span>
