@@ -10939,14 +10939,18 @@ function openProviderEditor(endpoint = null) {
   $("#provider-field-id").value = isEdit ? endpoint.id : "";
   $("#provider-field-name").value = isEdit ? (endpoint.name || "") : "";
   const savedBaseUrl = isEdit ? (endpoint.baseUrl || "") : "";
-  const isGeminiEndpoint = /generativelanguage\\.googleapis\\.com\\/v1beta\\/openai/i.test(savedBaseUrl);
+  const isGeminiEndpoint = savedBaseUrl.toLowerCase().includes("generativelanguage.googleapis.com/v1beta/openai");
   $("#provider-field-type").value = isGeminiEndpoint ? "google-gemini" : (isEdit ? (endpoint.provider || "ollama") : "ollama");
   $("#provider-field-url").value = isEdit ? savedBaseUrl : "http://127.0.0.1:11434";
   $("#provider-field-url").placeholder = $("#provider-field-type").value === "ollama" ? "http://127.0.0.1:11434" : ($("#provider-field-type").value === "google-gemini" ? "https://generativelanguage.googleapis.com/v1beta/openai" : "https://api.example.com/v1");
   const providerHelp = $("#provider-url-help");
-  if (providerHelp) providerHelp.textContent = $("#provider-field-type").value === "google-gemini"
-    ? "Get your Gemini API key from Google AI Studio. Alfie uses Google's OpenAI-compatible endpoint; your key is encrypted on the server."
+  const isGemini = $("#provider-field-type").value === "google-gemini";
+  if (providerHelp) providerHelp.textContent = isGemini
+    ? "Alfie uses Google's OpenAI-compatible Gemini endpoint. Your API key is encrypted on the server."
     : "For other services, enter the provider's OpenAI-compatible API root. For a PC on your network, use its reachable IP/hostname and port.";
+  const geminiKeyLink = $("#provider-gemini-key-link");
+  if (geminiKeyLink) geminiKeyLink.hidden = !isGemini;
+  $("#provider-field-credential").placeholder = isGemini ? "Paste your Google AI Studio API key" : "API key (leave blank only if the endpoint needs no key)";
   $("#provider-field-mode").value = isEdit ? (endpoint.mode || "standard") : "standard";
   $("#provider-field-priority").value = String(isEdit ? (endpoint.priority ?? 50) : 60);
   $("#provider-field-temperature").value = String(isEdit ? (endpoint.temperature ?? 0.4) : 0.4);
@@ -11378,13 +11382,17 @@ function initProviderManagement() {
       urlInput.placeholder = "https://generativelanguage.googleapis.com/v1beta/openai";
       if (nameInput && (!nameInput.value || nameInput.value === "Local Ollama")) nameInput.value = "Google Gemini";
       if (credentialInput) credentialInput.placeholder = "Paste your Google AI Studio API key";
-      if (help) help.textContent = "Get your Gemini API key from Google AI Studio. Alfie uses Google's OpenAI-compatible endpoint; your key is encrypted on the server.";
+      if (help) help.textContent = "Alfie uses Google's OpenAI-compatible Gemini endpoint. Your API key is encrypted on the server.";
+      const keyLink = $("#provider-gemini-key-link");
+      if (keyLink) keyLink.hidden = false;
       $("#provider-field-trusted-local").checked = false;
       return;
     }
     urlInput.placeholder = type === "ollama" ? "http://127.0.0.1:11434" : "https://api.example.com/v1";
     if (credentialInput) credentialInput.placeholder = "API key (leave blank only if the endpoint needs no key)";
     if (help) help.textContent = "For other services, enter the provider's OpenAI-compatible API root. For a PC on your network, use its reachable IP/hostname and port.";
+    const keyLink = $("#provider-gemini-key-link");
+    if (keyLink) keyLink.hidden = true;
     if (!providerPanelState.editingId) {
       if (type === "ollama" && (!urlInput.value || urlInput.value === "http://127.0.0.1:1234/v1" || urlInput.value === "https://generativelanguage.googleapis.com/v1beta/openai")) {
         urlInput.value = "http://127.0.0.1:11434";
