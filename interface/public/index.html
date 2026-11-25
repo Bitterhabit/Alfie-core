@@ -2491,6 +2491,21 @@
       </footer>
     </section>
   </div>
+  <dialog id="model-switch-warning" class="model-switch-dialog" aria-labelledby="model-switch-warning-title" aria-describedby="model-switch-warning-detail">
+    <div class="model-switch-dialog-card">
+      <div class="model-switch-dialog-heading"><span class="model-switch-shield" aria-hidden="true">🛡</span><div><p class="eyebrow">PRIVACY CHECK</p><h2 id="model-switch-warning-title">Switch to an online model?</h2></div></div>
+      <p id="model-switch-warning-detail">Your conversation and permitted context will be sent to the selected online provider.</p>
+      <div class="model-switch-data-summary">
+        <div><strong>May be shared</strong><p id="model-switch-warning-allowed"></p></div>
+        <div><strong>Blocked by your privacy settings</strong><p id="model-switch-warning-blocked"></p></div>
+      </div>
+      <p class="model-switch-dialog-note">Tool permissions do not override these data restrictions. Sensitive actions still require their own approval. You can cancel and stay on your current model.</p>
+      <div class="model-switch-dialog-actions">
+        <button type="button" id="model-switch-warning-cancel" class="secondary-button">Stay on current model</button>
+        <button type="button" id="model-switch-warning-confirm" class="primary-button">Continue to online model</button>
+      </div>
+    </div>
+  </dialog>
 </body>
 </html>
 
