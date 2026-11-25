@@ -754,3 +754,11 @@ test("temporary permission prompts are not persisted as reusable approval action
   assert.ok(app.includes('const persistedActionCard = approvalActionCard?.state === "permission" ? null : approvalActionCard'));
   assert.ok(app.includes("persistedActionCard"));
 });
+
+ 
+test("permission retry reuses the existing user message without duplicating it or entering background mode", async () => {
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+  assert.ok(app.includes("skipPersistUser = false, forceForeground = false"));
+  assert.ok(app.includes('await sendMessage(card.retryPrompt, { skipPersistUser: true, forceForeground: true })'));
+  assert.ok(app.includes('if ($("#background-task-toggle")?.checked && !forceForeground)'));
+});

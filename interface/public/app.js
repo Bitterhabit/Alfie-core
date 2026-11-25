@@ -5142,7 +5142,7 @@ async function grantChatPermissionAndRetry(card, { conversationId = state.active
     if (detail) detail.textContent = "I’ll try that again now. This temporary access expires in " + (card.durationMinutes || 10) + " minutes.";
     cardElement?.querySelector(".chat-approval-actions")?.remove();
     await loadToolsAndApprovals().catch(() => {});
-    await sendMessage(card.retryPrompt);
+    await sendMessage(card.retryPrompt, { skipPersistUser: true, forceForeground: true });
   } catch (error) {
     buttons.forEach((button) => { button.disabled = false; });
     toast(error.message || "I couldn’t update that permission.", { variant: "warning" });
@@ -5678,7 +5678,7 @@ async function watchBackgroundChatTask(jobId, conversationId, assistantBody, ind
   setTimeout(poll, 1200);
 }
 
-async function sendMessage(rawText) {
+async function sendMessage(rawText, { skipPersistUser = false, forceForeground = false } = {}) {
   const content = String(rawText || "").trim();
   if (!content || state.sending || !state.linked) return;
   if (state.conversationLoading) { toast("Wait for the selected conversation to finish loading."); return; }
@@ -5750,7 +5750,7 @@ async function sendMessage(rawText) {
       }
       if (!state.activeConversationId) await newConversation({ fromSend: true });
       const conversationId = state.activeConversationId;
-      await persistMessage("user", content, conversationId);
+      if (!skipPersistUser) await persistMessage("user", content, conversationId);
       renderMessages();
       assistantBody = appendMessageElement({ role: "assistant", content: "" });
       thinking = createThinkingIndicator();
@@ -5797,7 +5797,7 @@ async function sendMessage(rawText) {
     if (!state.activeConversationId) await newConversation({ fromSend: true });
     const conversationId = state.activeConversationId;
     activeConversationIdForTurn = conversationId;
-    if ($("#background-task-toggle")?.checked) {
+    if ($("#background-task-toggle")?.checked && !forceForeground) {
       const turnId = crypto.randomUUID();
       const outgoingMessages = [];
       if (state.activeConversation?.handoffContext) {
@@ -5810,7 +5810,7 @@ async function sendMessage(rawText) {
       const dashboardState = activeProject?.description ? { attachedContext: `Project: ${activeProject.name}\n${activeProject.description}` } : {};
       const selectedAgentProvider = $("#agent-provider")?.value || state.selectedAgentProvider || "local";
       const workingMode = $("#working-mode-select")?.value || state.workingMode || "companion";
-      await persistMessage("user", content, conversationId, null, null, turnId);
+      if (!skipPersistUser) await persistMessage("user", content, conversationId, null, null, turnId);
       loadConversations().catch(() => {});
       renderMessages();
       assistantBody = appendMessageElement({ role: "assistant", content: "" });
