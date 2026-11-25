@@ -5097,7 +5097,7 @@ async function approvePendingActionAndContinue(actionId, { toolId = "", summary 
         : (error.message || "The approved action failed. Check its destination before retrying."));
     } else {
       buttons.forEach((btn) => { btn.disabled = false; });
-      window.alfieSoul?.setState("error", "red");
+      window.alfieSoul?.pulse("error", 2400, "idle", "purple");
       toast(error.message);
     }
     return;
@@ -6158,7 +6158,7 @@ async function sendMessage(rawText, { skipPersistUser = false, forceForeground =
       }
     }
     loadConversations().catch(() => {});
-    window.alfieSoul?.setState("error", "red");
+    window.alfieSoul?.pulse("error", 2400, "idle", "purple");
     setTimeout(() => {
       if (window.alfieSoul?.getAnimationState() === "error") window.alfieSoul?.setState("idle", "purple");
     }, 4500);
