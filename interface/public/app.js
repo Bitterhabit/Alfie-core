@@ -3254,18 +3254,90 @@ async function loadCloudAgents() {
   }
 }
 
-$("#agent-provider")?.addEventListener("change", (event) => {
-  const next = event.currentTarget.value || "local";
+let pendingAgentSwitch = null;
+
+function closeAgentSwitchWarning() {
+  const dialog = $("#model-switch-warning");
+  if (dialog?.open) dialog.close("cancel");
+  pendingAgentSwitch = null;
+}
+
+function confirmAgentSwitch() {
+  if (!pendingAgentSwitch) return;
+  const next = pendingAgentSwitch;
+  pendingAgentSwitch = null;
   state.selectedAgentProvider = next;
   try { localStorage.setItem("alfie_agent_provider", next); } catch {}
+  const select = $("#agent-provider");
+  if (select) select.value = next;
   renderCloudPrivacyBanner();
-  if (next === "local") {
-    toast("Switched to Alfie Local.");
-  } else {
-    const agent = findCloudAgent(next);
-    const label = agent ? `${agent.name} (${agent.model})` : next;
-    toast(`Active agent: ${label} — private section access follows your optional privacy controls.`);
+  const agent = findCloudAgent(next);
+  const label = agent ? `${agent.name} (${agent.model})` : next;
+  toast(`Switched to ${label}. Check the cloud privacy banner for current data boundaries.`);
+}
+
+function openAgentSwitchWarning(providerId) {
+  const agent = findCloudAgent(providerId);
+  if (!agent || !agent.enabled || !agent.privacyWarningAccepted) {
+    const select = $("#agent-provider");
+    if (select) select.value = state.selectedAgentProvider || "local";
+    toast("This cloud provider is not enabled. Review its setup and privacy settings first.", { variant: "warning" });
+    return;
   }
+
+  const summary = summarizeLocalVisibility(agent.visibility || {});
+  const dialog = $("#model-switch-warning");
+  const title = $("#model-switch-warning-title");
+  const detail = $("#model-switch-warning-detail");
+  const allowed = $("#model-switch-warning-allowed");
+  const blocked = $("#model-switch-warning-blocked");
+  if (!dialog || typeof dialog.showModal !== "function") {
+    const categories = summary.allowed.length ? summary.allowed.join(", ") : "chat prompt only";
+    if (window.confirm(`Switch to ${agent.name} (${agent.model})? Your conversation and permitted context will be sent to this online provider. Allowed: ${categories}. Personal categories not listed remain blocked.`)) {
+      confirmAgentSwitch();
+    } else {
+      pendingAgentSwitch = null;
+      const select = $("#agent-provider");
+      if (select) select.value = state.selectedAgentProvider || "local";
+    }
+    return;
+  }
+
+  if (title) title.textContent = `Switch to ${agent.name}?`;
+  if (detail) detail.textContent = `This is an online AI provider. Your current conversation messages and the context required for your request will leave your local Alfie installation and be processed by ${agent.name} (${agent.model}).`;
+  if (allowed) allowed.textContent = summary.allowed.length ? summary.allowed.join(", ") : "No optional private sections; chat prompt only.";
+  if (blocked) blocked.textContent = summary.blocked.length ? summary.blocked.join(", ") : "No categories are currently blocked.";
+  dialog.showModal();
+}
+
+$("#agent-provider")?.addEventListener("change", (event) => {
+  const next = event.currentTarget.value || "local";
+  const current = state.selectedAgentProvider || "local";
+  if (next === current) return;
+  if (next === "local") {
+    state.selectedAgentProvider = "local";
+    try { localStorage.setItem("alfie_agent_provider", "local"); } catch {}
+    renderCloudPrivacyBanner();
+    toast("Switched to Alfie Local.");
+    return;
+  }
+
+  pendingAgentSwitch = next;
+  event.currentTarget.value = current;
+  openAgentSwitchWarning(next);
+});
+
+$("#model-switch-warning-confirm")?.addEventListener("click", () => {
+  const dialog = $("#model-switch-warning");
+  if (dialog?.open) dialog.close("confirm");
+  confirmAgentSwitch();
+});
+
+$("#model-switch-warning-cancel")?.addEventListener("click", closeAgentSwitchWarning);
+$("#model-switch-warning")?.addEventListener("cancel", () => {
+  pendingAgentSwitch = null;
+  const select = $("#agent-provider");
+  if (select) select.value = state.selectedAgentProvider || "local";
 });
 
 $("#cloud-privacy-toggle-btn")?.addEventListener("click", () => {
