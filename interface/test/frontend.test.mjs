@@ -762,3 +762,32 @@ test("permission retry reuses the existing user message without duplicating it o
   assert.ok(app.includes('await sendMessage(card.retryPrompt, { skipPersistUser: true, forceForeground: true })'));
   assert.ok(app.includes('if ($("#background-task-toggle")?.checked && !forceForeground)'));
 });
+
+test("online providers cannot be selected until a server API key is configured", async () => {
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+  assert.ok(app.includes("def.agent?.enabled && def.agent?.privacyWarningAccepted && def.agent?.secretConfigured"));
+  assert.ok(app.includes("add API key in Tools & access"));
+  assert.ok(app.includes("!targetAgent.secretConfigured"));
+});
+test("cloud provider status failures fail closed and return the selector to local", async () => {
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+  assert.ok(app.includes("state.cloudAgents = [];"));
+  assert.ok(app.includes('state.selectedAgentProvider = "local";'));
+  assert.ok(app.includes("I couldn’t check the online providers just now."));
+});
+test("approval failures use a temporary error pulse rather than leaving Alfie’s soul red", async () => {
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+  assert.ok(app.includes('window.alfieSoul?.pulse("error", 2400, "idle", "purple")'));
+  assert.ok(!app.includes('window.alfieSoul?.setState("error", "red")'));
+});
+test("cloud provider setup copy accurately explains browser-to-server key handling", async () => {
+  const html = await fs.readFile(new URL("index.html", root), "utf8");
+  assert.match(html, /sent to Alfie over your secure connection, encrypted on the server/);
+  assert.doesNotMatch(html, /API keys are never entered in the browser/);
+});
+test("navigation, welcome tiles and provider cards use softer rounded surfaces", async () => {
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  assert.match(css, /SOFTER NAVIGATION & EVERYDAY CONTROLS/);
+  assert.match(css, /\.nav-item,\.tools-section-tab,\.conversation-item/);
+  assert.match(css, /\.welcome-mark\{border-radius:18px/);
+});

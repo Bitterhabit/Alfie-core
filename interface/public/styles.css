@@ -8756,6 +8756,23 @@ button,.composer,.surface,.list-item,.chat-approval-card,.message.user .message-
 .capability-advanced-details p{margin:6px 0 0;font-size:11px}
 .ambient{opacity:calc(var(--ambient-opacity,.14) + .025)}
 
+/* SOFTER NAVIGATION & EVERYDAY CONTROLS */
+.nav-item,.tools-section-tab,.conversation-item,.suggestion-grid button,
+.composer-suggestion-item,.scroll-to-bottom-btn,.chat-options-section,
+.model-switch-dialog-card,.cloud-agent-card,.tools-key-status-card,
+.tools-scope-item,.chat-context-pill,.project-chip,.filter-chip{border-radius:14px}
+.nav-item{padding:10px 13px;transition:background .2s ease,border-color .2s ease,color .2s ease,transform .2s ease}
+.nav-item:hover{transform:translateX(2px)}
+.nav-item.active{box-shadow:inset 3px 0 0 var(--purple)}
+.suggestion-grid button{padding:14px 16px;line-height:1.5}
+.tools-section-tab{padding:10px 14px}
+.conversation-item{padding:10px 12px}
+.scroll-to-bottom-btn{box-shadow:0 6px 20px rgba(0,0,0,.22)}
+.welcome-mark{border-radius:18px;box-shadow:0 12px 34px rgba(0,0,0,.2),inset 0 0 0 4px rgba(182,162,255,.04)}
+input,textarea,select{min-height:38px}
+input[type=checkbox],input[type=radio]{min-height:0}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid color-mix(in srgb,var(--purple) 78%,white);outline-offset:2px}
+
 @media(prefers-reduced-motion:reduce){
   *,*:before,*:after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
   .login-soul-stage,.topbar-brand-wrap .alfie-soul.mini:hover,.topbar-brand-wrap .alfie-soul.mini:focus-visible{transform:none!important}

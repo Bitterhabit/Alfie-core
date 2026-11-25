@@ -2829,7 +2829,7 @@ function renderCloudPrivacyBanner() {
   }
 
   const agent = findCloudAgent(activeProvider);
-  if (!agent || !agent.enabled || !agent.privacyWarningAccepted) {
+  if (!agent || !agent.enabled || !agent.privacyWarningAccepted || !agent.secretConfigured) {
     banner.hidden = true;
     if (drawer) drawer.hidden = true;
     if (toggleBtn) toggleBtn.setAttribute("aria-expanded", "false");
@@ -2872,7 +2872,7 @@ function syncAgentSelector() {
   for (const def of cloudDefs) {
     const opt = document.createElement("option");
     opt.value = def.id;
-    const isEnabled = Boolean(def.agent?.enabled && def.agent?.privacyWarningAccepted);
+    const isEnabled = Boolean(def.agent?.enabled && def.agent?.privacyWarningAccepted && def.agent?.secretConfigured);
     opt.disabled = !isEnabled;
     if (isEnabled) {
       const summary = summarizeLocalVisibility(def.agent.visibility || {});
@@ -2883,7 +2883,7 @@ function syncAgentSelector() {
         ? `${def.fallbackName} (${privateNote})`
         : `${def.fallbackName} (Key needed)`;
     } else {
-      opt.textContent = `${def.fallbackName} (enable in Settings)`;
+      opt.textContent = def.agent?.enabled && def.agent?.privacyWarningAccepted && !def.agent?.secretConfigured ? `${def.fallbackName} (add API key in Tools & access)` : `${def.fallbackName} (enable in Settings)`;
     }
     select.appendChild(opt);
   }
@@ -3249,7 +3249,23 @@ async function loadCloudAgents() {
     renderCloudKeyStatusCards();
     updateToolsSummaryStrip();
     return state.cloudAgents;
-  } catch {
+  } catch (error) {
+    // Fail closed: never leave a stale cloud provider selected when its access configuration cannot be verified.
+    state.cloudAgents = [];
+    if (state.selectedAgentProvider !== "local") {
+      state.selectedAgentProvider = "local";
+      try { localStorage.setItem("alfie_agent_provider", "local"); } catch {}
+    }
+    syncAgentSelector();
+    renderCloudAgentsSettings();
+    renderCloudKeyStatusCards();
+    const host = $("#cloud-agents-list");
+    if (host) {
+      const message = document.createElement("p");
+      message.className = "error-message";
+      message.textContent = "I couldn’t check the online providers just now. Refresh to try again. " + String(error?.message || "").slice(0, 180);
+      host.replaceChildren(message);
+    }
     return null;
   }
 }
@@ -3265,6 +3281,14 @@ function closeAgentSwitchWarning() {
 function confirmAgentSwitch() {
   if (!pendingAgentSwitch) return;
   const next = pendingAgentSwitch;
+  const targetAgent = findCloudAgent(next);
+  if (!targetAgent || !targetAgent.enabled || !targetAgent.privacyWarningAccepted || !targetAgent.secretConfigured) {
+    pendingAgentSwitch = null;
+    const select = $("#agent-provider");
+    if (select) select.value = state.selectedAgentProvider || "local";
+    toast("That provider is not ready yet. Check its API key and privacy settings.", { variant: "warning" });
+    return;
+  }
   pendingAgentSwitch = null;
   state.selectedAgentProvider = next;
   try { localStorage.setItem("alfie_agent_provider", next); } catch {}
@@ -5067,7 +5091,7 @@ async function approvePendingActionAndContinue(actionId, { toolId = "", summary 
           : "This approval has been consumed to prevent duplicate execution. Check the destination before asking Alfie to propose the action again."
       });
       buttons.forEach((btn) => { btn.disabled = true; });
-      window.alfieSoul?.setState("error", "red");
+      window.alfieSoul?.pulse("error", 2400, "idle", "purple");
       toast(error.actionOutcomeUnknown
         ? "Action outcome uncertain. Check the destination before retrying."
         : (error.message || "The approved action failed. Check its destination before retrying."));
