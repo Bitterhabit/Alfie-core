@@ -12,6 +12,17 @@ function temporaryDatabase(t) {
   return path.join(directory, "identity-replay.sqlite");
 }
 
+
+test("replay storage enforces private directory and database permissions", (t) => {
+  const databasePath = temporaryDatabase(t);
+  const store = new IdentityReplayStore({ filePath: databasePath });
+  t.after(() => store.close());
+  const directoryMode = fs.statSync(path.dirname(databasePath)).mode & 0o777;
+  const databaseMode = fs.statSync(databasePath).mode & 0o777;
+  assert.equal(directoryMode, 0o700);
+  assert.equal(databaseMode, 0o600);
+});
+
 test("identity assertion replay protection survives verifier recreation", (t) => {
   const databasePath = temporaryDatabase(t);
   const now = () => 1_800_000_000_000;
