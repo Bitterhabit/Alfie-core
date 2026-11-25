@@ -10938,9 +10938,15 @@ function openProviderEditor(endpoint = null) {
   $("#provider-editor-title").textContent = isEdit ? `Edit endpoint: ${endpoint.name || endpoint.id}` : "Add model endpoint";
   $("#provider-field-id").value = isEdit ? endpoint.id : "";
   $("#provider-field-name").value = isEdit ? (endpoint.name || "") : "";
-  $("#provider-field-type").value = isEdit ? (endpoint.provider || "ollama") : "ollama";
-  $("#provider-field-url").value = isEdit ? (endpoint.baseUrl || "") : "http://127.0.0.1:11434";
-  $("#provider-field-url").placeholder = ($("#provider-field-type").value === "ollama") ? "http://127.0.0.1:11434" : "https://api.example.com/v1 or a custom API root";
+  const savedBaseUrl = isEdit ? (endpoint.baseUrl || "") : "";
+  const isGeminiEndpoint = /generativelanguage\\.googleapis\\.com\\/v1beta\\/openai/i.test(savedBaseUrl);
+  $("#provider-field-type").value = isGeminiEndpoint ? "google-gemini" : (isEdit ? (endpoint.provider || "ollama") : "ollama");
+  $("#provider-field-url").value = isEdit ? savedBaseUrl : "http://127.0.0.1:11434";
+  $("#provider-field-url").placeholder = $("#provider-field-type").value === "ollama" ? "http://127.0.0.1:11434" : ($("#provider-field-type").value === "google-gemini" ? "https://generativelanguage.googleapis.com/v1beta/openai" : "https://api.example.com/v1");
+  const providerHelp = $("#provider-url-help");
+  if (providerHelp) providerHelp.textContent = $("#provider-field-type").value === "google-gemini"
+    ? "Get your Gemini API key from Google AI Studio. Alfie uses Google's OpenAI-compatible endpoint; your key is encrypted on the server."
+    : "For other services, enter the provider's OpenAI-compatible API root. For a PC on your network, use its reachable IP/hostname and port.";
   $("#provider-field-mode").value = isEdit ? (endpoint.mode || "standard") : "standard";
   $("#provider-field-priority").value = String(isEdit ? (endpoint.priority ?? 50) : 60);
   $("#provider-field-temperature").value = String(isEdit ? (endpoint.temperature ?? 0.4) : 0.4);
@@ -11363,12 +11369,26 @@ function initProviderManagement() {
   $("#provider-field-type")?.addEventListener("change", (event) => {
     const type = event.target.value;
     const urlInput = $("#provider-field-url");
+    const nameInput = $("#provider-field-name");
+    const credentialInput = $("#provider-field-credential");
+    const help = $("#provider-url-help");
     if (!urlInput) return;
-    urlInput.placeholder = type === "ollama" ? "http://127.0.0.1:11434" : "https://api.example.com/v1 or a custom API root";
+    if (type === "google-gemini") {
+      urlInput.value = "https://generativelanguage.googleapis.com/v1beta/openai";
+      urlInput.placeholder = "https://generativelanguage.googleapis.com/v1beta/openai";
+      if (nameInput && (!nameInput.value || nameInput.value === "Local Ollama")) nameInput.value = "Google Gemini";
+      if (credentialInput) credentialInput.placeholder = "Paste your Google AI Studio API key";
+      if (help) help.textContent = "Get your Gemini API key from Google AI Studio. Alfie uses Google's OpenAI-compatible endpoint; your key is encrypted on the server.";
+      $("#provider-field-trusted-local").checked = false;
+      return;
+    }
+    urlInput.placeholder = type === "ollama" ? "http://127.0.0.1:11434" : "https://api.example.com/v1";
+    if (credentialInput) credentialInput.placeholder = "API key (leave blank only if the endpoint needs no key)";
+    if (help) help.textContent = "For other services, enter the provider's OpenAI-compatible API root. For a PC on your network, use its reachable IP/hostname and port.";
     if (!providerPanelState.editingId) {
-      if (type === "ollama" && (!urlInput.value || urlInput.value === "http://127.0.0.1:1234/v1")) {
+      if (type === "ollama" && (!urlInput.value || urlInput.value === "http://127.0.0.1:1234/v1" || urlInput.value === "https://generativelanguage.googleapis.com/v1beta/openai")) {
         urlInput.value = "http://127.0.0.1:11434";
-      } else if (type === "openai-compatible" && (!urlInput.value || urlInput.value === "http://127.0.0.1:11434")) {
+      } else if (type === "openai-compatible" && (!urlInput.value || urlInput.value === "http://127.0.0.1:11434" || urlInput.value === "https://generativelanguage.googleapis.com/v1beta/openai")) {
         urlInput.value = "http://127.0.0.1:1234/v1";
       }
     }
