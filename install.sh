@@ -11,8 +11,8 @@ usage() {
 Alfie Core installer
 
 Usage:
-  sudo ./install.sh          First installation
-  sudo ./install.sh --upgrade  Update the checkout and rebuild without deleting data
+  sudo bash ./install.sh    First installation
+  sudo bash ./install.sh --upgrade  Update the checkout and rebuild without deleting data
   ./install.sh --help
 
 First install creates private credentials and local configuration, validates
