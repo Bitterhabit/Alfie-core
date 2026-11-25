@@ -409,3 +409,30 @@ test("Cancelling one coalesced weather caller does not abort a second concurrent
   assert.equal(result2.location, "York, United Kingdom");
   assert.equal(result2.current.temperatureC, 9.5);
 });
+
+
+test("web.weather geocodes a label-only saved location instead of treating null coordinates as zero", async () => {
+  const requests = [];
+  const registry = new ToolRegistry();
+  registerWebResearchTools(registry, {
+    requestImpl: async () => new Response("", { status: 500 }),
+    fetchImpl: async (url) => {
+      requests.push(String(url));
+      if (String(url).includes("geocoding-api")) {
+        return new Response(JSON.stringify({ results: [{ name: "Liverpool", admin1: "England", country: "United Kingdom", country_code: "GB", latitude: 53.4084, longitude: -2.9916, timezone: "Europe/London" }] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        timezone: "Europe/London",
+        current: { time: "2026-11-25T14:00", temperature_2m: 8, apparent_temperature: 6, precipitation: 0, weather_code: 3, wind_speed_10m: 10 },
+        daily: { time: ["2026-11-25", "2026-11-26"], weather_code: [3, 2], temperature_2m_max: [10, 11], temperature_2m_min: [4, 5], precipitation_probability_max: [20, 30] }
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+    lookupImpl: publicLookup,
+    profileStore: { get: async () => ({ location: { enabled: true, label: "Liverpool, UK", latitude: null, longitude: null, timezone: "Europe/London" } }) }
+  });
+  const result = await registry.tools.get("web.weather").handler({}, { userId: "peter" });
+  assert.equal(result.location, "Liverpool, England, United Kingdom");
+  assert.ok(requests.some((url) => url.includes("geocoding-api")));
+  assert.ok(requests.some((url) => url.includes("latitude=53.4084")));
+  assert.ok(!requests.some((url) => url.includes("latitude=0&longitude=0")));
+});

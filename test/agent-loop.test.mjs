@@ -482,3 +482,26 @@ test("AgentLoop uses directFinalAfterTool on Step 2 after weather or transit loo
   assert.ok(streamedChunks.length >= 1, "Step 2 direct final answer should stream tokens live");
   assert.match(result.message, /10:14/);
 });
+
+
+test("AgentLoop gives actionable feedback when no saved weather location exists", async () => {
+  const registry = new ToolRegistry();
+  registry.register({
+    id: "web.weather", name: "Check live weather", description: "Fast direct weather forecast",
+    scope: "web:read", risk: "read", trust: "external", network: true, externalAction: false,
+    tags: ["weather", "forecast"], inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    handler: async () => ({})
+  });
+  let providerCalls = 0;
+  const loop = new AgentLoop({
+    providerRegistry: { complete: async () => { providerCalls++; throw new Error("should not be called"); } },
+    providerConfig: {}, toolRegistry: registry,
+    dispatcher: { permissionStore: { list: async () => ["web:read"] }, resetTurn() {}, dispatch: async () => ({}) },
+    profileStore: { get: async () => ({ location: { enabled: false, label: "", latitude: null, longitude: null } }) },
+    contextAssembler: new ContextAssembler()
+  });
+  const result = await loop.run({ userId: "user-1", messages: [{ role: "user", content: "What's the weather tomorrow?" }] });
+  assert.equal(result.status, "needs_location");
+  assert.match(result.message, /Set location/);
+  assert.equal(providerCalls, 0);
+});

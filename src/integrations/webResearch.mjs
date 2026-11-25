@@ -737,7 +737,7 @@ export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetc
       const profile = await profileStore.get(context.userId);
       const savedLoc = profile?.location;
       if (savedLoc?.enabled) {
-        if (Number.isFinite(Number(savedLoc.latitude)) && Number.isFinite(Number(savedLoc.longitude))) {
+        if (savedLoc.latitude !== null && savedLoc.latitude !== undefined && savedLoc.latitude !== "" && savedLoc.longitude !== null && savedLoc.longitude !== undefined && savedLoc.longitude !== "" && Number.isFinite(Number(savedLoc.latitude)) && Number.isFinite(Number(savedLoc.longitude))) {
           lat = Number(savedLoc.latitude);
           lon = Number(savedLoc.longitude);
           if (savedLoc.label) resolvedName = String(savedLoc.label).trim().slice(0, 120);

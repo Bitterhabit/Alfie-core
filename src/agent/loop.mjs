@@ -539,7 +539,7 @@ export class AgentLoop {
             }
             const requestedLocation = explicitWeatherLocation(userText);
             const savedLocation = workflowProfile?.location;
-            if (!requestedLocation && !(savedLocation?.enabled && (savedLocation.label || (Number.isFinite(Number(savedLocation.latitude)) && Number.isFinite(Number(savedLocation.longitude)))))) {
+            if (!requestedLocation && !(savedLocation?.enabled && (savedLocation.label || (savedLocation.latitude !== null && savedLocation.latitude !== undefined && savedLocation.longitude !== null && savedLocation.longitude !== undefined && Number.isFinite(Number(savedLocation.latitude)) && Number.isFinite(Number(savedLocation.longitude)))))) {
               this.dispatcher.resetTurn(turnId);
               return { status: "needs_location", message: "I do not have an active saved location yet. Open the chat options → **Set location**, enter your town or city, and save it. You can also ask for the weather in a named place, such as Liverpool tomorrow.", steps };
             }
