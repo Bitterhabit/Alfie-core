@@ -3279,6 +3279,7 @@ function confirmAgentSwitch() {
 function openAgentSwitchWarning(providerId) {
   const agent = findCloudAgent(providerId);
   if (!agent || !agent.enabled || !agent.privacyWarningAccepted) {
+    pendingAgentSwitch = null;
     const select = $("#agent-provider");
     if (select) select.value = state.selectedAgentProvider || "local";
     toast("This cloud provider is not enabled. Review its setup and privacy settings first.", { variant: "warning" });
