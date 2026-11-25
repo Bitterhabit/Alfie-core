@@ -5838,7 +5838,7 @@ async function sendMessage(rawText, { skipPersistUser = false, forceForeground =
       watchBackgroundChatTask(submitted.job.id, conversationId, assistantBody, backgroundIndicator);
       return;
     }
-    await persistMessage("user", content, conversationId);
+    if (!skipPersistUser) await persistMessage("user", content, conversationId);
     loadConversations().catch(() => {});
     renderMessages();
     assistantBody = appendMessageElement({ role: "assistant", content: "" });
