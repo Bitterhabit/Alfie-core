@@ -579,3 +579,59 @@ test("/api/health responds 200 and trusted HTTPS reverse proxy upgrades session 
   }
 });
 
+
+
+test("approval proxy preserves an uncertain external outcome and passes a cancellable signal", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-ui-approval-outcome-"));
+  const authStore = new InterfaceAuthStore({ dataDirectory: directory });
+  await authStore.bootstrap("alfie-admin", "test-password-for-ci-only-123456");
+  let approvalCall = null;
+  const coreClient = {
+    approveAction: async (userId, actionId, options = {}) => {
+      approvalCall = { userId, actionId, signal: options.signal };
+      throw Object.assign(new Error("External action outcome is uncertain."), {
+        status: 502,
+        code: "ACTION_OUTCOME_UNKNOWN",
+        actionConsumed: true,
+        actionOutcomeUnknown: true,
+        actionId,
+        toolId: "external.publish"
+      });
+    }
+  };
+  const server = createAlfieInterfaceServer({ authStore, coreClient, cookieSecure: false });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = "http://127.0.0.1:" + server.address().port;
+  try {
+    const login = await fetch(base + "/api/auth/login", {
+      method: "POST",
+      headers: { origin: base, "content-type": "application/json" },
+      body: JSON.stringify({ username: "alfie-admin", password: "test-password-for-ci-only-123456" })
+    });
+    assert.equal(login.status, 200);
+    const cookie = login.headers.get("set-cookie").split(";")[0];
+    const session = await login.json();
+    const response = await fetch(base + "/api/core/tools/approve", {
+      method: "POST",
+      headers: {
+        origin: base,
+        cookie,
+        "content-type": "application/json",
+        "x-csrf-token": session.csrfToken
+      },
+      body: JSON.stringify({ actionId: "action-outcome-1" })
+    });
+    assert.equal(response.status, 502);
+    const payload = await response.json();
+    assert.equal(payload.actionConsumed, true);
+    assert.equal(payload.actionOutcomeUnknown, true);
+    assert.equal(payload.retryable, false);
+    assert.equal(payload.code, "ACTION_OUTCOME_UNKNOWN");
+    assert.equal(approvalCall.userId, session.user.id);
+    assert.equal(approvalCall.actionId, "action-outcome-1");
+    assert.ok(approvalCall.signal instanceof AbortSignal);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
