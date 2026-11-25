@@ -698,3 +698,21 @@ test("Tools & Access uses organized tabs and supports server-side Gemini & OpenA
 
 
 
+
+test("switching to an online model requires an explicit privacy confirmation before changing the active provider", async () => {
+  const html = await fs.readFile(new URL("../public/index.html", import.meta.url), "utf8");
+  const css = await fs.readFile(new URL("../public/styles.css", import.meta.url), "utf8");
+  const app = await fs.readFile(new URL("../public/app.js", import.meta.url), "utf8");
+
+  assert.match(html, /id="model-switch-warning"/);
+  assert.match(html, /id="model-switch-warning-confirm"/);
+  assert.match(html, /id="model-switch-warning-cancel"/);
+  assert.match(css, /\.model-switch-dialog/);
+  assert.match(app, /pendingAgentSwitch = next/);
+  assert.match(app, /openAgentSwitchWarning\(next\)/);
+  assert.match(app, /dialog\.showModal\(\)/);
+  assert.match(app, /Your current conversation messages and the context required for your request will leave your local Alfie installation/);
+  assert.match(app, /pendingAgentSwitch = null/);
+  assert.match(app, /Stay on current model/);
+  assert.match(app, /Tool permissions do not override these data restrictions/);
+});
