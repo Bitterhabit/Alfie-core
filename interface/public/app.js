@@ -72,6 +72,7 @@ async function api(route, options = {}) {
       error.code = payload.code;
       error.actionConsumed = payload.actionConsumed === true;
       error.actionCompleted = payload.actionCompleted === true;
+      error.actionOutcomeUnknown = payload.actionOutcomeUnknown === true;
       error.actionId = payload.actionId || null;
       error.toolId = payload.toolId || null;
       throw error;
