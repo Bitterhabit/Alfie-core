@@ -714,5 +714,5 @@ test("switching to an online model requires an explicit privacy confirmation bef
   assert.match(app, /Your current conversation messages and the context required for your request will leave your local Alfie installation/);
   assert.match(app, /pendingAgentSwitch = null/);
   assert.match(html, /Stay on current model/);
-  assert.match(app, /Tool permissions do not override these data restrictions/);
+  assert.match(html, /Tool permissions do not override these data restrictions/);
 });
