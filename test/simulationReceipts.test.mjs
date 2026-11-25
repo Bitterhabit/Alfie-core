@@ -123,13 +123,18 @@ test("Generic write tool without custom dryRun gets a safe normalized simulation
   assert.match(proposed.simulation.rollbackPlan, /manual reversal/i);
   assert.ok(proposed.simulation.dependencies.includes("External network endpoint"));
 
-  await assert.rejects(() => dispatcher.approve("alice", proposed.actionId), /container daemon offline/i);
+  await assert.rejects(
+    () => dispatcher.approve("alice", proposed.actionId),
+    (error) => error.code === "ACTION_OUTCOME_UNKNOWN" && error.actionOutcomeUnknown === true
+  );
 
   const receipts = await pendingActionStore.listReceipts("alice");
   assert.equal(receipts.length, 1);
   assert.equal(receipts[0].status, "failed");
   assert.equal(receipts[0].verified, false);
-  assert.match(receipts[0].verificationDetail, /container daemon offline/i);
+  assert.equal(receipts[0].verificationState, "outcome_unknown");
+  assert.match(receipts[0].verificationDetail, /may have partially completed/i);
+  assert.match(receipts[0].verificationDetail, /check the destination before retrying/i);
 
   await fs.rm(dir, { recursive: true, force: true });
 });
