@@ -566,3 +566,21 @@ test("AgentLoop asks for temporary web permission in chat before deterministic w
   assert.match(result.message, /permission to use the internet/i);
   assert.equal(dispatchCalls, 0);
 });
+
+ 
+test("ContextAssembler gives Alfie an authoritative plain-language summary of current capabilities", () => {
+  const registry = new ToolRegistry();
+  registry.register({ id: "web.search", name: "Search the internet", description: "Search public web pages", scope: "web:read", risk: "read", trust: "external", network: true, externalAction: false, tags: ["web", "search"], handler: async () => ({}) });
+  registry.register({ id: "email.read", name: "Read email", description: "Read messages", scope: "email:read", risk: "read", trust: "internal", network: false, externalAction: false, tags: ["email"], handler: async () => ({}) });
+  const assembled = new ContextAssembler().assemble({
+    userText: "What can you currently access?",
+    history: [{ role: "user", content: "What can you currently access?" }],
+    registry,
+    grantedScopes: ["web:read"]
+  });
+  const system = assembled.messages[0].content;
+  assert.match(system, /CURRENT CAPABILITIES/);
+  assert.match(system, /Internet: available/);
+  assert.match(system, /Email: not currently enabled/);
+  assert.match(system, /Use this list as the source of truth/);
+});

@@ -727,3 +727,23 @@ test("chat presents a temporary friendly permission card and retries only after 
   assert.ok(app.includes('await sendMessage(card.retryPrompt)'));
   assert.ok(app.includes('No permission granted'));
 });
+
+ 
+test("Tools & access uses friendly capability labels and keeps raw scopes under advanced details", async () => {
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  assert.ok(app.includes('"web:read": ["Internet", "Search the web and read websites"]'));
+  assert.ok(app.includes('advancedSummary.textContent = "Technical details"'));
+  assert.ok(app.includes("scopeCode.textContent = scope"));
+  assert.match(css, /\.capability-advanced-details/);
+});
+
+test("workspace uses softer rounded controls, surfaces, composer and in-chat approvals", async () => {
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  assert.match(css, /WELCOMING COMPANION REFINEMENT/);
+  assert.match(css, /border-radius:22px/);
+  assert.match(css, /box-shadow:0 14px 38px/);
+  assert.match(css, /\.chat-approval-card\{[\s\S]*?border-radius:18px/);
+  const reducedMotionIdx = css.lastIndexOf("@media(prefers-reduced-motion:reduce)");
+  assert.ok(reducedMotionIdx > css.length - 350, "reduced motion must remain the final stylesheet block");
+});

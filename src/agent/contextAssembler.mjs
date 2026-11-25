@@ -6,6 +6,42 @@ import { buildWorkflowProfilePrompt } from "../profile/store.mjs";
 const DEFAULT_LAST_TURNS = 8;
 const MAX_DASHBOARD_SUMMARY = 1200;
 
+const CAPABILITY_LABELS = {
+  "web:read": "Internet",
+  "web:write": "Online actions",
+  "email:read": "Email",
+  "email:write": "Email actions",
+  "calendar:read": "Calendar",
+  "calendar:write": "Calendar changes",
+  "files:read": "Files",
+  "files:write": "File changes",
+  "memory:read": "Saved memories",
+  "memory:write": "Memory changes"
+};
+
+function buildCapabilityAwareness(registry, grantedScopes = []) {
+  const definitions = typeof registry?.list === "function" ? registry.list() : [];
+  if (!definitions.length) return "";
+  const granted = new Set(Array.isArray(grantedScopes) ? grantedScopes : []);
+  const groups = new Map();
+  for (const tool of definitions) {
+    const scope = String(tool?.scope || "");
+    if (!scope) continue;
+    if (!groups.has(scope)) groups.set(scope, []);
+    groups.get(scope).push(String(tool.name || tool.id || "available action").slice(0, 80));
+  }
+  const lines = [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([scope, names]) => {
+    const label = CAPABILITY_LABELS[scope] || scope.split(":").map((part) => part.replace(/[-_.]/g, " ")).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+    const status = granted.has(scope) ? "available" : "not currently enabled";
+    return "- " + label + ": " + status + (names.length ? " (" + names.slice(0, 5).join(", ") + ")" : "");
+  });
+  return [
+    "CURRENT CAPABILITIES (authoritative for this request and active project):",
+    ...lines,
+    "Use this list as the source of truth when asked what you can access. Never claim a capability is available when it is not enabled. A tool permission does not grant a cloud provider access to private data that its privacy policy filters out."
+  ].join("\n");
+}
+
 function words(value) {
   return new Set(String(value || "").toLowerCase().match(/[a-z0-9_]+/g) || []);
 }
@@ -193,6 +229,7 @@ export class ContextAssembler {
       buildWorkingModePrompt(resolvedMode.id),
       ...(workflowPrompt ? [workflowPrompt] : []),
       ...(privacyNotice ? [String(privacyNotice)] : []),
+      ...(buildCapabilityAwareness(registry, grantedScopes) ? [buildCapabilityAwareness(registry, grantedScopes)] : []),
       ...(dossierText ? [`Active project dossier (user-authored project continuity record):\n${dossierText}`] : []),
       ...(isApprovalContinuation ? [
         `APPROVAL CONTINUATION: The user explicitly approved and executed "${String(approvalContinuation.toolId || "action").slice(0, 80)}"${approvalContinuation.summary ? ` (${String(approvalContinuation.summary).slice(0, 180)})` : ""}. Answer the user's preceding request directly and concisely using the approved tool result provided in the latest message, citing exact figures/URLs where applicable. Do not repeat the tool call or ask for approval again.`

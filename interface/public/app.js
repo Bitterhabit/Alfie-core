@@ -8087,6 +8087,23 @@ function initWatchers() {
   });
 }
 
+function capabilityPresentation(scope) {
+  const labels = {
+    "web:read": ["Internet", "Search the web and read websites"],
+    "web:write": ["Online actions", "Make changes on connected websites"],
+    "email:read": ["Email", "Read and organise messages"],
+    "email:write": ["Email actions", "Draft or send messages"],
+    "calendar:read": ["Calendar", "Check your schedule and events"],
+    "calendar:write": ["Calendar changes", "Add or change events"],
+    "files:read": ["Files", "Find and read your documents"],
+    "files:write": ["File changes", "Create or edit documents"],
+    "memory:read": ["Saved memories", "Recall information you have asked Alfie to remember"],
+    "memory:write": ["Memory changes", "Save or update remembered information"]
+  };
+  if (labels[scope]) return { title: labels[scope][0], description: labels[scope][1] };
+  const title = String(scope || "Other capability").split(":").map((part) => part.replace(/[-_.]/g, " ")).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+  return { title, description: "Additional capability available to Alfie" };
+}
 async function loadToolsAndApprovals(focusActionId = null) {
   const toolsHost = $("#tool-list");
   const pendingHost = $("#pending-list");
@@ -8119,15 +8136,14 @@ async function loadToolsAndApprovals(focusActionId = null) {
       const scopeLeases = leasesByScope.get(scope) || [];
       const hasGrants = scopeLeases.length > 0;
       const names = scopedTools.map((tool) => tool.name || tool.id).join(", ");
+      const presentation = capabilityPresentation(scope);
       const summaryParts = [
-        hasGrants
-          ? `${scopeLeases.length} active ${scopeLeases.length === 1 ? "lease" : "leases"}`
-          : "Not granted",
-        scopedTools.length + " tool(s): " + names
+        hasGrants ? scopeLeases.length + " active access " + (scopeLeases.length === 1 ? "grant" : "grants") : "Not currently enabled",
+        scopedTools.length + " available " + (scopedTools.length === 1 ? "action" : "actions")
       ];
       const scopeActions = [
         {
-          label: hasGrants ? "Add grant" : "Allow",
+          label: hasGrants ? "Extend access" : "Allow",
           kind: hasGrants ? "secondary-button" : "primary-button",
           onClick: async () => {
             try {
@@ -8157,9 +8173,19 @@ async function loadToolsAndApprovals(focusActionId = null) {
         });
       }
 
-      const scopeItem = createItem(scope, summaryParts.join(" · "), scopeActions);
+      const scopeItem = createItem(presentation.title, presentation.description + " · " + summaryParts.join(" · "), scopeActions);
       scopeItem.classList.add("tools-scope-item", hasGrants ? "is-granted" : "is-revoked");
-      scopeItem.dataset.scopeSearch = `${scope} ${names}`.toLowerCase();
+      scopeItem.dataset.scopeSearch = (scope + " " + names).toLowerCase();
+      const advanced = document.createElement("details");
+      advanced.className = "capability-advanced-details";
+      const advancedSummary = document.createElement("summary");
+      advancedSummary.textContent = "Technical details";
+      const scopeCode = document.createElement("code");
+      scopeCode.textContent = scope;
+      const toolNames = document.createElement("p");
+      toolNames.textContent = "Registered actions: " + names;
+      advanced.append(advancedSummary, scopeCode, toolNames);
+      scopeItem.firstElementChild?.appendChild(advanced);
       if (scopeLeases.length) {
         scopeItem.classList.add("has-lease-list");
         const leaseList = document.createElement("div");
