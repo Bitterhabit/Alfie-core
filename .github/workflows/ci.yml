@@ -89,7 +89,7 @@ jobs:
           git remote add origin "$TEST_ROOT/origin.git"
           git push -u origin main
 
-          printf '\n127.0.0.1\n18781\n\n' | ./install.sh
+          printf '\n127.0.0.1\n18781\n\n' | bash ./install.sh
           docker compose -f compose.yaml -f compose.local.yaml exec -T alfie-core node -e "require('node:fs').writeFileSync('/data/installer-upgrade-marker.txt','persistent-volume-ok')"
           LOCAL_CONFIG_HASH="$(sha256sum compose.local.yaml | cut -d ' ' -f 1)"
 
