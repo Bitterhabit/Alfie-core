@@ -436,3 +436,17 @@ test("web.weather geocodes a label-only saved location instead of treating null 
   assert.ok(requests.some((url) => url.includes("latitude=53.4084")));
   assert.ok(!requests.some((url) => url.includes("latitude=0&longitude=0")));
 });
+
+
+test("web.weather surfaces saved-profile read failures instead of silently pretending no location exists", async () => {
+  const registry = new ToolRegistry();
+  registerWebResearchTools(registry, {
+    fetchImpl: async () => { throw new Error("Forecast request should not run."); },
+    lookupImpl: publicLookup,
+    profileStore: { get: async () => { throw new Error("Workflow profile store unavailable."); } }
+  });
+  await assert.rejects(
+    () => registry.tools.get("web.weather").handler({}, { userId: "peter" }),
+    /Workflow profile store unavailable/
+  );
+});

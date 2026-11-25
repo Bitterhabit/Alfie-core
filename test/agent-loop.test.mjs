@@ -505,3 +505,34 @@ test("AgentLoop gives actionable feedback when no saved weather location exists"
   assert.match(result.message, /Set location/);
   assert.equal(providerCalls, 0);
 });
+
+
+test("AgentLoop runs weather directly from the saved profile without requiring an LLM round-trip", async () => {
+  const registry = new ToolRegistry();
+  registry.register({
+    id: "web.weather", name: "Check live weather", description: "Fast direct weather forecast",
+    scope: "web:read", risk: "read", trust: "external", network: true, externalAction: false,
+    tags: ["weather", "forecast"], inputSchema: { type: "object", properties: { location: { type: "string" } }, additionalProperties: false },
+    handler: async () => ({})
+  });
+  let providerCalls = 0;
+  let dispatchArgs = null;
+  const loop = new AgentLoop({
+    providerRegistry: { complete: async () => { providerCalls++; throw new Error("LLM should not be called for deterministic weather."); } },
+    providerConfig: {}, toolRegistry: registry,
+    dispatcher: {
+      permissionStore: { list: async () => ["web:read"] },
+      resetTurn() {},
+      dispatch: async (args) => { dispatchArgs = args; return { status: "completed", result: { location: "Leeds, UK", tomorrow: { condition: "Light rain", highC: 9, lowC: 3, rainChancePct: 60 }, source: "https://open-meteo.com/" } }; }
+    },
+    profileStore: { get: async () => ({ location: { enabled: true, label: "Leeds, UK", latitude: 53.8, longitude: -1.5, timezone: "Europe/London" } }) },
+    contextAssembler: new ContextAssembler()
+  });
+  const result = await loop.run({ userId: "user-1", messages: [{ role: "user", content: "What's the weather like tomorrow?" }] });
+  assert.equal(result.status, "completed");
+  assert.match(result.message, /Tomorrow in Leeds, UK/);
+  assert.match(result.message, /60%/);
+  assert.equal(providerCalls, 0);
+  assert.equal(dispatchArgs.toolId, "web.weather");
+  assert.deepEqual(dispatchArgs.args, {});
+});

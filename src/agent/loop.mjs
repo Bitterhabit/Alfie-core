@@ -620,7 +620,7 @@ export class AgentLoop {
               this.dispatcher.resetTurn(turnId);
               return {
                 status: "provider_unavailable",
-                message: "I could not reach a configured model provider, so I have not generated a response or taken any action. Check the model connection in Settings and try again.\n\nProvider detail: " + String(providerError?.message || "No additional diagnostic was returned.").slice(0, 500),
+                message: "I couldn't reach a configured model provider, so I haven't generated a response or taken any action. Check the model connection in Settings and try again.\n\nProvider detail: " + String(providerError?.message || "No additional diagnostic was returned.").slice(0, 500),
                 steps,
                 provider: "local"
               };
