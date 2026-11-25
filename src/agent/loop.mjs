@@ -21,6 +21,23 @@ function awaitWithAbort(promise, signal) {
   return Promise.race([promise, aborted]).finally(() => signal.removeEventListener("abort", listener));
 }
 
+function explicitWeatherLocation(userText) {
+  const text = String(userText || "").trim();
+  const match = /\b(?:in|for|around|near)\s+(.+?)(?=\s+(?:today|tomorrow|tonight|this\s+(?:morning|afternoon|evening|week)|next\s+\w+)\b|[?.!,]|$)/i.exec(text);
+  const candidate = String(match?.[1] || "").trim().replace(/\s+/g, " ");
+  if (!candidate || /^(?:the weather|weather|tomorrow|today)$/i.test(candidate)) return "";
+  return candidate.slice(0, 120);
+}
+
+function formatWeatherForecast(result = {}) {
+  const tomorrow = result.tomorrow || {};
+  const lines = ["**Tomorrow in " + String(result.location || "your saved location").slice(0, 120) + ":** " + String(tomorrow.condition || "Forecast unavailable") + "."];
+  if (tomorrow.highC !== null && tomorrow.highC !== undefined && tomorrow.lowC !== null && tomorrow.lowC !== undefined) lines.push("High " + tomorrow.highC + "°C · Low " + tomorrow.lowC + "°C.");
+  if (tomorrow.rainChancePct !== null && tomorrow.rainChancePct !== undefined) lines.push("Chance of rain: " + tomorrow.rainChancePct + "%.");
+  if (result.source) lines.push("Source: [Open-Meteo](" + result.source + ").");
+  return lines.join("\n");
+}
+
 function hasExactKeys(value, expected) {
   const keys = Object.keys(value).sort();
   return keys.length === expected.length && expected.every((key) => keys.includes(key));
@@ -512,6 +529,37 @@ export class AgentLoop {
           turnTainted = true;
         }
 
+        // Weather is a deterministic, read-only lookup: skip the model round-trip.
+        if (context.liveLookupIntent === "weather" && !cloudAgent) {
+          const weatherTool = this.toolRegistry?.tools?.get?.("web.weather");
+          if (weatherTool) {
+            if (!effectiveScopes.includes(weatherTool.scope)) {
+              this.dispatcher.resetTurn(turnId);
+              return { status: "permission_required", message: "I can check live weather, but Alfie needs the **Web read** permission first. Enable `web:read` in Settings → Tools & Permissions, then try again.", steps };
+            }
+            const requestedLocation = explicitWeatherLocation(userText);
+            const savedLocation = workflowProfile?.location;
+            if (!requestedLocation && !(savedLocation?.enabled && (savedLocation.label || (Number.isFinite(Number(savedLocation.latitude)) && Number.isFinite(Number(savedLocation.longitude)))))) {
+              this.dispatcher.resetTurn(turnId);
+              return { status: "needs_location", message: "I do not have an active saved location yet. Open the chat options → **Set location**, enter your town or city, and save it. You can also ask for the weather in a named place, such as Liverpool tomorrow.", steps };
+            }
+            const actionText = "Checking local weather…";
+            toolsUsed.push({ toolId: "web.weather", toolName: weatherTool.name || "Check live weather", action: actionText, isExternal: true });
+            if (typeof onProgress === "function") onProgress({ type: "tool_start", toolId: "web.weather", toolName: weatherTool.name || "Check live weather", action: actionText, isExternal: true, steps: 1 });
+            try {
+              const observation = await this.dispatcher.dispatch({ userId, toolId: "web.weather", args: requestedLocation ? { location: requestedLocation } : {}, turnId, contextMessages: context.messages, untrustedContext: turnTainted, projectId: activeProject?.id || null, signal: controller.signal });
+              if (observation?.status !== "completed") { this.dispatcher.resetTurn(turnId); return { status: observation?.status || "tool_error", message: observation?.error || "The weather lookup did not complete.", steps: 1 }; }
+              this.dispatcher.resetTurn(turnId);
+              const latencyMs = this.now() - started;
+              return { status: "completed", message: formatWeatherForecast(observation.result), steps: 1, model: "Open-Meteo", provider: "weather", endpointId: "open-meteo", metrics: { latencyMs, completionTokens: 0, promptTokens: 0, totalTokens: 0 }, toolsUsed, provenance: { workingMode: { id: resolvedMode.id, label: resolvedMode.label }, learningMode: workflowProfile?.learningMode || null, project: activeProject ? { id: activeProject.id, name: activeProject.name, status: activeProject.status || "active" } : null, memoriesInjected: [], autoMemories: [], toolsShortlisted: ["web.weather"], toolsUsed: ["web.weather"], tainted: turnTainted, privacyFiltered: Boolean(lastPrivacyReport), blockedCategories: Array.isArray(lastPrivacyReport?.blockedPersonalCategories) ? lastPrivacyReport.blockedPersonalCategories : [], steps: 1, latencyMs } };
+            } catch (error) {
+              this.dispatcher.resetTurn(turnId);
+              if (controller.signal.aborted) throw error;
+              return { status: "tool_error", message: "Weather lookup failed. " + String(error?.message || "Weather service unavailable.").slice(0, 400), steps: 1 };
+            }
+          }
+        }
+
         let selected;
         const allowPlainTextFinal = !Array.isArray(context.tools) || context.tools.length === 0;
         if (cloudAgent) {
@@ -572,7 +620,7 @@ export class AgentLoop {
               this.dispatcher.resetTurn(turnId);
               return {
                 status: "provider_unavailable",
-                message: "I couldn't reach a configured model provider, so I haven't generated a response or taken any action. Check the model connection in Settings and try again.",
+                message: "I could not reach a configured model provider, so I have not generated a response or taken any action. Check the model connection in Settings and try again.\n\nProvider detail: " + String(providerError?.message || "No additional diagnostic was returned.").slice(0, 500),
                 steps,
                 provider: "local"
               };

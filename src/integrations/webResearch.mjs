@@ -734,20 +734,18 @@ export function registerWebResearchTools(registry, { fetchImpl = globalThis.fetc
 
     // Automatically fall back to the user's opt-in saved location when args are omitted.
     if ((!Number.isFinite(lat) || !Number.isFinite(lon)) && !resolvedName && profileStore?.get && context?.userId) {
-      try {
-        const profile = await profileStore.get(context.userId);
-        const savedLoc = profile?.location;
-        if (savedLoc?.enabled) {
-          if (Number.isFinite(Number(savedLoc.latitude)) && Number.isFinite(Number(savedLoc.longitude))) {
-            lat = Number(savedLoc.latitude);
-            lon = Number(savedLoc.longitude);
-            if (savedLoc.label) resolvedName = String(savedLoc.label).trim().slice(0, 120);
-            if (savedLoc.timezone) resolvedTimezone = String(savedLoc.timezone).trim().slice(0, 80);
-          } else if (savedLoc.label) {
-            resolvedName = String(savedLoc.label).trim().slice(0, 120);
-          }
+      const profile = await profileStore.get(context.userId);
+      const savedLoc = profile?.location;
+      if (savedLoc?.enabled) {
+        if (Number.isFinite(Number(savedLoc.latitude)) && Number.isFinite(Number(savedLoc.longitude))) {
+          lat = Number(savedLoc.latitude);
+          lon = Number(savedLoc.longitude);
+          if (savedLoc.label) resolvedName = String(savedLoc.label).trim().slice(0, 120);
+          if (savedLoc.timezone) resolvedTimezone = String(savedLoc.timezone).trim().slice(0, 80);
+        } else if (savedLoc.label) {
+          resolvedName = String(savedLoc.label).trim().slice(0, 120);
         }
-      } catch {}
+      }
     }
 
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
