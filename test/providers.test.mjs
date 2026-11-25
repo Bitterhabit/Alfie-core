@@ -160,3 +160,34 @@ test("opens a provider stream and reports the selected endpoint", async () => {
   assert.equal(opened.endpoint.id, "stream");
   assert.equal(opened.response.ok, true);
 });
+
+test("complete uses a healthy highest-priority endpoint without stalling on slow offline secondary endpoints", async () => {
+  const probed = [];
+  const registry = new ProviderRegistry({
+    fetchImpl: async (url, options) => {
+      if (options.method === "GET") {
+        probed.push(url);
+        if (url.includes("dead-secondary")) {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          throw new Error("unreachable");
+        }
+        return response({ data: [{ id: "fast-model" }] });
+      }
+      return response({ choices: [{ message: { content: "Quick answer" } }] });
+    }
+  });
+  const config = normaliseConfig({
+    mode: "auto",
+    endpoints: [
+      { id: "primary", baseUrl: "http://fast-primary/v1", model: "fast-model", mode: "standard", priority: 100 },
+      { id: "secondary", baseUrl: "http://dead-secondary/v1", model: "slow-model", mode: "standard", priority: 10 }
+    ]
+  });
+  const t0 = Date.now();
+  const result = await registry.complete(config, [{ role: "user", content: "Hi" }], "auto");
+  const elapsed = Date.now() - t0;
+  assert.equal(result.endpoint.id, "primary");
+  assert.equal(result.result.content, "Quick answer");
+  assert.ok(elapsed < 500, `Expected fast completion without waiting on secondary, took ${elapsed}ms`);
+  assert.equal(probed.some((u) => u.includes("dead-secondary")), false);
+});

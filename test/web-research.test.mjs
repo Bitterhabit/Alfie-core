@@ -1,7 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ToolRegistry } from "../src/tools/registry.mjs";
-import { registerWebResearchTools, validatePublicWebUrl, extractReadableText } from "../src/integrations/webResearch.mjs";
+import {
+  registerWebResearchTools,
+  validatePublicWebUrl,
+  extractReadableText,
+  parseWeatherLocationQuery,
+  selectBestGeocodeResult,
+  BoundedTtlCache,
+  isTransitTimeQuery
+} from "../src/integrations/webResearch.mjs";
 
 const publicLookup = async () => [{ address: "93.184.216.34", family: 4 }];
 
@@ -198,4 +206,206 @@ test("web.weather accepts direct coordinates without an extra geocoding round-tr
   assert.equal(requests.length, 1);
   assert.match(requests[0], /api\.open-meteo\.com\/v1\/forecast/);
   assert.equal(result.current.condition, "Clear sky");
+  assert.match(result.summary, /12°C/);
+});
+
+test("parseWeatherLocationQuery and selectBestGeocodeResult disambiguate comma-qualified and country-qualified places", () => {
+  const ukParsed = parseWeatherLocationQuery("Manchester, UK");
+  assert.equal(ukParsed.primary, "Manchester");
+  assert.equal(ukParsed.countryCode, "GB");
+
+  const usParsed = parseWeatherLocationQuery("Manchester, NH");
+  assert.equal(usParsed.primary, "Manchester");
+  assert.equal(usParsed.countryCode, "US");
+  assert.ok(usParsed.adminHints.includes("new hampshire"));
+
+  const unpunctuated = parseWeatherLocationQuery("Leeds UK");
+  assert.equal(unpunctuated.primary, "Leeds");
+  assert.equal(unpunctuated.countryCode, "GB");
+
+  const candidates = [
+    { name: "Manchester", admin1: "New Hampshire", country: "United States", country_code: "US", latitude: 42.9956, longitude: -71.4548, population: 115000 },
+    { name: "Manchester", admin1: "England", country: "United Kingdom", country_code: "GB", latitude: 53.4808, longitude: -2.2426, population: 550000 }
+  ];
+  assert.equal(selectBestGeocodeResult(candidates, ukParsed)?.country_code, "GB");
+  assert.equal(selectBestGeocodeResult(candidates, usParsed)?.country_code, "US");
+});
+
+test("web.weather automatically uses the user's saved opt-in location when called without arguments", async () => {
+  const requests = [];
+  const registry = new ToolRegistry();
+  registerWebResearchTools(registry, {
+    requestImpl: async () => new Response("", { status: 500 }),
+    fetchImpl: async (url) => {
+      requests.push(String(url));
+      return new Response(JSON.stringify({
+        timezone: "Europe/London",
+        current: { time: "2026-11-25T14:00", temperature_2m: 8.5, apparent_temperature: 6.2, precipitation: 0, weather_code: 3, wind_speed_10m: 14.0 },
+        daily: { time: ["2026-11-25", "2026-11-26"], weather_code: [3, 61], temperature_2m_max: [10, 9], temperature_2m_min: [4, 3], precipitation_probability_max: [20, 60] }
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+    lookupImpl: publicLookup,
+    profileStore: {
+      get: async (userId) => ({
+        userId,
+        location: { enabled: true, label: "Leeds, UK", latitude: 53.8008, longitude: -1.5491, timezone: "Europe/London" }
+      })
+    }
+  });
+  const result = await registry.tools.get("web.weather").handler({}, { userId: "peter" });
+  assert.equal(requests.length, 1);
+  assert.match(requests[0], /latitude=53\.8008/);
+  assert.equal(result.location, "Leeds, UK");
+  assert.match(result.summary, /Leeds, UK: 8\.5°C/);
+});
+
+test("BoundedTtlCache expires entries by TTL and evicts least-recently-used keys", () => {
+  let clock = 1_000;
+  const cache = new BoundedTtlCache({ maxEntries: 2, now: () => clock });
+  cache.set("a", 1, 100);
+  cache.set("b", 2, 100);
+  assert.equal(cache.get("a"), 1); // refreshes "a" recency; "b" is now oldest
+  cache.set("c", 3, 100);
+  assert.equal(cache.get("b"), undefined);
+  assert.equal(cache.get("a"), 1);
+  assert.equal(cache.get("c"), 3);
+  clock = 1_100;
+  assert.equal(cache.get("a"), undefined);
+  assert.equal(cache.get("c"), undefined);
+  assert.equal(cache.size, 0);
+});
+
+test("web.weather caches geocoding and forecasts and coalesces concurrent identical requests", async () => {
+  const registry = new ToolRegistry();
+  let geocodeCalls = 0;
+  let forecastCalls = 0;
+  let releaseForecast;
+  const forecastGate = new Promise((resolve) => { releaseForecast = resolve; });
+
+  registerWebResearchTools(registry, {
+    requestImpl: null,
+    lookupImpl: publicLookup,
+    fetchImpl: async (url) => {
+      const target = String(url);
+      if (target.includes("geocoding-api.open-meteo.com")) {
+        geocodeCalls += 1;
+        return new Response(JSON.stringify({
+          results: [{ name: "Manchester", country: "United Kingdom", country_code: "GB", latitude: 53.4808, longitude: -2.2426, timezone: "Europe/London" }]
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (target.includes("api.open-meteo.com/v1/forecast")) {
+        forecastCalls += 1;
+        await forecastGate;
+        return new Response(JSON.stringify({
+          timezone: "Europe/London",
+          current: { temperature_2m: 12.0, apparent_temperature: 10.5, wind_speed_10m: 15, precipitation: 0, weather_code: 2 },
+          daily: { time: ["2026-11-25"], temperature_2m_max: [14], temperature_2m_min: [8], precipitation_probability_max: [20], weather_code: [2] }
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`Unexpected URL: ${target}`);
+    }
+  });
+
+  const weatherTool = registry.tools.get("web.weather");
+  const p1 = weatherTool.handler({ location: "Manchester, UK" }, { userId: "u1" });
+  const p2 = weatherTool.handler({ location: "Manchester, UK" }, { userId: "u1" });
+  // Release upstream forecast while both requests are in flight
+  setTimeout(() => releaseForecast(), 10);
+  const [r1, r2] = await Promise.all([p1, p2]);
+
+  assert.equal(geocodeCalls, 1, "Concurrent identical calls should coalesce geocoding");
+  assert.equal(forecastCalls, 1, "Concurrent identical calls should coalesce forecast");
+  assert.equal(r1.location, "Manchester, United Kingdom");
+  assert.equal(r2.location, "Manchester, United Kingdom");
+
+  // Repeat call hits both geocode + weather TTL caches with zero upstream fetches
+  const r3 = await weatherTool.handler({ location: "Manchester, UK" }, { userId: "u1" });
+  assert.equal(geocodeCalls, 1);
+  assert.equal(forecastCalls, 1);
+  assert.equal(r3.cached, true);
+});
+
+test("web.search classifies transit queries, caches results, and respects AbortSignal", async () => {
+  assert.equal(isTransitTimeQuery("Next train from Leeds to Manchester?"), true);
+  assert.equal(isTransitTimeQuery("How does photosynthesis work?"), false);
+
+  const registry = new ToolRegistry();
+  let fetchCalls = 0;
+  registerWebResearchTools(registry, {
+    env: { ALFIE_BRAVE_SEARCH_API_KEY: "brave-test-key" },
+    lookupImpl: publicLookup,
+    fetchImpl: async (_url, opts) => {
+      fetchCalls += 1;
+      if (opts?.signal?.aborted) {
+        throw Object.assign(new Error("Aborted"), { name: "AbortError" });
+      }
+      return new Response(JSON.stringify({
+        web: {
+          results: [
+            { title: "Leeds to Manchester Live Departures", url: "https://www.nationalrail.co.uk/live-trains", description: "Next train 10:14 from Platform 12 (on time)." },
+            { title: "TransPennine Express Timetable", url: "https://www.tpexpress.co.uk/timetables", description: "Direct trains every 15 minutes." }
+          ]
+        }
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  });
+
+  const searchTool = registry.tools.get("web.search");
+  const first = await searchTool.handler({ query: "Next train from Leeds to Manchester" }, { userId: "u1" });
+  assert.equal(first.queryCategory, "transit");
+  assert.match(first.responseGuidance, /crisp bullets.*live departures link/i);
+  assert.equal(first.cached, false);
+  assert.equal(fetchCalls, 1);
+
+  const second = await searchTool.handler({ query: "next train from leeds to manchester" }, { userId: "u1" });
+  assert.equal(second.cached, true);
+  assert.equal(fetchCalls, 1, "Second identical transit query within TTL must hit search cache");
+
+  // Pre-aborted signal cancels immediately without calling upstream fetch
+  const controller = new AbortController();
+  controller.abort(new Error("User pressed Stop"));
+  await assert.rejects(
+    () => searchTool.handler({ query: "Next train from York to London" }, { userId: "u1", signal: controller.signal }),
+    (err) => err?.name === "AbortError" || /cancel|abort/i.test(String(err?.message || ""))
+  );
+  assert.equal(fetchCalls, 1, "Aborted request should not invoke upstream fetch");
+});
+
+test("Cancelling one coalesced weather caller does not abort a second concurrent caller", async () => {
+  const registry = new ToolRegistry();
+  let resolveFetch;
+  const fetchGate = new Promise((resolve) => { resolveFetch = resolve; });
+
+  registerWebResearchTools(registry, {
+    requestImpl: null,
+    lookupImpl: publicLookup,
+    fetchImpl: async (url) => {
+      const target = String(url);
+      if (target.includes("geocoding-api.open-meteo.com")) {
+        return new Response(JSON.stringify({
+          results: [{ name: "York", country: "United Kingdom", country_code: "GB", latitude: 53.9591, longitude: -1.0815, timezone: "Europe/London" }]
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      await fetchGate;
+      return new Response(JSON.stringify({
+        timezone: "Europe/London",
+        current: { temperature_2m: 9.5, apparent_temperature: 8.0, wind_speed_10m: 10, precipitation: 0, weather_code: 1 },
+        daily: { time: ["2026-11-25"], temperature_2m_max: [11], temperature_2m_min: [5], precipitation_probability_max: [10], weather_code: [1] }
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  });
+
+  const weatherTool = registry.tools.get("web.weather");
+  const c1 = new AbortController();
+  const c2 = new AbortController();
+  const caller1 = weatherTool.handler({ location: "York, UK" }, { userId: "u1", signal: c1.signal });
+  const caller2 = weatherTool.handler({ location: "York, UK" }, { userId: "u2", signal: c2.signal });
+
+  c1.abort(new Error("Caller 1 stopped"));
+  await assert.rejects(() => caller1, (err) => err?.name === "AbortError" || /cancel/i.test(String(err?.message || "")));
+
+  resolveFetch();
+  const result2 = await caller2;
+  assert.equal(result2.location, "York, United Kingdom");
+  assert.equal(result2.current.temperatureC, 9.5);
 });

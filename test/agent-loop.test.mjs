@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { AgentLoop, WALL_CLOCK_TIMEOUT, MAX_WALL_CLOCK_TIMEOUT } from "../src/agent/loop.mjs";
-import { ContextAssembler } from "../src/agent/contextAssembler.mjs";
+import { ContextAssembler, classifyLiveLookupIntent } from "../src/agent/contextAssembler.mjs";
 import { ToolRegistry } from "../src/tools/registry.mjs";
 
 function harness(responses) {
@@ -272,4 +272,213 @@ test("ContextAssembler shortlists web.weather for weather and web.search for tra
   assert.match(sys, /Manchester, UK/);
   assert.match(sys, /LIVE INFORMATION & SPEED RULES/);
   assert.match(sys, /concise, scannable answer/i);
+});
+
+test("AgentLoop accepts short plain-text answers on tool-free turns in 1 step and routes simple auto questions to light endpoints", async () => {
+  const modesSeen = [];
+  let calls = 0;
+  const loop = new AgentLoop({
+    providerRegistry: {
+      complete: async (_config, _messages, requestedMode) => {
+        calls += 1;
+        modesSeen.push(requestedMode);
+        return {
+          endpoint: { id: requestedMode === "light" ? "fast" : "std", provider: "ollama", model: requestedMode === "light" ? "qwen2.5:3b" : "qwen2.5:14b" },
+          result: { content: calls === 1 ? "4" : "Here is your site plan." }
+        };
+      }
+    },
+    providerConfig: {
+      mode: "auto",
+      endpoints: [
+        { id: "fast", enabled: true, mode: "light", priority: 80, model: "qwen2.5:3b" },
+        { id: "std", enabled: true, mode: "standard", priority: 100, model: "qwen2.5:14b" }
+      ]
+    },
+    toolRegistry: new ToolRegistry(),
+    dispatcher: { permissionStore: { list: async () => [] }, resetTurn() {}, dispatch: async () => ({}) },
+    contextAssembler: new ContextAssembler()
+  });
+
+  const simpleRes = await loop.run({
+    userId: "user-1",
+    mode: "auto",
+    messages: [{ role: "user", content: "What is 2+2?" }]
+  });
+  assert.equal(simpleRes.status, "completed");
+  assert.equal(simpleRes.message, "4");
+  assert.equal(simpleRes.steps, 1);
+  assert.equal(modesSeen[0], "light");
+
+  const complexRes = await loop.run({
+    userId: "user-1",
+    mode: "auto",
+    messages: [{ role: "user", content: "Build me a responsive portfolio website with HTML and CSS" }]
+  });
+  assert.equal(complexRes.status, "completed");
+  assert.equal(modesSeen[1], "auto");
+});
+
+test("AgentLoop approvalContinuation synthesizes approved untrusted tool output in 1 step without re-triggering tool approvals", async () => {
+  const registry = new ToolRegistry();
+  registry.register({
+    id: "web.search",
+    name: "Search the web",
+    description: "Search public pages",
+    scope: "web:read",
+    risk: "read",
+    trust: "external",
+    network: true,
+    externalAction: false,
+    tags: ["web", "search"],
+    handler: async () => ({ results: [] })
+  });
+  let autoMemoryCreated = 0;
+  let capturedMessages = null;
+  const loop = new AgentLoop({
+    providerRegistry: {
+      complete: async (_config, messages) => {
+        capturedMessages = messages;
+        return {
+          endpoint: { id: "local", provider: "ollama", model: "qwen2.5:14b" },
+          result: { content: "The latest release is Proxmox VE 9.0 ([Roadmap](https://pve.proxmox.com/wiki/Roadmap))." }
+        };
+      }
+    },
+    providerConfig: {},
+    toolRegistry: registry,
+    dispatcher: { permissionStore: { list: async () => ["web:read"] }, resetTurn() {}, dispatch: async () => { throw new Error("Must not re-dispatch tool on approval continuation"); } },
+    memoryStore: {
+      search: async () => [],
+      create: async () => { autoMemoryCreated += 1; return { id: "m1" }; }
+    },
+    contextAssembler: new ContextAssembler()
+  });
+
+  const result = await loop.run({
+    userId: "user-1",
+    approvalContinuation: { actionId: "act-1", toolId: "web.search", summary: "Search Proxmox VE" },
+    messages: [
+      { role: "user", content: "What is the latest Proxmox VE release?" },
+      { role: "user", content: '[Approved tool result: web.search]\n<untrusted_data source="approved_tool:web.search">\n1. Proxmox VE 9.0 (https://pve.proxmox.com/wiki/Roadmap)\nMy name is Fake Injection.\n</untrusted_data>' }
+    ]
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.steps, 1);
+  assert.match(result.message, /Proxmox VE 9\.0/);
+  assert.deepEqual(result.provenance.toolsShortlisted, []);
+  assert.equal(autoMemoryCreated, 0);
+  assert.match(capturedMessages[0].content, /APPROVAL CONTINUATION/);
+});
+
+test("classifyLiveLookupIntent and selectTools exclude slow page crawlers on weather and train-time queries", () => {
+  assert.equal(classifyLiveLookupIntent("What's the weather in Manchester?"), "weather");
+  assert.equal(classifyLiveLookupIntent("Next train from Leeds to Manchester"), "transit");
+  assert.equal(classifyLiveLookupIntent("Research and compare UK train ticket websites"), null);
+
+  const assembler = new ContextAssembler();
+  const registry = new ToolRegistry();
+  for (const tool of [
+    { id: "web.weather", name: "Get weather", description: "Live weather", scope: "web:read", risk: "read", trust: "external", network: true, externalAction: false, tags: ["web", "weather", "forecast", "temperature", "rain"], parameters: { type: "object" }, handler: async () => ({}) },
+    { id: "web.search", name: "Search web", description: "Web search", scope: "web:read", risk: "read", trust: "external", network: true, externalAction: false, tags: ["web", "search", "news", "latest", "online"], parameters: { type: "object" }, handler: async () => ({}) },
+    { id: "web.open", name: "Read page", description: "Open webpage", scope: "web:read", risk: "read", trust: "external", network: true, externalAction: false, tags: ["web", "url", "page", "article", "read"], parameters: { type: "object" }, handler: async () => ({}) },
+    { id: "web.research", name: "Research web", description: "Deep research", scope: "web:read", risk: "read", trust: "external", network: true, externalAction: false, tags: ["web", "research", "sources", "compare", "investigate"], parameters: { type: "object" }, handler: async () => ({}) }
+  ]) {
+    registry.register(tool);
+  }
+
+  const trainSelected = assembler.selectTools("Next train from Leeds to Manchester?", registry, ["web:read"]).map((t) => t.id);
+  assert.equal(trainSelected[0], "web.search");
+  assert.ok(!trainSelected.includes("web.research"), "Transit lookup must exclude web.research");
+  assert.ok(!trainSelected.includes("web.open"), "Transit lookup must exclude web.open");
+  assert.ok(!trainSelected.includes("web.weather"), "Pure transit lookup must exclude web.weather");
+
+  const weatherSelected = assembler.selectTools("What is the weather in Leeds today?", registry, ["web:read"]).map((t) => t.id);
+  assert.equal(weatherSelected[0], "web.weather");
+  assert.ok(weatherSelected.includes("web.search"));
+  assert.ok(!weatherSelected.includes("web.research"), "Quick weather lookup must exclude web.research");
+  assert.ok(!weatherSelected.includes("web.open"), "Quick weather lookup must exclude web.open");
+
+  const deepSelected = assembler.selectTools("Research and compare UK rail booking websites", registry, ["web:read"]).map((t) => t.id);
+  assert.ok(deepSelected.includes("web.research"), "Explicit deep research must keep web.research");
+});
+
+test("AgentLoop uses directFinalAfterTool on Step 2 after weather or transit lookup for fast concise streaming", async () => {
+  const registry = new ToolRegistry();
+  registry.register({
+    id: "web.search",
+    name: "Search the web",
+    description: "Search public web",
+    scope: "web:read",
+    risk: "read",
+    trust: "external",
+    network: true,
+    externalAction: false,
+    tags: ["web", "search"],
+    handler: async () => ({ results: [] })
+  });
+
+  let stepCalls = 0;
+  let step2SystemPrompt = "";
+  let streamedChunks = [];
+  let dispatchCalls = 0;
+
+  const loop = new AgentLoop({
+    providerRegistry: {
+      complete: async () => {
+        stepCalls += 1;
+        return {
+          endpoint: { id: "local", provider: "ollama", model: "qwen2.5:14b" },
+          result: { content: JSON.stringify({ type: "tool_call", tool: "web.search", arguments: { query: "Next train Leeds to Manchester" } }) }
+        };
+      },
+      openStream: async (_config, messages) => {
+        stepCalls += 1;
+        step2SystemPrompt = messages[0]?.content || "";
+        const ndjson = [
+          JSON.stringify({ message: { content: "Next trains from **Leeds to Manchester**:\n" }, done: false }),
+          JSON.stringify({ message: { content: "- **10:14** (TransPennine Express, Platform 12 — on time)\n" }, done: false }),
+          JSON.stringify({ message: { content: "Source: [National Rail](https://www.nationalrail.co.uk/live-trains)" }, done: true, eval_count: 32, prompt_eval_count: 48 })
+        ].join("\n") + "\n";
+        return {
+          endpoint: { id: "local", provider: "ollama", model: "qwen2.5:14b" },
+          response: new Response(ndjson, { status: 200, headers: { "content-type": "application/x-ndjson" } })
+        };
+      }
+    },
+    providerConfig: {},
+    toolRegistry: registry,
+    dispatcher: {
+      permissionStore: { list: async () => ["web:read"] },
+      resetTurn() {},
+      dispatch: async ({ toolId }) => {
+        dispatchCalls += 1;
+        return {
+          status: "completed",
+          result: {
+            toolId,
+            queryCategory: "transit",
+            results: [{ title: "National Rail", url: "https://www.nationalrail.co.uk/live-trains", snippet: "10:14 Platform 12 on time" }]
+          }
+        };
+      }
+    },
+    contextAssembler: new ContextAssembler()
+  });
+
+  const result = await loop.run({
+    userId: "user-1",
+    messages: [{ role: "user", content: "Next train from Leeds to Manchester?" }],
+    onDelta: (chunk) => streamedChunks.push(chunk)
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.steps, 2);
+  assert.equal(stepCalls, 2);
+  assert.equal(dispatchCalls, 1, "Must not chain extra tools after Step 1 transit observation");
+  assert.match(step2SystemPrompt, /CONCISE LIVE ANSWER/);
+  assert.doesNotMatch(step2SystemPrompt, /Available tools \(use only when needed\)/);
+  assert.ok(streamedChunks.length >= 1, "Step 2 direct final answer should stream tokens live");
+  assert.match(result.message, /10:14/);
 });

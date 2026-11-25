@@ -545,7 +545,7 @@ export class ProviderRegistry {
         method: "GET",
         headers: headersFor(endpoint),
         redirect: "error",
-        signal: AbortSignal.timeout(6000)
+        signal: AbortSignal.timeout(2500)
       };
       const response = this.usesDefaultFetch
         ? await fetchPinnedProviderRequest(endpointFor(endpoint, "models"), requestOptions, validatedTarget)
@@ -595,12 +595,47 @@ export class ProviderRegistry {
     return result;
   }
 
-  async rankedCandidates(config, requestedMode = config.mode) {
+  #getFreshCachedHealth(endpoint, maxAgeSeconds = 30) {
+    const maxAgeMs = Math.max(10000, Number(maxAgeSeconds || 30) * 1000);
+    const cacheKey = [endpoint.id, endpoint.provider, endpoint.baseUrl, endpoint.model, endpoint.trustedLocal ? "1" : "0", endpoint.apiKey ? "k" : "n"].join("|");
+    const cached = this.healthCache.get(cacheKey);
+    if (cached && this.now() - cached.checkedAt < maxAgeMs) return cached.result;
+    return null;
+  }
+
+  async rankedCandidates(config, requestedMode = config.mode, { fastPath = false } = {}) {
     const enabled = config.endpoints.filter((endpoint) => endpoint.enabled && endpoint.model);
     if (!enabled.length) throw new Error("Add and enable at least one Alfie endpoint with a model name.");
-    const health = await Promise.all(enabled.map((endpoint) =>
+
+    const preSorted = [...enabled].sort((a, b) =>
+      modeRank(b.mode, requestedMode) - modeRank(a.mode, requestedMode) ||
+      b.priority - a.priority
+    );
+
+    if (fastPath && preSorted.length > 1) {
+      // Probe highest-ranked endpoint first so offline/sleeping secondary endpoints never stall chat turns.
+      const primary = preSorted[0];
+      const primaryHealth = await this.inspectCached(primary, config.healthIntervalSeconds);
+      if (primaryHealth?.online && primaryHealth.modelAvailable) {
+        const candidates = [{ endpoint: primary, health: primaryHealth }];
+        const health = [primaryHealth];
+        const deferred = [];
+        for (const ep of preSorted.slice(1)) {
+          const cached = this.#getFreshCachedHealth(ep, config.healthIntervalSeconds);
+          if (cached) {
+            health.push(cached);
+            if (cached.online && cached.modelAvailable) candidates.push({ endpoint: ep, health: cached });
+          } else {
+            deferred.push(ep);
+          }
+        }
+        return { candidates, health, deferred };
+      }
+    }
+
+    const health = await Promise.all(preSorted.map((endpoint) =>
       this.inspectCached(endpoint, config.healthIntervalSeconds)));
-    const candidates = enabled
+    const candidates = preSorted
       .map((endpoint) => ({ endpoint, health: health.find((item) => item.id === endpoint.id) }))
       .filter((item) => item.health?.online && item.health.modelAvailable)
       .sort((a, b) =>
@@ -613,7 +648,7 @@ export class ProviderRegistry {
         `${item.id}: ${item.error || (item.modelAvailable ? "online" : "model unavailable")}`).join("; ");
       throw new Error(`No configured Alfie endpoint is available. ${detail}`);
     }
-    return { candidates, health };
+    return { candidates, health, deferred: [] };
   }
 
   async select(config, requestedMode = config.mode) {
@@ -621,41 +656,76 @@ export class ProviderRegistry {
     return { ...candidates[0], health };
   }
 
+  async #resolveDeferredCandidates(deferred, config, requestedMode) {
+    if (!Array.isArray(deferred) || !deferred.length) return { candidates: [], health: [] };
+    const health = await Promise.all(deferred.map((endpoint) =>
+      this.inspectCached(endpoint, config.healthIntervalSeconds)));
+    const candidates = deferred
+      .map((endpoint) => ({ endpoint, health: health.find((item) => item.id === endpoint.id) }))
+      .filter((item) => item.health?.online && item.health.modelAvailable)
+      .sort((a, b) =>
+        modeRank(b.endpoint.mode, requestedMode) - modeRank(a.endpoint.mode, requestedMode) ||
+        b.endpoint.priority - a.endpoint.priority ||
+        a.health.latencyMs - b.health.latencyMs
+      );
+    return { candidates, health };
+  }
+
   async complete(config, messages, requestedMode = config.mode, { signal, timeoutMs = DEFAULT_PROVIDER_CHAT_TIMEOUT_MS } = {}) {
-    const { candidates, health } = await this.rankedCandidates(config, requestedMode);
+    const { candidates, health, deferred } = await this.rankedCandidates(config, requestedMode, { fastPath: true });
     const failures = [];
-    for (let index = 0; index < candidates.length; index += 1) {
-      const candidate = candidates[index];
+    const queue = [...candidates];
+    const allHealth = [...health];
+    let deferredResolved = false;
+
+    for (let index = 0; index < queue.length; index += 1) {
+      const candidate = queue[index];
       try {
         const result = await this.chat(candidate.endpoint, messages, { stream: false, signal, timeoutMs });
         return {
           ...candidate,
-          health,
+          health: allHealth,
           result,
           fallbackUsed: index > 0 || (requestedMode !== "auto" && candidate.endpoint.mode !== requestedMode)
         };
       } catch (error) {
         failures.push(`${candidate.endpoint.id}: ${redactProviderError(error.message, candidate.endpoint.apiKey)}`);
+        if (!deferredResolved && index === queue.length - 1 && deferred?.length) {
+          deferredResolved = true;
+          const extra = await this.#resolveDeferredCandidates(deferred, config, requestedMode);
+          allHealth.push(...extra.health);
+          queue.push(...extra.candidates);
+        }
       }
     }
     throw new Error(`All available Alfie providers failed. ${failures.join("; ")}`);
   }
 
   async openStream(config, messages, requestedMode = config.mode, { signal, timeoutMs = DEFAULT_PROVIDER_CHAT_TIMEOUT_MS } = {}) {
-    const { candidates, health } = await this.rankedCandidates(config, requestedMode);
+    const { candidates, health, deferred } = await this.rankedCandidates(config, requestedMode, { fastPath: true });
     const failures = [];
-    for (let index = 0; index < candidates.length; index += 1) {
-      const candidate = candidates[index];
+    const queue = [...candidates];
+    const allHealth = [...health];
+    let deferredResolved = false;
+
+    for (let index = 0; index < queue.length; index += 1) {
+      const candidate = queue[index];
       try {
         const response = await this.chat(candidate.endpoint, messages, { stream: true, signal, timeoutMs });
         return {
           ...candidate,
-          health,
+          health: allHealth,
           response,
           fallbackUsed: index > 0 || (requestedMode !== "auto" && candidate.endpoint.mode !== requestedMode)
         };
       } catch (error) {
         failures.push(`${candidate.endpoint.id}: ${redactProviderError(error.message, candidate.endpoint.apiKey)}`);
+        if (!deferredResolved && index === queue.length - 1 && deferred?.length) {
+          deferredResolved = true;
+          const extra = await this.#resolveDeferredCandidates(deferred, config, requestedMode);
+          allHealth.push(...extra.health);
+          queue.push(...extra.candidates);
+        }
       }
     }
     throw new Error(`All available Alfie streaming providers failed. ${failures.join("; ")}`);

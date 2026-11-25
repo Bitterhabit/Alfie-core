@@ -117,7 +117,8 @@ export function registerModularConnectorTools(
   {
     dataDirectory = process.env.ALFIE_CORE_DATA_DIR || "/data",
     petrioHarnessClient = null,
-    fetchImpl = globalThis.fetch
+    fetchImpl = globalThis.fetch,
+    profileStore = null
   } = {}
 ) {
   // ── 1. Local Notes & Workspace Files (Always Available, Strictly Confined) ──
@@ -527,7 +528,7 @@ export function registerModularConnectorTools(
     }
   });
 
-  registerWebResearchTools(registry, { fetchImpl });
+  registerWebResearchTools(registry, { fetchImpl, profileStore });
 
   // ── 4. Proxmox / Homelab Read Connector ──
   registry.register({

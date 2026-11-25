@@ -3463,7 +3463,9 @@ async function loadConversations() {
 }
 
 async function loadConversation(id) {
-  if (state.sending) { toast("Wait for Alfie's current reply before switching conversations."); return; }
+  if (state.sending) {
+    cancelActiveChatRequest({ silent: true });
+  }
   const cleanId = String(id || "").replace(/^conversation:/i, "").trim();
   if (!cleanId) return;
   const token = ++state.conversationLoadToken;
@@ -3491,7 +3493,9 @@ async function loadConversation(id) {
 }
 
 async function newConversation({ fromSend = false, projectId = undefined } = {}) {
-  if (state.sending && !fromSend) { toast("Wait for Alfie's current reply before starting another conversation."); return; }
+  if (state.sending && !fromSend) {
+    cancelActiveChatRequest({ silent: true });
+  }
   const token = ++state.conversationLoadToken;
   state.conversationLoading = true;
   $("#mobile-history-sheet").hidden = true;
@@ -4499,14 +4503,35 @@ function createAutoMemoryDisclosure(autoMemories) {
   return details;
 }
 
+function unwrapToolResultPayload(result) {
+  if (typeof result !== "string") return result;
+  let text = result.trim();
+  const untrustedMatch = /^<untrusted_data(?:\s+[^>]*)?>([\s\S]*?)<\/untrusted_data>$/i.exec(text);
+  if (untrustedMatch) {
+    text = untrustedMatch[1].trim();
+  }
+  if ((text.startsWith("{") && text.endsWith("}")) || (text.startsWith("[") && text.endsWith("]"))) {
+    try {
+      return JSON.parse(text);
+    } catch {}
+  }
+  return text;
+}
+
 function formatApprovedToolResultForContinuation(toolId, result) {
-  if (typeof result === "string") return result.slice(0, 4500);
-  if (result && typeof result === "object") {
-    if (Array.isArray(result.results) && result.results.length) {
+  const unwrapped = unwrapToolResultPayload(result);
+  if (typeof unwrapped === "string") return unwrapped.slice(0, 4500);
+  if (unwrapped && typeof unwrapped === "object") {
+    if (toolId === "web.weather" && unwrapped.summary) {
+      const lines = [unwrapped.summary];
+      if (unwrapped.source) lines.push(`Source: ${unwrapped.source}`);
+      return lines.join("\n").slice(0, 4500);
+    }
+    if (Array.isArray(unwrapped.results) && unwrapped.results.length) {
       const lines = [];
-      if (result.query) lines.push(`Query: ${result.query}`);
-      if (result.provider) lines.push(`Source: ${result.provider}`);
-      for (const [idx, item] of result.results.slice(0, 6).entries()) {
+      if (unwrapped.query) lines.push(`Query: ${unwrapped.query}`);
+      if (unwrapped.provider) lines.push(`Source: ${unwrapped.provider}`);
+      for (const [idx, item] of unwrapped.results.slice(0, 6).entries()) {
         const title = String(item?.title || item?.url || `Result ${idx + 1}`).slice(0, 140);
         const url = String(item?.url || "").slice(0, 320);
         const snippet = String(item?.excerpt || item?.description || "").slice(0, 320);
@@ -4514,8 +4539,20 @@ function formatApprovedToolResultForContinuation(toolId, result) {
       }
       return lines.join("\n").slice(0, 4500);
     }
+    if (Array.isArray(unwrapped.sources) && unwrapped.sources.length) {
+      const lines = [];
+      if (unwrapped.question) lines.push(`Question: ${unwrapped.question}`);
+      if (unwrapped.provider) lines.push(`Source: ${unwrapped.provider}`);
+      for (const [idx, item] of unwrapped.sources.slice(0, 5).entries()) {
+        const title = String(item?.title || item?.url || `Source ${idx + 1}`).slice(0, 140);
+        const url = String(item?.url || "").slice(0, 320);
+        const snippet = String(item?.excerpt || item?.description || "").slice(0, 420);
+        lines.push(`${idx + 1}. ${title}${url ? ` (${url})` : ""}${snippet ? `\n   ${snippet}` : ""}`);
+      }
+      return lines.join("\n").slice(0, 4500);
+    }
     try {
-      return JSON.stringify(result, null, 2).slice(0, 4500);
+      return JSON.stringify(unwrapped, null, 2).slice(0, 4500);
     } catch {
       return "Tool completed successfully.";
     }
@@ -4570,24 +4607,94 @@ function findConversationIdForAction(actionId) {
   return null;
 }
 
-async function continueChatAfterApproval({ conversationId, toolId = "", approvalResult = null, summary = "" } = {}) {
+let activeChatRequest = null;
+
+function syncChatCancelButton(isSending) {
+  const sendBtn = $(".send-button");
+  const stopBtn = $("#stop-stream-btn");
+  if (sendBtn) sendBtn.hidden = Boolean(isSending);
+  if (stopBtn) stopBtn.hidden = !isSending;
+}
+
+function beginChatRequest() {
+  if (activeChatRequest) {
+    cancelActiveChatRequest({ silent: true });
+  }
+  const request = {
+    controller: new AbortController(),
+    abortedByUser: false,
+    silent: false
+  };
+  activeChatRequest = request;
+  state.sending = true;
+  syncChatCancelButton(true);
+  return request;
+}
+
+function cancelActiveChatRequest({ silent = false } = {}) {
+  const request = activeChatRequest;
+  if (!request) return false;
+  request.abortedByUser = true;
+  request.silent = Boolean(silent);
+  activeChatRequest = null;
+  state.sending = false;
+  syncChatCancelButton(false);
+  const input = $("#chat-form")?.elements?.message;
+  if (input) input.disabled = false;
+  try {
+    request.controller.abort(new Error("Request cancelled by user."));
+  } catch {}
+  return true;
+}
+
+function finishChatRequest(request) {
+  if (activeChatRequest && activeChatRequest !== request) {
+    return false;
+  }
+  if (activeChatRequest === request) {
+    activeChatRequest = null;
+  }
+  state.sending = false;
+  syncChatCancelButton(false);
+  return true;
+}
+
+async function continueChatAfterApproval({ conversationId, actionId = "", toolId = "", approvalResult = null, summary = "" } = {}) {
   if (!conversationId || !state.linked) return;
   if (state.sending) {
-    toast("Alfie is finishing another reply. Send a follow-up once it completes.");
-    return;
+    // Wait briefly if a prior streaming turn is wrapping up its finally block
+    const waitDeadline = Date.now() + 3000;
+    while (state.sending && Date.now() < waitDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+    if (state.sending) {
+      toast("Alfie is finishing another reply. Send a follow-up once it completes.");
+      return;
+    }
   }
   setView("chat");
   if (state.activeConversationId !== conversationId) {
     await loadConversation(conversationId);
   }
+  if (actionId) {
+    markChatApprovalCardResolved(actionId, {
+      state: "success",
+      headingText: approvalResult?.receipt?.verified ? "Approved and verified" : "Approved and executed",
+      detailText: toolId
+        ? `Approved ${toolId}. Alfie is continuing the conversation below.`
+        : "Approved and executed. Alfie is continuing the conversation below.",
+      result: approvalResult?.result
+    });
+  }
 
   const form = $("#chat-form");
   const input = form?.elements?.message;
-  state.sending = true;
+  const chatRequest = beginChatRequest();
   if (input) input.disabled = true;
   const sendStart = Date.now();
   let assistantBody = null;
   let thinking = null;
+  let assistantText = "";
 
   try {
     assistantBody = appendMessageElement({ role: "assistant", content: "" });
@@ -4605,11 +4712,14 @@ async function continueChatAfterApproval({ conversationId, toolId = "", approval
         content: "[Carried-over context from previous conversation]\n" + state.activeConversation.handoffContext
       });
     }
-    const recentSlice = state.messages.slice(outgoingMessages.length ? -13 : -14).map(({ role, content: text, reaction }) => ({
-      role,
-      content: text,
-      ...(reaction ? { reaction } : {})
-    }));
+    const recentSlice = state.messages
+      .filter((msg) => !(actionId && msg?.actionCard?.actionId === actionId && msg?.role === "assistant"))
+      .slice(outgoingMessages.length ? -13 : -14)
+      .map(({ role, content: text, reaction }) => ({
+        role,
+        content: text,
+        ...(reaction ? { reaction } : {})
+      }));
     const formattedResult = formatApprovedToolResultForContinuation(toolId, approvalResult?.result);
     const continuationPrompt =
       `[Approved tool result: ${toolId || "action"}]\n` +
@@ -4629,6 +4739,7 @@ async function continueChatAfterApproval({ conversationId, toolId = "", approval
     const response = await fetch("/api/core/chat/stream", {
       method: "POST",
       credentials: "same-origin",
+      signal: chatRequest.controller.signal,
       headers: { "content-type": "application/json", "x-csrf-token": state.csrfToken },
       body: JSON.stringify({
         messages: outgoingMessages,
@@ -4636,6 +4747,11 @@ async function continueChatAfterApproval({ conversationId, toolId = "", approval
         workingMode,
         projectId: activeProject?.id || null,
         agentProvider: selectedAgentProvider,
+        approvalContinuation: {
+          actionId: actionId || "",
+          toolId: toolId || "",
+          summary: summary || ""
+        },
         dashboardState
       })
     });
@@ -4645,7 +4761,6 @@ async function continueChatAfterApproval({ conversationId, toolId = "", approval
     }
 
     let buffer = "";
-    let assistantText = "";
     let finalEvent = null;
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -4761,6 +4876,20 @@ async function continueChatAfterApproval({ conversationId, toolId = "", approval
       thinking.element.remove();
       thinking = null;
     }
+    if (chatRequest.abortedByUser) {
+      if (!chatRequest.silent && assistantBody) {
+        assistantBody.querySelector(".streaming-cursor")?.remove();
+        const stoppedText = assistantText.trim() || "*Stopped.*";
+        renderMarkdown(assistantBody, stoppedText);
+        assistantBody.dataset.rawContent = stoppedText;
+        if (assistantText.trim()) {
+          try { await persistMessage("assistant", assistantText.trim(), conversationId); } catch {}
+        }
+        window.alfieSoul?.setState("idle", "purple");
+        toast("Generation stopped.");
+      }
+      return;
+    }
     const fallbackResult = formatApprovedToolResultForContinuation(toolId, approvalResult?.result);
     const fallbackText = `The approved action (${toolId || "tool"}) finished, though Alfie could not generate a follow-up summary (${error.message}).\n\n${fallbackResult}`;
     if (assistantBody) {
@@ -4776,10 +4905,9 @@ async function continueChatAfterApproval({ conversationId, toolId = "", approval
       thinking.element.remove();
       thinking = null;
     }
-    state.sending = false;
-    if (input) {
+    if (finishChatRequest(chatRequest) && input) {
       input.disabled = false;
-      input.focus();
+      if (!chatRequest.silent) input.focus();
     }
   }
 }
@@ -4814,6 +4942,7 @@ async function approvePendingActionAndContinue(actionId, { toolId = "", summary 
     if (targetConversationId) {
       await continueChatAfterApproval({
         conversationId: targetConversationId,
+        actionId,
         toolId: resolvedToolId,
         approvalResult: res,
         summary
@@ -5412,12 +5541,14 @@ async function sendMessage(rawText) {
     return;
   }
 
-  state.sending = true;
+  const chatRequest = beginChatRequest();
   const form = $("#chat-form");
   const input = form.elements.message;
   input.disabled = true;
   let assistantBody = null;
   let thinking = null;
+  let assistantText = "";
+  let activeConversationIdForTurn = state.activeConversationId;
   const sendStart = Date.now();
   window.alfieSoul?.setState("thinking", "amber");
   try {
@@ -5425,7 +5556,7 @@ async function sendMessage(rawText) {
       const promptText = content.replace(/^\/image\s*/i, "").trim();
       if (!promptText) {
         toast("Please describe the visual asset to generate, e.g. /image A glowing amethyst crystal garden");
-        state.sending = false;
+        finishChatRequest(chatRequest);
         input.disabled = false;
         input.value = "/image ";
         input.focus();
@@ -5479,6 +5610,7 @@ async function sendMessage(rawText) {
 
     if (!state.activeConversationId) await newConversation({ fromSend: true });
     const conversationId = state.activeConversationId;
+    activeConversationIdForTurn = conversationId;
     if ($("#background-task-toggle")?.checked) {
       const turnId = crypto.randomUUID();
       const outgoingMessages = [];
@@ -5551,6 +5683,7 @@ async function sendMessage(rawText) {
     const response = await fetch("/api/core/chat/stream", {
       method: "POST",
       credentials: "same-origin",
+      signal: chatRequest.controller.signal,
       headers: { "content-type": "application/json", "x-csrf-token": state.csrfToken },
       body: JSON.stringify({
         messages: outgoingMessages,
@@ -5566,7 +5699,6 @@ async function sendMessage(rawText) {
       throw new Error(failure.error || "Alfie could not complete the response.");
     }
     let buffer = "";
-    let assistantText = "";
     let finalEvent = null;
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -5758,6 +5890,28 @@ async function sendMessage(rawText) {
       thinking.element.remove();
       thinking = null;
     }
+    if (chatRequest.abortedByUser) {
+      if (!chatRequest.silent && assistantBody) {
+        assistantBody.querySelector(".streaming-cursor")?.remove();
+        const partial = assistantText.trim();
+        const stoppedText = partial || "*Stopped.*";
+        renderMarkdown(assistantBody, stoppedText);
+        assistantBody.dataset.rawContent = stoppedText;
+        const messageArticle = assistantBody.closest(".message");
+        if (partial && activeConversationIdForTurn) {
+          const savedPartial = await persistMessage("assistant", partial, activeConversationIdForTurn).catch(() => null);
+          if (messageArticle) {
+            messageArticle.querySelector(".message-actions")?.remove();
+            messageArticle.appendChild(createReactionControls(savedPartial || { role: "assistant", content: partial }));
+          }
+        }
+        window.alfieSoul?.setState("idle", "purple");
+        toast("Generation stopped.");
+        if (chatAutoScrollEnabled) scrollChatToBottom();
+        updateScrollToBottomIndicator();
+      }
+      return;
+    }
     if (assistantBody) {
       assistantBody.querySelector(".streaming-cursor")?.remove();
       const rawMsg = String(error?.message || "Connection interrupted.");
@@ -5790,11 +5944,14 @@ async function sendMessage(rawText) {
       thinking = null;
     }
     assistantBody?.querySelector(".streaming-cursor")?.remove();
-    state.sending = false;
-    input.disabled = false;
-    input.value = "";
-    input.style.height = "auto";
-    input.focus();
+    if (finishChatRequest(chatRequest)) {
+      input.disabled = false;
+      if (!chatRequest.abortedByUser) {
+        input.value = "";
+        input.style.height = "auto";
+      }
+      if (!chatRequest.silent) input.focus();
+    }
   }
 }
 
@@ -7844,23 +8001,25 @@ async function loadToolsAndApprovals(focusActionId = null) {
     }
     if (!tools.tools?.length) toolsHost.textContent = "No registered tools.";
     for (const action of (pending.actions || [])) {
+      let itemEl = null;
       const approve = {
         label: "Approve & continue",
         kind: "primary-button",
         onClick: async () => {
           await approvePendingActionAndContinue(action.id, {
             toolId: action.toolId,
-            summary: action.preview || ""
+            summary: action.preview || "",
+            cardElement: itemEl
           });
         }
       };
       const reject = {
         label: "Reject",
         onClick: async () => {
-          await rejectPendingAction(action.id);
+          await rejectPendingAction(action.id, { cardElement: itemEl });
         }
       };
-      const itemEl = createItem(action.toolId, action.preview || "Waiting for your decision.", [reject, approve]);
+      itemEl = createItem(action.toolId, action.preview || "Waiting for your decision.", [reject, approve]);
       itemEl.dataset.actionId = action.id;
       if (action.reason) {
         const reason = document.createElement("p");
@@ -11691,10 +11850,20 @@ function initChatOptionsMenu() {
     if (drawer.contains(event.target) || menuBtn?.contains(event.target) || quickLocBtn?.contains(event.target)) return;
     setOpen(false);
   });
+  $("#stop-stream-btn")?.addEventListener("click", () => {
+    cancelActiveChatRequest();
+  });
+
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && drawer && !drawer.hidden) {
+    if (event.key !== "Escape") return;
+    if (drawer && !drawer.hidden) {
       setOpen(false);
       menuBtn?.focus();
+      return;
+    }
+    if (state.sending && activeChatRequest && !document.querySelector(".modal-backdrop:not([hidden]), .dossier-backdrop:not([hidden])")) {
+      event.preventDefault();
+      cancelActiveChatRequest();
     }
   });
 

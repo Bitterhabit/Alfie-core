@@ -35,7 +35,7 @@ function unescapeRecoveredJsonString(raw) {
     .replace(/\\\\/g, "\\");
 }
 
-function tryRecoverFinalText(raw) {
+function tryRecoverFinalText(raw, { allowPlainTextFinal = false } = {}) {
   if (!raw || typeof raw !== "string") return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -49,16 +49,19 @@ function tryRecoverFinalText(raw) {
     let body = finalEnvelopeMatch[1];
     body = body.replace(/"\s*\}\s*$/, "");
     const recovered = unescapeRecoveredJsonString(body).trim();
-    if (recovered.length >= 20) {
+    if (recovered.length >= 20 || (allowPlainTextFinal && recovered.length >= 1)) {
       return { type: "final", message: recovered };
     }
     return null;
   }
 
-  // Case 2: Model replied directly with substantive Markdown/HTML/code instead of JSON wrapper
-  // (very common when asked to build a full website). Only recover when it does NOT start with "{",
-  // so broken JSON fragments like "{not json" still trigger structured self-correction.
+  // Case 2: Model replied directly with plain text or Markdown/HTML/code instead of JSON wrapper.
+  // Only recover when it does NOT start with "{", so broken JSON fragments like "{not json"
+  // still trigger structured self-correction.
   if (!trimmed.startsWith("{")) {
+    if (allowPlainTextFinal) {
+      return { type: "final", message: trimmed };
+    }
     const looksLikeSubstantiveCodeOrProse =
       trimmed.includes("```") ||
       /<!doctype\s+html|<html[\s>]/i.test(trimmed) ||
@@ -70,7 +73,7 @@ function tryRecoverFinalText(raw) {
   return null;
 }
 
-export function parseModelAction(content) {
+export function parseModelAction(content, { allowPlainTextFinal = false } = {}) {
   const original = String(content || "").trim();
   const raw = original.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   try {
@@ -78,10 +81,97 @@ export function parseModelAction(content) {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected one JSON object.");
     return value;
   } catch (error) {
-    const recovered = tryRecoverFinalText(original) || tryRecoverFinalText(raw);
+    const recovered = tryRecoverFinalText(original, { allowPlainTextFinal }) || tryRecoverFinalText(raw, { allowPlainTextFinal });
     if (recovered) return recovered;
     throw Object.assign(new Error(`Malformed JSON from model: ${error.message}. Return exactly one valid JSON object.`), { code: "MODEL_JSON_INVALID" });
   }
+}
+
+async function readStreamedProviderText(endpoint, response, { onDelta, signal } = {}) {
+  const contentType = String(response?.headers?.get?.("content-type") || "").toLowerCase();
+  const reader = response?.body?.getReader?.();
+  if (!reader || (contentType.includes("application/json") && !contentType.includes("ndjson") && endpoint.provider !== "ollama")) {
+    const payload = typeof response?.json === "function" ? await response.json() : {};
+    const content = endpoint.provider === "ollama"
+      ? payload?.message?.content
+      : payload?.choices?.[0]?.message?.content;
+    if (!String(content || "").trim()) throw new Error("The model returned an empty response.");
+    return { content: String(content).trim(), raw: payload, streamed: false };
+  }
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullText = "";
+  let streamedAny = false;
+  let pendingLeading = "";
+  let mode = "detecting"; // "detecting" | "plain" | "json"
+  let usageRaw = {};
+
+  const emitChunk = (chunk) => {
+    if (!chunk) return;
+    fullText += chunk;
+    if (typeof onDelta !== "function") return;
+    if (mode === "json") return;
+    if (mode === "detecting") {
+      pendingLeading += chunk;
+      const trimmedStart = pendingLeading.trimStart();
+      if (!trimmedStart) return;
+      if (trimmedStart.startsWith("{") || trimmedStart.startsWith("```json")) {
+        mode = "json";
+        return;
+      }
+      if (trimmedStart.length >= 7 || !trimmedStart.startsWith("`")) {
+        mode = "plain";
+        streamedAny = true;
+        onDelta(pendingLeading);
+        pendingLeading = "";
+      }
+      return;
+    }
+    streamedAny = true;
+    onDelta(chunk);
+  };
+
+  const handleLine = (rawLine) => {
+    const line = rawLine.trim();
+    if (!line) return;
+    const data = endpoint.provider === "ollama" ? line : (line.startsWith("data:") ? line.slice(5).trim() : line);
+    if (!data || data === "[DONE]") return;
+    let payload;
+    try { payload = JSON.parse(data); } catch { return; }
+    if (payload.error) throw new Error(String(payload.error?.message || payload.error));
+    if (payload.usage) usageRaw.usage = payload.usage;
+    if (payload.eval_count !== undefined) usageRaw.eval_count = payload.eval_count;
+    if (payload.prompt_eval_count !== undefined) usageRaw.prompt_eval_count = payload.prompt_eval_count;
+    const delta = endpoint.provider === "ollama"
+      ? payload?.message?.content
+      : payload?.choices?.[0]?.delta?.content;
+    if (delta) emitChunk(String(delta));
+  };
+
+  while (true) {
+    if (signal?.aborted) {
+      try { await reader.cancel(); } catch {}
+      throw Object.assign(new Error("Alfie turn deadline reached."), { name: "AbortError" });
+    }
+    const { value, done } = await reader.read();
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || "";
+      for (const rawLine of lines) handleLine(rawLine);
+    }
+    if (done) break;
+  }
+  if (buffer.trim()) handleLine(buffer);
+  if (mode === "detecting" && pendingLeading && typeof onDelta === "function") {
+    const trimmedStart = pendingLeading.trimStart();
+    if (!trimmedStart.startsWith("{") && !trimmedStart.startsWith("```json")) {
+      streamedAny = true;
+      onDelta(pendingLeading);
+    }
+  }
+  if (!fullText.trim()) throw new Error("The model returned an empty response.");
+  return { content: fullText.trim(), raw: usageRaw, streamed: streamedAny };
 }
 
 export function formatToolAction(toolId, toolDef) {
@@ -215,7 +305,7 @@ export class AgentLoop {
     });
   }
 
-  async run({ userId, messages, dashboardState = {}, mode = "auto", workingMode = "companion", projectId = null, agentProvider = "local", turnId = randomUUID(), signal: parentSignal, onProgress }) {
+  async run({ userId, messages, dashboardState = {}, mode = "auto", workingMode = "companion", projectId = null, agentProvider = "local", approvalContinuation = null, providerConfigOverride = null, turnId = randomUUID(), signal: parentSignal, onProgress, onDelta }) {
     const started = this.now();
     const controller = new AbortController();
     const abortFromParent = () => controller.abort(parentSignal?.reason || new Error("Client disconnected."));
@@ -245,34 +335,43 @@ export class AgentLoop {
 
     const history = messages.slice(-16).map((message) => ({ role: message.role, content: String(message.content || "").slice(0, 12000) }));
     const userText = [...history].reverse().find((message) => message.role === "user")?.content || "";
+    const isApprovalContinuation = Boolean(approvalContinuation && typeof approvalContinuation === "object");
+    const memoryQueryText = isApprovalContinuation
+      ? ([...history].reverse().find((message) => message.role === "user" && !String(message.content || "").startsWith("[Approved tool result:"))?.content || userText)
+      : userText;
 
     const resolvedMode = resolveWorkingMode(workingMode);
 
-    // Enforce privacy BEFORE even querying ProjectStore or MemoryStore when using a cloud agent.
-    let activeProject = null;
+    // Parallelize independent pre-turn store reads to minimize latency before model execution.
     const allowProject = !cloudAgent || cloudAgent.visibility?.allowProjectContext !== false;
-    if (allowProject && projectId && this.projectStore?.get) {
-      try {
-        activeProject = await awaitWithAbort(this.projectStore.get(userId, projectId), controller.signal);
-      } catch (error) {
-        if (controller.signal.aborted) throw error;
-        activeProject = null;
-      }
-    }
-
-    let workflowProfile = null;
-    if (this.profileStore?.get) {
-      try {
-        workflowProfile = await awaitWithAbort(this.profileStore.get(userId), controller.signal);
-      } catch (error) {
-        if (controller.signal.aborted) throw error;
-        workflowProfile = null;
-      }
-    }
-
     const shouldUsePersonalMemories = !cloudAgent || cloudAgent.visibility?.allowPersonalMemories === true;
+
+    const [activeProject, workflowProfile, initialProviderConfig] = await Promise.all([
+      (allowProject && projectId && this.projectStore?.get)
+        ? awaitWithAbort(this.projectStore.get(userId, projectId), controller.signal).catch((error) => {
+            if (controller.signal.aborted) throw error;
+            return null;
+          })
+        : Promise.resolve(null),
+      (this.profileStore?.get)
+        ? awaitWithAbort(this.profileStore.get(userId), controller.signal).catch((error) => {
+            if (controller.signal.aborted) throw error;
+            return null;
+          })
+        : Promise.resolve(null),
+      (!cloudAgent && !providerConfigOverride && this.providerStore?.getEffectiveConfig)
+        ? awaitWithAbort(this.providerStore.getEffectiveConfig(userId), controller.signal)
+            .then((res) => res?.config || this.providerConfig)
+            .catch((error) => {
+              if (controller.signal.aborted) throw error;
+              return this.providerConfig;
+            })
+        : Promise.resolve(providerConfigOverride || this.providerConfig)
+    ]);
+
     const autoMemories = [];
-    const autoMemoryAllowed = shouldUsePersonalMemories
+    const autoMemoryAllowed = !isApprovalContinuation
+      && shouldUsePersonalMemories
       && workflowProfile?.autoMemoryEnabled !== false
       && typeof this.memoryStore?.create === "function";
     if (autoMemoryAllowed && userText) {
@@ -320,7 +419,16 @@ export class AgentLoop {
     let memories = [];
     if (shouldUsePersonalMemories && this.memoryStore?.search) {
       try {
-        const keywordMatches = await awaitWithAbort(this.memoryStore.search(userId, userText, { limit: 6 }), controller.signal);
+        const hasList = typeof this.memoryStore.list === "function";
+        const [keywordMatches, corePrefs, coreFacts] = await Promise.all([
+          awaitWithAbort(this.memoryStore.search(userId, memoryQueryText, { limit: 6 }), controller.signal),
+          hasList
+            ? awaitWithAbort(this.memoryStore.list(userId, { kind: "preference", sort: "importance", limit: 4 }), controller.signal)
+            : Promise.resolve([]),
+          hasList
+            ? awaitWithAbort(this.memoryStore.list(userId, { minImportance: 8, sort: "importance", limit: 3 }), controller.signal)
+            : Promise.resolve([])
+        ]);
         const merged = [];
         const seenIds = new Set();
         const pushUnique = (item) => {
@@ -331,18 +439,8 @@ export class AgentLoop {
           merged.push(item);
         };
         for (const item of (Array.isArray(keywordMatches) ? keywordMatches : [])) pushUnique(item);
-        if (typeof this.memoryStore.list === "function") {
-          const corePrefs = await awaitWithAbort(
-            this.memoryStore.list(userId, { kind: "preference", sort: "importance", limit: 4 }),
-            controller.signal
-          );
-          for (const item of (Array.isArray(corePrefs) ? corePrefs : [])) pushUnique(item);
-          const coreFacts = await awaitWithAbort(
-            this.memoryStore.list(userId, { minImportance: 8, sort: "importance", limit: 3 }),
-            controller.signal
-          );
-          for (const item of (Array.isArray(coreFacts) ? coreFacts : [])) pushUnique(item);
-        }
+        for (const item of (Array.isArray(corePrefs) ? corePrefs : [])) pushUnique(item);
+        for (const item of (Array.isArray(coreFacts) ? coreFacts : [])) pushUnique(item);
         memories = merged.slice(0, 8);
       } catch (error) {
         if (controller.signal.aborted) throw error;
@@ -357,6 +455,8 @@ export class AgentLoop {
     let lastPrivacyReport = null;
     let lastShortlistedTools = [];
     let turnTainted = false;
+    let streamedToClient = false;
+    let directFinalAfterTool = null;
     try {
       while (steps < this.maxSteps) {
         if (controller.signal.aborted || this.now() - started >= this.wallClockTimeout) {
@@ -399,7 +499,9 @@ export class AgentLoop {
           privacyNotice,
           workingMode: resolvedMode.id,
           project: activeProject,
-          workflowProfile
+          workflowProfile,
+          approvalContinuation,
+          directFinalAfterTool
         });
         lastShortlistedTools = Array.isArray(context.tools) ? context.tools.map((tool) => tool.id) : [];
         if (
@@ -411,6 +513,7 @@ export class AgentLoop {
         }
 
         let selected;
+        const allowPlainTextFinal = !Array.isArray(context.tools) || context.tools.length === 0;
         if (cloudAgent) {
           const resolvedCredential = typeof this.cloudAgentStore?.resolveCredential === "function"
             ? await this.cloudAgentStore.resolveCredential(userId, cloudAgent.provider)
@@ -429,10 +532,35 @@ export class AgentLoop {
           );
         } else {
           try {
-            const activeProviderConfig = this.providerStore
-              ? (await this.providerStore.getEffectiveConfig(userId)).config
-              : this.providerConfig;
-            selected = await awaitWithAbort(this.providerRegistry.complete(activeProviderConfig, context.messages, mode, { signal: controller.signal }), controller.signal);
+            const activeProviderConfig = initialProviderConfig || this.providerConfig;
+            const hasLightEndpoint = Array.isArray(activeProviderConfig?.endpoints)
+              && activeProviderConfig.endpoints.some((ep) => ep?.enabled && ep?.model && ep?.mode === "light");
+            const effectiveProviderMode = (mode === "auto" && context.simpleTurn && hasLightEndpoint)
+              ? "light"
+              : mode;
+
+            if (allowPlainTextFinal && typeof onDelta === "function" && typeof this.providerRegistry?.openStream === "function") {
+              const opened = await awaitWithAbort(
+                this.providerRegistry.openStream(activeProviderConfig, context.messages, effectiveProviderMode, { signal: controller.signal }),
+                controller.signal
+              );
+              const streamed = await readStreamedProviderText(opened.endpoint, opened.response, {
+                onDelta,
+                signal: controller.signal
+              });
+              streamedToClient = Boolean(streamed.streamed);
+              selected = {
+                endpoint: opened.endpoint,
+                health: opened.health,
+                fallbackUsed: opened.fallbackUsed,
+                result: { content: streamed.content, raw: streamed.raw }
+              };
+            } else {
+              selected = await awaitWithAbort(
+                this.providerRegistry.complete(activeProviderConfig, context.messages, effectiveProviderMode, { signal: controller.signal }),
+                controller.signal
+              );
+            }
           } catch (providerError) {
             if (controller.signal.aborted) throw providerError;
             selected = buildDeterministicProjectBrief({
@@ -454,7 +582,7 @@ export class AgentLoop {
         steps += 1;
         let action;
         try {
-          action = parseModelAction(selected.result.content);
+          action = parseModelAction(selected.result.content, { allowPlainTextFinal });
         } catch (error) {
           history.push({ role: "assistant", content: String(selected.result?.content || "").slice(0, 2000) });
           history.push({ role: "user", content: JSON.stringify({ error: error.message }) });
@@ -506,6 +634,7 @@ export class AgentLoop {
             endpointId: selected.endpoint?.id,
             metrics: { latencyMs, completionTokens, promptTokens, totalTokens },
             provenance,
+            ...(streamedToClient ? { streamed: true } : {}),
             ...(autoMemories.length ? { autoMemories } : {}),
             ...(lastPrivacyReport ? { privacyReport: lastPrivacyReport } : {}),
             ...(toolsUsed.length ? { toolsUsed } : {})
@@ -575,6 +704,13 @@ export class AgentLoop {
             async () => observation.result
           );
           observation = { ...observation, result: sanitizedResult };
+        }
+        if (observation.status === "completed") {
+          if (action.tool === "web.weather") {
+            directFinalAfterTool = { toolId: "web.weather", intent: "weather" };
+          } else if (action.tool === "web.search" && context.liveLookupIntent === "transit") {
+            directFinalAfterTool = { toolId: "web.search", intent: "transit" };
+          }
         }
         history.push({ role: "assistant", content: JSON.stringify(action).slice(0, 2000) });
         const modelObservation = observation.status === "tool_error" ? { error: observation.error } : { tool_observation: observation };

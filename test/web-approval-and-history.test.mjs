@@ -223,11 +223,17 @@ test("ConversationStore persists actionCard, updates activeConversationId, and u
   });
 });
 
-test("Frontend app.js and styles.css contain history, approval continuation, and layout fixes", async () => {
+test("Frontend app.js, index.html, and styles.css contain history, approval continuation, request cancellation, and layout fixes", async () => {
+  const indexHtml = await fs.readFile(path.resolve("interface/public/index.html"), "utf8");
   const appJs = await fs.readFile(path.resolve("interface/public/app.js"), "utf8");
   const stylesCss = await fs.readFile(path.resolve("interface/public/styles.css"), "utf8");
 
   assert.doesNotMatch(appJs, /\bopenConversation\s*\(/, "Undefined openConversation() call should not exist");
+  assert.match(indexHtml, /id="stop-stream-btn"/);
+  assert.match(appJs, /function beginChatRequest\(/);
+  assert.match(appJs, /function cancelActiveChatRequest\(/);
+  assert.match(appJs, /signal:\s*chatRequest\.controller\.signal/);
+  assert.match(appJs, /#stop-stream-btn/);
   assert.match(appJs, /async function continueChatAfterApproval\(/);
   assert.match(appJs, /async function approvePendingActionAndContinue\(/);
   assert.match(appJs, /api\("\/api\/core\/tools\/approve"/);
@@ -235,9 +241,13 @@ test("Frontend app.js and styles.css contain history, approval continuation, and
   assert.match(appJs, /findConversationIdForAction\(actionId\)/);
   assert.match(appJs, /state\.pendingApprovalConversations\.delete\(actionId\)/);
   assert.match(appJs, /await continueChatAfterApproval\(/);
+  assert.match(appJs, /function unwrapToolResultPayload\(/);
+  assert.match(appJs, /approvalContinuation:\s*\{/);
+  assert.match(appJs, /cardElement:\s*itemEl/);
   assert.match(appJs, /catch \(error\) \{[\s\S]*?setState\("error", "red"\)/);
   assert.match(appJs, /function createChatApprovalCard\(/);
   assert.match(appJs, /state\.conversations\s*=\s*\[\];/);
+  assert.match(stylesCss, /\.stop-stream-button\s*\{/);
   assert.match(stylesCss, /\.sr-only\s*\{/);
   assert.match(stylesCss, /\.message-actions\s+\.copy-clipboard-btn\s*\{/);
 

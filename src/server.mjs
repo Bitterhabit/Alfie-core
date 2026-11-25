@@ -229,7 +229,8 @@ export function createAlfieCoreServer({
   registerImageTools(toolRegistry, imageGenerator);
   registerModularConnectorTools(toolRegistry, {
     dataDirectory: memoryStore.dataDirectory || projectStore.dataDirectory || process.env.ALFIE_CORE_DATA_DIR || "/data",
-    petrioHarnessClient
+    petrioHarnessClient,
+    profileStore
   });
   const jobEngine = new AsyncJobEngine({ jobStore, vramMonitor, auditStore });
   const workshopStores = { projectStore, memoryStore, ideaStore, watcherStore, capsuleStore, profileStore, permissionStore, jobStore };
@@ -264,13 +265,25 @@ export function createAlfieCoreServer({
       if (result.status === "timeout") throw Object.assign(new Error(result.message || "Chat task exceeded its processing budget."), { code: "CHAT_TASK_TIMEOUT" });
       const assistantMessage = String(result.message || "The background task finished without a response.").slice(0, 36000);
       await jobEngine.reportProgress(userId, job.id, 90, "Saving the response to your conversation");
+      const approvalActionCard = result.status === "awaiting_user_approval" && result.actionId
+        ? {
+            state: "approval",
+            label: "Your approval is needed",
+            actionId: result.actionId,
+            toolId: result.toolId || "",
+            summary: result.summary || "",
+            reason: result.reason || "",
+            detail: [result.toolId, result.summary].filter(Boolean).join(" · ") || "Alfie has prepared an action for review."
+          }
+        : null;
       await conversationStore.appendMessage(userId, job.conversationId, {
         role: "assistant",
         content: assistantMessage,
         taskId: job.id,
         afterTaskId: job.turnId,
         metrics: result.metrics,
-        provenance: result.provenance
+        provenance: result.provenance,
+        ...(approvalActionCard ? { actionCard: approvalActionCard } : {})
       });
       context.summary = assistantMessage;
       if (result.status === "awaiting_user_approval") {
@@ -516,6 +529,7 @@ export function createAlfieCoreServer({
           } catch {}
           const waitingJobs = await jobStore.list(identity.userId, { status: "awaiting_approval", limit: 100 });
           for (const job of waitingJobs.filter((item) => item.pendingActionId === actionId)) {
+            if (!linkedConversationId && job.conversationId) linkedConversationId = job.conversationId;
             await jobStore.update(identity.userId, job.id, (current, nowIso) => current.status !== "awaiting_approval" ? current : ({
               ...current, status: "completed", progress: 100, pendingActionId: null,
               artifact: { ...(current.artifact || {}), approvalOutcome: "approved", summary: "The requested action was approved and executed." },
@@ -2040,10 +2054,27 @@ export function createAlfieCoreServer({
         }, 2_500);
         firstHeartbeat.unref?.();
 
+        const sanitizeApprovalContinuation = (raw) => {
+          if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+          const toolId = String(raw.toolId || "").trim().slice(0, 80);
+          const actionId = String(raw.actionId || "").trim().slice(0, 80);
+          const summary = String(raw.summary || "").trim().slice(0, 240);
+          if (!toolId && !actionId) return null;
+          return { toolId, actionId, summary };
+        };
+
         const agentProvider = ["local", "gemini", "openai"].includes(body.agentProvider) ? body.agentProvider : "local";
         const workingMode = resolveWorkingMode(body.workingMode).id;
         const projectId = typeof body.projectId === "string" && /^[a-f0-9-]{36}$/i.test(body.projectId) ? body.projectId : null;
+        const approvalContinuation = sanitizeApprovalContinuation(body.approvalContinuation);
         const { config: userProviders } = await resolvedProviderStore.getEffectiveConfig(identity.userId);
+        let emittedLiveDelta = false;
+        const onDelta = (chunk) => {
+          if (controller.signal.aborted || res.destroyed || !chunk) return;
+          emittedLiveDelta = true;
+          ensureStreamHeaders(200);
+          writeStreamEvent(res, { type: "delta", content: String(chunk) });
+        };
         let result;
         try {
           result = await agentLoop.run({
@@ -2053,8 +2084,11 @@ export function createAlfieCoreServer({
             workingMode,
             projectId,
             agentProvider,
+            approvalContinuation,
+            providerConfigOverride: userProviders,
             turnId: body.turnId || randomUUID(), signal: controller.signal,
-            onProgress
+            onProgress,
+            onDelta
           });
         } finally {
           clearTimeout(firstHeartbeat);
@@ -2063,7 +2097,7 @@ export function createAlfieCoreServer({
         if (controller.signal.aborted) return;
         ensureStreamHeaders(result.status === "awaiting_user_approval" ? 202 : 200);
         writeStreamEvent(res, { type: "meta", status: result.status, steps: result.steps, ...(result.privacyReport ? { privacyReport: result.privacyReport } : {}), ...(result.provenance ? { provenance: result.provenance } : {}) });
-        if (result.message) writeStreamEvent(res, { type: "delta", content: result.message });
+        if (result.message && !emittedLiveDelta && !result.streamed) writeStreamEvent(res, { type: "delta", content: result.message });
         if (result.status === "awaiting_user_approval") {
           writeStreamEvent(res, { type: "approval_required", actionId: result.actionId, toolId: result.toolId, summary: result.summary });
         }
@@ -2095,11 +2129,21 @@ export function createAlfieCoreServer({
         const workingMode = resolveWorkingMode(body.workingMode).id;
         const projectId = typeof body.projectId === "string" && /^[a-f0-9-]{36}$/i.test(body.projectId) ? body.projectId : null;
         const agentProvider = ["local", "gemini", "openai"].includes(body.agentProvider) ? body.agentProvider : "local";
+        const rawCont = body.approvalContinuation;
+        const approvalContinuation = (rawCont && typeof rawCont === "object" && !Array.isArray(rawCont) && (rawCont.toolId || rawCont.actionId))
+          ? {
+              toolId: String(rawCont.toolId || "").trim().slice(0, 80),
+              actionId: String(rawCont.actionId || "").trim().slice(0, 80),
+              summary: String(rawCont.summary || "").trim().slice(0, 240)
+            }
+          : null;
         const turnId = randomUUID();
         try {
           const result = await agentLoop.run({
             userId: identity.userId, messages, dashboardState: body.dashboardState || {},
-            mode: requestedMode, workingMode, projectId, agentProvider, turnId, signal: controller.signal
+            mode: requestedMode, workingMode, projectId, agentProvider, approvalContinuation,
+            providerConfigOverride: userProviders,
+            turnId, signal: controller.signal
           });
           return json(res, result.status === "awaiting_user_approval" ? 202 : 200, result);
         } finally {
