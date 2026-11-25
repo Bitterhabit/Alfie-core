@@ -8683,10 +8683,6 @@ input:focus,textarea:focus,select:focus{
   }
 }
 
-@media(prefers-reduced-motion:reduce){
-  *,*:before,*:after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
-  .login-soul-stage,.topbar-brand-wrap .alfie-soul.mini:hover,.topbar-brand-wrap .alfie-soul.mini:focus-visible{transform:none!important}
-}
 
 /* Online model switch privacy confirmation */
 .model-switch-dialog{
@@ -8712,3 +8708,8 @@ input:focus,textarea:focus,select:focus{
 .model-switch-dialog-note{padding:10px 12px;border-left:3px solid #d69a36;background:color-mix(in srgb,#d69a36 8%,transparent);border-radius:0 8px 8px 0}
 .model-switch-dialog-actions{display:flex;justify-content:flex-end;gap:9px;flex-wrap:wrap;margin-top:4px}
 @media(max-width:520px){.model-switch-dialog-card{padding:18px}.model-switch-data-summary{grid-template-columns:1fr}.model-switch-dialog-actions{flex-direction:column-reverse}.model-switch-dialog-actions button{width:100%}}
+
+@media(prefers-reduced-motion:reduce){
+  *,*:before,*:after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
+  .login-soul-stage,.topbar-brand-wrap .alfie-soul.mini:hover,.topbar-brand-wrap .alfie-soul.mini:focus-visible{transform:none!important}
+}
