@@ -140,4 +140,4 @@ printf 'SearXNG is running privately at http://searxng:8080 on the Alfie Docker 
 printf 'Open the public origin after your trusted HTTPS reverse proxy/tunnel is configured.\n'
 printf 'Create the first administrator using the one-time setup form. No default password was created.\n'
 printf '\nCredentials are stored in .env (mode 600). Do not commit or share that file.\n'
-printf 'For future updates run: sudo ./install.sh --upgrade\n'
+printf 'For future updates run: sudo bash ./install.sh --upgrade\n'
