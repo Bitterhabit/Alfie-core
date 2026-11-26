@@ -810,3 +810,15 @@ test("chat performance tooltip exposes safe per-stage timing diagnostics", async
   assert.match(app, /finalEvent\?\.metrics\?\.stages/);
   assert.match(app, /Time to first token/);
 });
+
+
+test("GitHub write approval cards expose expandable exact file contents before approval", async () => {
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+  const css = await fs.readFile(new URL("styles.css", root), "utf8");
+  assert.match(app, /action\.toolId === "github\.change\.create_pr"/);
+  assert.match(app, /Review proposed files/);
+  assert.match(app, /source\.textContent = String\(file\.content/);
+  assert.match(app, /pending-action-file-review/);
+  assert.match(css, /\.pending-action-file-review/);
+  assert.match(css, /\.pending-action-file pre/);
+});
