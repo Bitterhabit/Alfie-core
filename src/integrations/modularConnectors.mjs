@@ -76,9 +76,9 @@ export function getModularIntegrationsStatus({ petrioHarnessClient = null, env =
       configured: Boolean(env.ALFIE_GITHUB_TOKEN),
       mode: env.ALFIE_GITHUB_TOKEN ? "token-configured" : "public-read-only",
       requiredEnv: ["ALFIE_GITHUB_TOKEN"],
-      scopes: ["github:read", "github:draft"],
-      tools: ["github.repo.inspect", "github.repo.tree", "github.file.read", "github.commits.list", "github.pull_requests.list", "github.issue.draft"],
-      description: "Inspect repositories, browse/read bounded source files, review recent commits and pull requests, and prepare approval-gated issue drafts (pinned to api.github.com)."
+      scopes: ["github:read", "github:draft", "github:write"],
+      tools: ["github.repo.inspect", "github.repo.tree", "github.file.read", "github.commits.list", "github.pull_requests.list", "github.issue.draft", "github.change.create_pr"],
+      description: "Inspect repositories, browse/read bounded source files, review recent commits and pull requests, prepare issue drafts, and create approval-gated Alfie branches and draft pull requests (pinned to api.github.com)."
     },
     {
       id: "proxmox",
@@ -608,6 +608,147 @@ export function registerModularConnectorTools(
       const count = Math.min(10, Math.max(1, Number(args.count || 5)));
       const rows = await githubRequest(`/repos/${repo}/pulls?state=open&per_page=${count}`);
       return { repository: repo, pullRequests: (Array.isArray(rows) ? rows : []).map((item) => ({ number: Number(item.number), title: String(item.title || "").slice(0, 180), state: String(item.state || ""), draft: Boolean(item.draft), author: String(item.user?.login || "").slice(0, 100), updatedAt: item.updated_at || null, url: String(item.html_url || "") })) };
+    }
+  });
+
+  registry.register({
+    id: "github.change.create_pr",
+    name: "Create GitHub change and pull request",
+    description: "Create a new Alfie-owned branch, commit a bounded set of text-file changes, and open a pull request. Never writes to the base branch; requires explicit user approval.",
+    scope: "github:write",
+    risk: "write",
+    trust: "external",
+    network: true,
+    externalAction: true,
+    untrustedOutput: true,
+    implementationVersion: "1",
+    tags: ["github", "project", "code", "branch", "commit", "pull request", "write"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", minLength: 3, maxLength: 165 },
+        branch: { type: "string", pattern: "^alfie/[a-z0-9][a-z0-9._/-]{1,70}$", maxLength: 80 },
+        base: { type: "string", minLength: 1, maxLength: 120 },
+        title: { type: "string", minLength: 1, maxLength: 180 },
+        body: { type: "string", minLength: 1, maxLength: 5000 },
+        commitMessage: { type: "string", minLength: 1, maxLength: 180 },
+        files: {
+          type: "array", minItems: 1, maxItems: 10,
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string", minLength: 1, maxLength: 240 },
+              content: { type: "string", minLength: 1, maxLength: 30000 },
+              expectedSha: { type: "string", minLength: 1, maxLength: 80 }
+            },
+            required: ["path", "content"],
+            additionalProperties: false
+          }
+        }
+      },
+      required: ["repo", "branch", "title", "body", "commitMessage", "files"],
+      additionalProperties: false
+    },
+    approvalPreview(args) {
+      const paths = (args.files || []).map((file) => file.path).slice(0, 6).join(", ");
+      return `Create ${args.repo} branch ${args.branch} and open PR "${args.title}" (${(args.files || []).length} files: ${paths})`;
+    },
+    dryRun(args) {
+      return {
+        risk: "high",
+        summary: `Create an isolated branch and pull request in ${args.repo}`,
+        affectedResource: `github:${args.repo}:branch:${args.branch}`,
+        reversible: true,
+        rollbackPlan: "Close the pull request and delete the Alfie-owned branch; committed history remains visible.",
+        validationSteps: ["Confirm base branch and file versions", "Verify branch commit", "Verify pull request URL and head/base branches"]
+      };
+    },
+    async handler(args) {
+      const repo = validateRepo(args.repo);
+      if (!process.env.ALFIE_GITHUB_TOKEN) {
+        throw Object.assign(new Error("GitHub write access is not configured. Set ALFIE_GITHUB_TOKEN on the server with repository Contents and Pull requests write permissions."), { status: 503 });
+      }
+      const branch = String(args.branch || "").trim();
+      const base = String(args.base || "").trim();
+      if (!/^alfie\/[a-z0-9][a-z0-9._/-]{1,70}$/.test(branch) || branch.includes("..") || branch.endsWith("/") || branch.includes("//")) {
+        throw Object.assign(new Error("Branch must be a safe Alfie-owned name beginning with alfie/."), { status: 400 });
+      }
+      const metadata = await githubRequest(`/repos/${repo}`);
+      const baseBranch = base || String(metadata.default_branch || "main");
+      if (branch === baseBranch || branch === metadata.default_branch) {
+        throw Object.assign(new Error("Alfie is not allowed to write to the default branch or use it as its working branch."), { status: 403 });
+      }
+      const baseRef = await githubRequest(`/repos/${repo}/git/ref/heads/${encodeURIComponent(baseBranch)}`);
+      const baseCommit = await githubRequest(`/repos/${repo}/git/commits/${baseRef.object.sha}`);
+      const existingBranch = await githubRequest(`/repos/${repo}/git/ref/heads/${encodeURIComponent(branch)}`).catch((error) => {
+        if (error.status === 404) return null;
+        throw error;
+      });
+      if (existingBranch) throw Object.assign(new Error("That Alfie branch already exists. Inspect it before creating another change."), { status: 409 });
+
+      const seen = new Set();
+      const treeEntries = [];
+      for (const file of args.files) {
+        const filePath = String(file.path || "").trim();
+        const parts = filePath.split("/");
+        if (!filePath || filePath.startsWith("/") || filePath.includes("\\") || parts.some((part) => !part || part === "." || part === "..")) {
+          throw Object.assign(new Error("A changed file has an invalid repository path."), { status: 400 });
+        }
+        const lower = filePath.toLowerCase();
+        if (parts.some((part) => part.toLowerCase() === ".git" || part.toLowerCase() === "node_modules") ||
+            parts.some((part) => part.toLowerCase() === ".env" || part.toLowerCase().startsWith(".env.") || /^(secret|secrets|credential|credentials)\./i.test(part) || ["id_rsa"].includes(part.toLowerCase()) || [".pem", ".key", ".p12", ".pfx"].some((suffix) => part.toLowerCase().endsWith(suffix)))) {
+          throw Object.assign(new Error("Changes to credential, private-key, .git, or dependency paths are blocked."), { status: 403 });
+        }
+        if (seen.has(lower)) throw Object.assign(new Error("A file path appears more than once in this change."), { status: 400 });
+        seen.add(lower);
+        const current = await githubRequest(`/repos/${repo}/contents/${filePath.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(baseBranch)}`).catch((error) => {
+          if (error.status === 404) return null;
+          throw error;
+        });
+        if (current && (!file.expectedSha || current.sha !== file.expectedSha)) {
+          throw Object.assign(new Error(`File ${filePath} changed or its expected SHA was not supplied. Re-read it and prepare a fresh proposal.`), { status: 409 });
+        }
+        if (!current && file.expectedSha) {
+          throw Object.assign(new Error(`File ${filePath} no longer exists at the base branch. Re-read the repository and prepare a fresh proposal.`), { status: 409 });
+        }
+        const blob = await githubRequest(`/repos/${repo}/git/blobs`, {
+          method: "POST",
+          body: { content: file.content, encoding: "utf-8" }
+        });
+        treeEntries.push({ path: filePath, mode: "100644", type: "blob", sha: blob.sha });
+      }
+
+      const tree = await githubRequest(`/repos/${repo}/git/trees`, {
+        method: "POST",
+        body: { base_tree: baseCommit.tree.sha, tree: treeEntries }
+      });
+      const commit = await githubRequest(`/repos/${repo}/git/commits`, {
+        method: "POST",
+        body: { message: args.commitMessage, tree: tree.sha, parents: [baseRef.object.sha] }
+      });
+      await githubRequest(`/repos/${repo}/git/refs`, {
+        method: "POST",
+        body: { ref: `refs/heads/${branch}`, sha: commit.sha }
+      });
+      const pull = await githubRequest(`/repos/${repo}/pulls`, {
+        method: "POST",
+        body: { title: args.title, body: args.body, head: branch, base: baseBranch, draft: true }
+      });
+      const verified = await githubRequest(`/repos/${repo}/pulls/${pull.number}`);
+      if (verified.head?.ref !== branch || verified.base?.ref !== baseBranch || verified.state !== "open") {
+        throw Object.assign(new Error("The pull request was created but its final state could not be independently verified. Check GitHub before retrying."), { status: 502, actionOutcomeUnknown: true });
+      }
+      return {
+        created: true,
+        repository: repo,
+        branch,
+        base: baseBranch,
+        commit: String(commit.sha || "").slice(0, 12),
+        pullRequest: Number(pull.number),
+        url: String(pull.html_url || ""),
+        verified: true,
+        draft: true
+      };
     }
   });
 
