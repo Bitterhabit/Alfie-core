@@ -678,9 +678,12 @@ export function registerModularConnectorTools(
       required: ["repo", "branch", "title", "body", "commitMessage", "files"],
       additionalProperties: false
     },
-    approvalPreview(args) {
+    approvalPreview(args, { approvalGuard } = {}) {
       const paths = (args.files || []).map((file) => file.path).slice(0, 6).join(", ");
-      return `Create ${args.repo} branch ${args.branch} and open PR "${args.title}" (${(args.files || []).length} files: ${paths})`;
+      const baseLabel = approvalGuard?.baseBranch
+        ? ` on ${approvalGuard.baseBranch} @ ${String(approvalGuard.baseSha || "").slice(0, 12)}`
+        : "";
+      return `Create ${args.repo} branch ${args.branch}${baseLabel} and open PR "${args.title}" (${(args.files || []).length} files: ${paths})`;
     },
     async approvalGuard(args) {
       const repo = validateRepo(args.repo);
