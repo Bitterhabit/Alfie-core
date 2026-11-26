@@ -448,7 +448,9 @@ test("Concurrent approval requests can consume and execute one pending action on
   const pendingActionStore = new PendingActionStore({ dataDirectory: dir });
   let executions = 0;
   let releaseExecution;
+  let signalExecutionStarted;
   const executionGate = new Promise((resolve) => { releaseExecution = resolve; });
+  const executionStarted = new Promise((resolve) => { signalExecutionStarted = resolve; });
   registry.register({
     id: "ops.concurrent_write",
     name: "Concurrent write",
@@ -466,6 +468,7 @@ test("Concurrent approval requests can consume and execute one pending action on
     },
     handler: async ({ value }) => {
       executions += 1;
+      signalExecutionStarted();
       await executionGate;
       return { saved: value };
     }
@@ -483,9 +486,9 @@ test("Concurrent approval requests can consume and execute one pending action on
 
     const first = dispatcher.approve("alice", proposal.actionId);
     const second = dispatcher.approve("alice", proposal.actionId);
-    // Let both requests contend for the same per-user pending-action lock.
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(executions, 1, "Only the request that atomically consumed the approval may enter the handler");
+    // Wait until the winning request enters the handler, then release it and
+    // collect both outcomes before cleaning up the temporary data directory.
+    await executionStarted;
     releaseExecution();
 
     const results = await Promise.allSettled([first, second]);
