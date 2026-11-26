@@ -275,3 +275,50 @@ test("GitHub project change aborts if its base branch moves before branch public
     else process.env.ALFIE_GITHUB_TOKEN = previousToken;
   }
 });
+
+test("GitHub change approval guard binds the reviewed proposal to its exact base commit", async () => {
+  const previousToken = process.env.ALFIE_GITHUB_TOKEN;
+  process.env.ALFIE_GITHUB_TOKEN = "test-github-token";
+  let baseSha = "base-commit-one";
+  const calls = [];
+  const registry = new ToolRegistry();
+  registerModularConnectorTools(registry, {
+    fetchImpl: async (url, options = {}) => {
+      const parsed = new URL(url);
+      const method = options.method || "GET";
+      calls.push({ method, path: parsed.pathname });
+      if (method === "GET" && parsed.pathname === "/repos/acme/demo") return json({ default_branch: "main" });
+      if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/ref/heads/main") return json({ object: { sha: baseSha } });
+      if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/ref/heads/alfie/review-test") return json({ message: "Not Found" }, 404);
+      if (method === "GET" && parsed.pathname === "/repos/acme/demo/contents/README.md") return json({ message: "Not Found" }, 404);
+      throw new Error(`Unexpected GitHub API request: ${method} ${parsed.pathname}`);
+    }
+  });
+
+  try {
+    const tool = registry.tools.get("github.change.create_pr");
+    const args = {
+      repo: "acme/demo",
+      branch: "alfie/review-test",
+      title: "Reviewed README change",
+      body: "A harmless test proposal",
+      commitMessage: "Add README",
+      files: [{ path: "README.md", content: "# Hello" }]
+    };
+
+    const reviewedState = await tool.approvalGuard(args, { userId: "alice", toolId: tool.id });
+    assert.equal(reviewedState.baseSha, "base-commit-one");
+    assert.equal(reviewedState.files[0].sha, null);
+
+    // Simulate the base branch advancing after the approval card was created.
+    baseSha = "base-commit-two";
+    const currentState = await tool.approvalGuard(args, { userId: "alice", toolId: tool.id });
+    assert.equal(currentState.baseSha, "base-commit-two");
+    assert.notDeepEqual(currentState, reviewedState, "A moved base must invalidate the approval guard");
+    assert.equal(calls.some((call) => call.method === "POST"), false, "Approval guards must remain read-only");
+  } finally {
+    if (previousToken === undefined) delete process.env.ALFIE_GITHUB_TOKEN;
+    else process.env.ALFIE_GITHUB_TOKEN = previousToken;
+  }
+});
+
