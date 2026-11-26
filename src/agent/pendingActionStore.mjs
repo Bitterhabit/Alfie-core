@@ -157,16 +157,12 @@ export class PendingActionStore {
         executedAt: new Date(this.now()).toISOString()
       };
       const existing = (Array.isArray(store.receipts) ? store.receipts : []).find((item) => item.actionId && item.actionId === entry.actionId);
-      if (existing?.verificationState === "verified" && entry.verificationState === "unverified") {
-        entry.verified = true;
-        entry.verificationState = "verified";
-        entry.verificationDetail = existing.verificationDetail;
-      }
       store.actions = store.actions.filter((item) => item.id !== entry.actionId);
-      store.receipts = [
-        entry,
-        ...(Array.isArray(store.receipts) ? store.receipts.filter((item) => item.actionId !== entry.actionId) : [])
-      ].slice(0, 100);
+      // The first receipt is written closest to the actual execution outcome.
+      // Later defensive catch paths must not overwrite its more precise detail.
+      if (!existing) {
+        store.receipts = [entry, ...(Array.isArray(store.receipts) ? store.receipts : [])].slice(0, 100);
+      }
       await this.save(userId, store);
       return entry;
     });
