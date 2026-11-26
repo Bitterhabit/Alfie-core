@@ -328,3 +328,61 @@ test("GitHub change approval guard binds the reviewed proposal to its exact base
   }
 });
 
+test("GitHub change inspection safely distinguishes missing branches, orphan branches, and pull requests", async () => {
+  let branchExists = true;
+  let pullRequests = [];
+  const calls = [];
+  const registry = new ToolRegistry();
+  registerModularConnectorTools(registry, {
+    fetchImpl: async (url, options = {}) => {
+      const parsed = new URL(String(url));
+      const method = options.method || "GET";
+      calls.push({ method, path: parsed.pathname, search: parsed.search });
+      if (method === "GET" && parsed.pathname === "/repos/acme/demo") return json({ default_branch: "main" });
+      if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/ref/heads/alfie/recovery-check") {
+        return branchExists ? json({ object: { sha: "branch-commit-sha" } }) : json({ message: "Not Found" }, 404);
+      }
+      if (method === "GET" && parsed.pathname === "/repos/acme/demo/pulls") return json(pullRequests);
+      throw new Error(`Unexpected GitHub API request: ${method} ${parsed.pathname}`);
+    }
+  });
+  const tool = registry.tools.get("github.change.inspect");
+  try {
+    assert.equal(tool.scope, "github:read");
+    assert.equal(tool.risk, "read");
+    assert.equal(tool.externalAction, false);
+
+    let result = await tool.handler({ repo: "acme/demo", branch: "alfie/recovery-check" });
+    assert.equal(result.status, "branch_without_pull_request");
+    assert.equal(result.branchSha, "branch-commit");
+
+    pullRequests = [{
+      number: 42,
+      state: "open",
+      draft: true,
+      merged_at: null,
+      html_url: "https://github.com/acme/demo/pull/42",
+      head: { ref: "alfie/recovery-check", sha: "branch-commit-sha" },
+      base: { ref: "main" }
+    }];
+    result = await tool.handler({ repo: "acme/demo", branch: "alfie/recovery-check" });
+    assert.equal(result.status, "pull_request_found");
+    assert.equal(result.pullRequests[0].number, 42);
+    assert.equal(result.pullRequests[0].draft, true);
+    assert.equal(result.pullRequests[0].url, "https://github.com/acme/demo/pull/42");
+
+    branchExists = false;
+    result = await tool.handler({ repo: "acme/demo", branch: "alfie/recovery-check" });
+    assert.equal(result.status, "branch_not_found");
+    assert.equal(result.pullRequests.length, 0);
+
+    await assert.rejects(
+      () => tool.handler({ repo: "acme/demo", branch: "main" }),
+      (error) => error.status === 400
+    );
+    assert.equal(calls.some((call) => call.method !== "GET"), false, "Recovery inspection must never mutate GitHub");
+  } finally {
+    // no process-global state is changed by this read-only test
+  }
+});
+
