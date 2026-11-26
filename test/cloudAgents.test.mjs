@@ -265,7 +265,7 @@ test("Core server routes Gemini & ChatGPT coding agents with strict server-side 
     // 4. Send coding prompt to Gemini with sensitive dashboardState — verify ZERO leakage & blocked tool call
     const geminiReply = await client.chat("user-1", {
       agentProvider: "gemini",
-      messages: [{ role: "user", content: "Check my calendar and write sum(a,b) for private@home.test" }],
+      messages: [{ role: "user", content: "Check my calendar and write sum(a,b) for private@home.test. Test credential ghp_123456789012345678901234567890, local host thor.local, private address 192.168.1.149, and config path /opt/alfie/.env." }],
       dashboardState: {
         mailSummary: "PRIVATE_EMAIL_LEAK_CHECK",
         calendarSummary: "PRIVATE_CALENDAR_LEAK_CHECK",
@@ -287,6 +287,10 @@ test("Core server routes Gemini & ChatGPT coding agents with strict server-side 
     assert.doesNotMatch(serializedGeminiPayload, /PRIVATE_JOURNAL_LEAK_CHECK/);
     assert.doesNotMatch(serializedGeminiPayload, /TOP_SECRET_MEMORY_TOKEN_999/);
     assert.doesNotMatch(serializedGeminiPayload, /private@home\.test/);
+    assert.doesNotMatch(serializedGeminiPayload, /ghp_123456789012345678901234567890/);
+    assert.doesNotMatch(serializedGeminiPayload, /thor\.local/);
+    assert.doesNotMatch(serializedGeminiPayload, /192\.168\.1\.149/);
+    assert.doesNotMatch(serializedGeminiPayload, /\/opt\/alfie\/\.env/);
     assert.match(serializedGeminiPayload, /Math Utils/);
     for (const marker of ["CLOUD_PRIVATE_NOTE_LEAK", "CLOUD_PRIVATE_LOCATION_LEAK", "CLOUD_PRIVATE_TOPIC_LEAK", "CLOUD_PRIVATE_STYLE_LEAK"]) {
       assert.doesNotMatch(serializedGeminiPayload, new RegExp(marker), `Cloud provider must not receive ${marker}`);
