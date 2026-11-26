@@ -324,6 +324,16 @@ export class AgentLoop {
 
   async run({ userId, messages, dashboardState = {}, mode = "auto", workingMode = "companion", projectId = null, agentProvider = "local", approvalContinuation = null, providerConfigOverride = null, turnId = randomUUID(), signal: parentSignal, onProgress, onDelta }) {
     const started = this.now();
+    const stageTimings = {
+      storeReadsMs: 0,
+      autoMemoryMs: 0,
+      memoryRetrievalMs: 0,
+      contextAssemblyMs: 0,
+      providerMs: 0,
+      modelFirstTokenMs: null,
+      toolExecutionMs: 0
+    };
+    const elapsed = (since) => Math.max(0, this.now() - since);
     const controller = new AbortController();
     const abortFromParent = () => controller.abort(parentSignal?.reason || new Error("Client disconnected."));
     if (parentSignal?.aborted) abortFromParent();
@@ -363,6 +373,7 @@ export class AgentLoop {
     const allowProject = !cloudAgent || cloudAgent.visibility?.allowProjectContext !== false;
     const shouldUsePersonalMemories = !cloudAgent || cloudAgent.visibility?.allowPersonalMemories === true;
 
+    const storeReadsStarted = this.now();
     const [activeProject, workflowProfile, initialProviderConfig] = await Promise.all([
       (allowProject && projectId && this.projectStore?.get)
         ? awaitWithAbort(this.projectStore.get(userId, projectId), controller.signal).catch((error) => {
@@ -385,8 +396,10 @@ export class AgentLoop {
             })
         : Promise.resolve(providerConfigOverride || this.providerConfig)
     ]);
+    stageTimings.storeReadsMs = elapsed(storeReadsStarted);
 
     const autoMemories = [];
+    const autoMemoryStarted = this.now();
     const autoMemoryAllowed = !isApprovalContinuation
       && shouldUsePersonalMemories
       && workflowProfile?.autoMemoryEnabled !== false
@@ -433,7 +446,10 @@ export class AgentLoop {
       }
     }
 
+    stageTimings.autoMemoryMs = elapsed(autoMemoryStarted);
+
     let memories = [];
+    const memoryRetrievalStarted = this.now();
     if (shouldUsePersonalMemories && this.memoryStore?.search) {
       try {
         const hasList = typeof this.memoryStore.list === "function";
@@ -465,6 +481,8 @@ export class AgentLoop {
         memories = [];
       }
     }
+
+    stageTimings.memoryRetrievalMs = elapsed(memoryRetrievalStarted);
 
     let previousCall = null;
     let steps = 0;
@@ -506,6 +524,7 @@ export class AgentLoop {
           lastPrivacyReport = policyResult.privacyReport;
         }
 
+        const contextStarted = this.now();
         const context = this.contextAssembler.assemble({
           userText,
           history: effectiveHistory,
@@ -520,6 +539,7 @@ export class AgentLoop {
           approvalContinuation,
           directFinalAfterTool
         });
+        stageTimings.contextAssemblyMs += elapsed(contextStarted);
         lastShortlistedTools = Array.isArray(context.tools) ? context.tools.map((tool) => tool.id) : [];
         if (
           context.hasExternalUntrustedContext === true ||
@@ -553,6 +573,7 @@ export class AgentLoop {
               return { status: "needs_location", message: "I do not have an active saved location yet. Open the chat options → **Set location**, enter your town or city, and save it. You can also ask for the weather in a named place, such as Liverpool tomorrow.", steps };
             }
             const actionText = "Checking local weather…";
+            const weatherToolStarted = this.now();
             toolsUsed.push({ toolId: "web.weather", toolName: weatherTool.name || "Check live weather", action: actionText, isExternal: true });
             if (typeof onProgress === "function") onProgress({ type: "tool_start", toolId: "web.weather", toolName: weatherTool.name || "Check live weather", action: actionText, isExternal: true, steps: 1 });
             try {
@@ -560,7 +581,8 @@ export class AgentLoop {
               if (observation?.status !== "completed") { this.dispatcher.resetTurn(turnId); return { status: observation?.status || "tool_error", message: observation?.error || "The weather lookup did not complete.", steps: 1 }; }
               this.dispatcher.resetTurn(turnId);
               const latencyMs = this.now() - started;
-              return { status: "completed", message: formatWeatherForecast(observation.result), steps: 1, model: "Open-Meteo", provider: "weather", endpointId: "open-meteo", metrics: { latencyMs, completionTokens: 0, promptTokens: 0, totalTokens: 0 }, toolsUsed, provenance: { workingMode: { id: resolvedMode.id, label: resolvedMode.label }, learningMode: workflowProfile?.learningMode || null, project: activeProject ? { id: activeProject.id, name: activeProject.name, status: activeProject.status || "active" } : null, memoriesInjected: [], autoMemories: [], toolsShortlisted: ["web.weather"], toolsUsed: ["web.weather"], tainted: turnTainted, privacyFiltered: Boolean(lastPrivacyReport), blockedCategories: Array.isArray(lastPrivacyReport?.blockedPersonalCategories) ? lastPrivacyReport.blockedPersonalCategories : [], steps: 1, latencyMs } };
+              stageTimings.toolExecutionMs += elapsed(weatherToolStarted);
+              return { status: "completed", message: formatWeatherForecast(observation.result), steps: 1, model: "Open-Meteo", provider: "weather", endpointId: "open-meteo", metrics: { latencyMs, completionTokens: 0, promptTokens: 0, totalTokens: 0, stages: { ...stageTimings } }, toolsUsed, provenance: { workingMode: { id: resolvedMode.id, label: resolvedMode.label }, learningMode: workflowProfile?.learningMode || null, project: activeProject ? { id: activeProject.id, name: activeProject.name, status: activeProject.status || "active" } : null, memoriesInjected: [], autoMemories: [], toolsShortlisted: ["web.weather"], toolsUsed: ["web.weather"], tainted: turnTainted, privacyFiltered: Boolean(lastPrivacyReport), blockedCategories: Array.isArray(lastPrivacyReport?.blockedPersonalCategories) ? lastPrivacyReport.blockedPersonalCategories : [], steps: 1, latencyMs } };
             } catch (error) {
               this.dispatcher.resetTurn(turnId);
               if (controller.signal.aborted) throw error;
@@ -570,6 +592,7 @@ export class AgentLoop {
         }
 
         let selected;
+        const providerStarted = this.now();
         const allowPlainTextFinal = !Array.isArray(context.tools) || context.tools.length === 0;
         if (cloudAgent) {
           const resolvedCredential = typeof this.cloudAgentStore?.resolveCredential === "function"
@@ -602,7 +625,10 @@ export class AgentLoop {
                 controller.signal
               );
               const streamed = await readStreamedProviderText(opened.endpoint, opened.response, {
-                onDelta,
+                onDelta: (chunk) => {
+                  if (stageTimings.modelFirstTokenMs === null) stageTimings.modelFirstTokenMs = elapsed(providerStarted);
+                  if (typeof onDelta === "function") onDelta(chunk);
+                },
                 signal: controller.signal
               });
               streamedToClient = Boolean(streamed.streamed);
@@ -636,6 +662,7 @@ export class AgentLoop {
             }
           }
         }
+        stageTimings.providerMs += elapsed(providerStarted);
         steps += 1;
         let action;
         try {
@@ -689,7 +716,7 @@ export class AgentLoop {
             model: selected.endpoint?.model,
             provider: selected.endpoint?.provider,
             endpointId: selected.endpoint?.id,
-            metrics: { latencyMs, completionTokens, promptTokens, totalTokens },
+            metrics: { latencyMs, completionTokens, promptTokens, totalTokens, stages: { ...stageTimings } },
             provenance,
             ...(streamedToClient ? { streamed: true } : {}),
             ...(autoMemories.length ? { autoMemories } : {}),
@@ -740,6 +767,7 @@ export class AgentLoop {
         }
 
         let observation;
+        const toolStarted = this.now();
         try {
           observation = await this.dispatcher.dispatch({
             userId, toolId: action.tool, args: action.arguments, turnId, contextMessages: context.messages, untrustedContext: turnTainted, projectId: activeProject?.id || null, signal: controller.signal
@@ -751,6 +779,7 @@ export class AgentLoop {
             return { status: "stopped", message: observation.error, steps };
           }
         }
+        stageTimings.toolExecutionMs += elapsed(toolStarted);
         if (observation.status === "awaiting_user_approval") {
           this.dispatcher.resetTurn(turnId);
           return { ...observation, message: "This action is ready for your approval.", steps };
