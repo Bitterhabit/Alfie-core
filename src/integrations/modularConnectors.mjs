@@ -848,6 +848,68 @@ export function registerModularConnectorTools(
   });
 
   registry.register({
+    id: "github.change.inspect",
+    name: "Inspect GitHub change status",
+    description: "Read-only recovery check for an Alfie-owned GitHub branch and its pull request after an interrupted or uncertain write.",
+    scope: "github:read",
+    risk: "read",
+    trust: "external",
+    network: true,
+    externalAction: false,
+    untrustedOutput: true,
+    tags: ["github", "project", "branch", "pull request", "recovery", "status"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", minLength: 3, maxLength: 165 },
+        branch: { type: "string", pattern: "^alfie/[a-z0-9][a-z0-9._/-]{1,70}$", maxLength: 80 },
+        base: { type: "string", minLength: 1, maxLength: 120 }
+      },
+      required: ["repo", "branch"],
+      additionalProperties: false
+    },
+    async handler(args) {
+      const repo = validateRepo(args.repo);
+      const branch = String(args.branch || "").trim();
+      if (!/^alfie\/[a-z0-9][a-z0-9._/-]{1,70}$/.test(branch) || branch.includes("..") || branch.endsWith("/") || branch.includes("//")) {
+        throw Object.assign(new Error("Branch must be a safe Alfie-owned name beginning with alfie/."), { status: 400 });
+      }
+      const metadata = await githubRequest(`/repos/${repo}`);
+      const baseBranch = validateGitRefName(String(args.base || metadata.default_branch || "main"), "Base branch");
+      const branchRefPath = branch.split("/").map(encodeURIComponent).join("/");
+      const branchRef = await githubRequest(`/repos/${repo}/git/ref/heads/${branchRefPath}`).catch((error) => {
+        if (error.status === 404) return null;
+        throw error;
+      });
+      if (!branchRef) {
+        return { status: "branch_not_found", repository: repo, branch, base: baseBranch, pullRequests: [] };
+      }
+      const owner = repo.split("/")[0];
+      const head = encodeURIComponent(`${owner}:${branch}`);
+      const baseQuery = encodeURIComponent(baseBranch);
+      const pulls = await githubRequest(`/repos/${repo}/pulls?state=all&head=${head}&base=${baseQuery}`);
+      const matching = (Array.isArray(pulls) ? pulls : []).filter((pull) =>
+        pull.head?.ref === branch && pull.base?.ref === baseBranch
+      ).map((pull) => ({
+        number: Number(pull.number),
+        state: String(pull.state || "unknown"),
+        draft: Boolean(pull.draft),
+        merged: Boolean(pull.merged_at),
+        url: String(pull.html_url || ""),
+        headSha: String(pull.head?.sha || "").slice(0, 12)
+      }));
+      return {
+        status: matching.length ? "pull_request_found" : "branch_without_pull_request",
+        repository: repo,
+        branch,
+        base: baseBranch,
+        branchSha: String(branchRef.object?.sha || "").slice(0, 12),
+        pullRequests: matching
+      };
+    }
+  });
+
+  registry.register({
     id: "github.issue.draft",
     name: "Draft GitHub issue",
     description: "Prepare an approval-gated GitHub issue draft (creates issue only when ALFIE_GITHUB_TOKEN is configured and approved).",
