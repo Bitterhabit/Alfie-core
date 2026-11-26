@@ -74,6 +74,8 @@ test("GitHub integration status describes the expanded capabilities", () => {
   assert.ok(status.tools.includes("github.repo.tree"));
   assert.ok(status.tools.includes("github.file.read"));
   assert.ok(status.tools.includes("github.pull_requests.list"));
+  assert.ok(status.tools.includes("github.change.create_pr"));
+  assert.ok(status.scopes.includes("github:write"));
 });
 
 
