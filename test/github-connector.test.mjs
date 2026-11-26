@@ -51,6 +51,8 @@ test("github.file.read decodes bounded text and blocks sensitive or traversing p
   const result = await tool.handler({ repo: "acme/demo", path: "src/app.mjs" });
   assert.match(result.content, /export const ok/);
   await assert.rejects(() => tool.handler({ repo: "acme/demo", path: ".env" }), (error) => error.status === 403);
+  await assert.rejects(() => tool.handler({ repo: "acme/demo", path: ".envrc" }), (error) => error.status === 403);
+  await assert.rejects(() => tool.handler({ repo: "acme/demo", path: "production.env" }), (error) => error.status === 403);
   await assert.rejects(() => tool.handler({ repo: "acme/demo", path: ".aws/credentials" }), (error) => error.status === 403);
   await assert.rejects(() => tool.handler({ repo: "acme/demo", path: ".npmrc" }), (error) => error.status === 403);
   await assert.rejects(() => tool.handler({ repo: "acme/demo", path: "../secret.txt" }), (error) => error.status === 400);
@@ -139,6 +141,10 @@ test("GitHub project change tool is approval-gated and only creates Alfie draft 
     await assert.rejects(() => tool.handler({
       repo: "acme/demo", branch: "alfie/bad", title: "Bad", body: "No", commitMessage: "No",
       files: [{ path: ".aws/credentials", content: "secret" }]
+    }), (error) => error.status === 403);
+    await assert.rejects(() => tool.handler({
+      repo: "acme/demo", branch: "alfie/bad", title: "Bad", body: "No", commitMessage: "No",
+      files: [{ path: "production.env", content: "secret" }]
     }), (error) => error.status === 403);
   } finally {
     if (previousToken === undefined) delete process.env.ALFIE_GITHUB_TOKEN;
