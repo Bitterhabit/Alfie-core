@@ -533,7 +533,7 @@ export function registerModularConnectorTools(
       required: ["repo"],
       additionalProperties: false
     },
-    async handler(args, { approvalGuard: reviewedState } = {}) {
+    async handler(args) {
       const repo = validateRepo(args.repo);
       const requestedPath = String(args.path || "").trim().split("/").filter(Boolean).join("/");
       if (requestedPath && (requestedPath.split("/").some((part) => !part || part === "." || part === "..") || requestedPath.includes("\\"))) {
@@ -745,7 +745,7 @@ export function registerModularConnectorTools(
         validationSteps: ["Confirm base branch and file versions", "Verify branch commit", "Verify pull request URL and head/base branches"]
       };
     },
-    async handler(args) {
+    async handler(args, { approvalGuard: reviewedState } = {}) {
       const repo = validateRepo(args.repo);
       if (!process.env.ALFIE_GITHUB_TOKEN) {
         throw Object.assign(new Error("GitHub write access is not configured. Set ALFIE_GITHUB_TOKEN on the server with repository Contents and Pull requests write permissions."), { status: 503 });
