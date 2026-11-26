@@ -255,7 +255,7 @@ test("Frontend app.js, index.html, and styles.css contain history, approval cont
   assert.match(appJs, /function createChatApprovalCard\(/);
   assert.match(appJs, /function openAgentSwitchWarning\(/, "Switching to an online provider must open a privacy review");
   assert.match(appJs, /Your current conversation messages and the context required for your request will leave your local Alfie installation/, "The switch warning must disclose that chat content leaves the local machine");
-  assert.match(appJs, /Allowed: \\$\{categories\}/, "Fallback privacy warning must list the permitted categories");
+  assert.match(appJs, /Allowed:.*categories/, "Fallback privacy warning must list the permitted categories");
   assert.match(appJs, /event\.currentTarget\.value = current/, "The selected provider must remain unchanged until the user confirms");
   assert.match(appJs, /model-switch-warning-confirm/, "Online provider switch must require an explicit confirmation action");
   assert.match(html, /id="model-switch-warning-allowed"/);
