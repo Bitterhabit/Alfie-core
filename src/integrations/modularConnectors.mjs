@@ -548,16 +548,15 @@ export function registerModularConnectorTools(
       if (sensitiveFile) {
         throw Object.assign(new Error("This file type is blocked from automatic reading because it may contain credentials or private keys."), { status: 403 });
       }
-        throw Object.assign(new Error("This file type is blocked from automatic reading because it may contain credentials or private keys."), { status: 403 });
-      }
       const ref = String(args.ref || "").trim();
       const suffix = ref ? `?ref=${encodeURIComponent(ref)}` : "";
       const data = await githubRequest(`/repos/${repo}/contents/${filePath.split("/").map(encodeURIComponent).join("/")}${suffix}`, { accept: "application/vnd.github+json" });
       if (Array.isArray(data) || data.type !== "file" || Number(data.size || 0) > 50000 || typeof data.content !== "string") {
         throw Object.assign(new Error("Only text files up to 50 KB can be read by this tool."), { status: 413 });
       }
-      const content = Buffer.from(data.content.replace(/\\s/g, ""), "base64").toString("utf8");
-      if (content.includes("\\u0000")) throw Object.assign(new Error("Binary files cannot be read as source text."), { status: 415 });
+      const encoded = data.content.replaceAll(" ", "").replaceAll("\n", "").replaceAll("\r", "").replaceAll("\t", "");
+      const content = Buffer.from(encoded, "base64").toString("utf8");
+      if (content.includes(String.fromCharCode(0))) throw Object.assign(new Error("Binary files cannot be read as source text."), { status: 415 });
       return { repository: repo, path: String(data.path || filePath), ref: ref || null, sha: String(data.sha || ""), content: content.slice(0, 12000), truncated: content.length > 12000 };
     }
   });
