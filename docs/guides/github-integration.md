@@ -50,7 +50,8 @@ The github.change.create_pr action:
 - refuses to overwrite an existing file when it was proposed as a new file;
 - limits a proposal to 10 files and 80 KB combined (30 KB per file);
 - blocks credential, environment and private-key paths;
-- opens a draft pull request and verifies its branch, base, commit and draft state.
+- opens a draft pull request and verifies its branch, base, commit and draft state;
+- provides the read-only `github.change.inspect` recovery check to distinguish a missing branch, a branch created without a PR, and an existing PR after an interrupted request.
 
 It never commits directly to the repository's default branch. Every write requires explicit approval in Alfie's chat. The approval card shows the exact proposed file contents before execution.
 
@@ -65,7 +66,7 @@ Use a dedicated, non-production test repository:
 5. Reject one proposal and confirm no branch or PR is created.
 6. Prepare a separate proposal, approve it, and confirm that only a draft PR on an alfie/* branch appears.
 
-Do not use a production repository for the first write test. If a network error occurs during branch/PR creation, inspect GitHub before retrying: a partial branch may have been created even if Alfie did not receive the final response.
+Do not use a production repository for the first write test. If a network error occurs during branch/PR creation, ask Alfie to run `github.change.inspect` for the exact repository and `alfie/*` branch before retrying. It is read-only and reports whether the branch exists and whether a matching PR was created. A branch without a PR still needs manual inspection before any further write.
 
 ## Boundaries
 
