@@ -709,11 +709,11 @@ export function registerModularConnectorTools(
       for (const file of args.files || []) {
         const filePath = String(file.path || "").trim();
         const parts = filePath.split("/");
-        if (!filePath || filePath.startsWith("/") || filePath.includes("\\\\") || parts.some((part) => !part || part === "." || part === "..")) {
+        if (!filePath || filePath.startsWith("/") || filePath.includes("\\") || parts.some((part) => !part || part === "." || part === "..")) {
           throw Object.assign(new Error("A changed file has an invalid repository path."), { status: 400 });
         }
         const lower = filePath.toLowerCase();
-        if (parts.some((part) => [" .git", ".git", "node_modules"].includes(part.toLowerCase())) || isSensitiveGitHubPath(filePath)) {
+        if (parts.some((part) => [".git", "node_modules"].includes(part.toLowerCase())) || isSensitiveGitHubPath(filePath)) {
           throw Object.assign(new Error("Changes to credential, private-key, .git, or dependency paths are blocked."), { status: 403 });
         }
         if (seen.has(lower)) throw Object.assign(new Error("A file path appears more than once in this change."), { status: 400 });
