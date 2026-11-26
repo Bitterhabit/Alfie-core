@@ -92,7 +92,7 @@ test("GitHub project change tool is approval-gated and only creates Alfie draft 
     if (method === "GET" && parsed.pathname === "/repos/acme/demo") return jsonReply({ default_branch: "main" });
     if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/ref/heads/main") return jsonReply({ object: { sha: "base-commit" } });
     if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/commits/base-commit") return jsonReply({ tree: { sha: "base-tree" } });
-    if (method === "GET" && parsed.pathname.startsWith("/repos/acme/demo/git/ref/heads/alfie%2F")) return jsonReply({ message: "Not Found" }, 404);
+    if (method === "GET" && parsed.pathname.startsWith("/repos/acme/demo/git/ref/heads/alfie/")) return jsonReply({ message: "Not Found" }, 404);
     if (method === "GET" && parsed.pathname === "/repos/acme/demo/contents/README.md") return jsonReply({ message: "Not Found" }, 404);
     if (method === "POST" && parsed.pathname === "/repos/acme/demo/git/blobs") return jsonReply({ sha: "blob-sha" });
     if (method === "POST" && parsed.pathname === "/repos/acme/demo/git/trees") return jsonReply({ sha: "tree-sha" });
