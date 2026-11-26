@@ -2213,6 +2213,7 @@
               <strong>⚠ Privacy Warning — External Cloud Providers</strong>
               <p>Enabling Gemini API or ChatGPT sends your chat prompts outside your local Alfie Core to Google or OpenAI servers. <strong>Access to your private sections (Emails, Calendar, Personal Journal, Garden Memories, and Dashboard) is strictly blocked by default and completely optional</strong> — enforced on the server before any request leaves Alfie.</p>
               <p>A local privacy airlock also redacts common API-token patterns, email addresses, private LAN addresses, local hostnames and local file paths before cloud requests. Redacted values are restored locally in replies. This is an additional safeguard, not a guarantee that every sensitive detail will be detected — review what you send.</p>
+              <p>Saved location, free-text workflow notes, learning topics and learned traits stay local. Only a small allowlist of enum-based interaction preferences can be included in cloud prompts.</p>
               <p class="cloud-secret-note">You can add keys through Tools &amp; access. They are sent to Alfie over your secure connection, encrypted on the server, and never saved in browser storage or returned to the interface.</p>
             </div>
             <div id="cloud-agents-list" class="cloud-agents-grid" aria-live="polite">
