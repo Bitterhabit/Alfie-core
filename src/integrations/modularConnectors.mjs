@@ -457,18 +457,20 @@ export function registerModularConnectorTools(
     }
   });
 
-  const githubRequest = async (pathname, { accept = "application/vnd.github+json" } = {}) => {
+  const githubRequest = async (pathname, { accept = "application/vnd.github+json", method = "GET", body = undefined } = {}) => {
     const headers = { accept, "user-agent": "alfie-core/1.0" };
+    if (body !== undefined) headers["content-type"] = "application/json";
     if (process.env.ALFIE_GITHUB_TOKEN) headers.authorization = `Bearer ${process.env.ALFIE_GITHUB_TOKEN}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), CONNECTOR_TIMEOUT_MS);
     try {
       const url = new URL(pathname, "https://api.github.com");
-      const res = await fetchImpl(url, { headers, redirect: "error", signal: controller.signal });
+      const res = await fetchImpl(url, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }), redirect: "error", signal: controller.signal });
       if (!res.ok) {
-        const status = res.status === 401 || res.status === 403 || res.status === 404 || res.status === 429 ? res.status : 502;
+        const status = res.status === 401 || res.status === 403 || res.status === 404 || res.status === 409 || res.status === 422 || res.status === 429 ? res.status : 502;
         throw Object.assign(new Error(`GitHub API request failed (${status}). Check repository access, token permissions, or rate limits.`), { status });
       }
+      if (res.status === 204) return {};
       return await res.json();
     } finally {
       clearTimeout(timer);
