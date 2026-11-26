@@ -486,12 +486,13 @@ test("Concurrent approval requests can consume and execute one pending action on
 
     const first = dispatcher.approve("alice", proposal.actionId);
     const second = dispatcher.approve("alice", proposal.actionId);
-    // Wait until the winning request enters the handler, then release it and
-    // collect both outcomes before cleaning up the temporary data directory.
+    // Attach rejection handlers immediately, then wait for the winner to enter
+    // the handler before releasing it and collecting both outcomes.
+    const resultsPromise = Promise.allSettled([first, second]);
     await executionStarted;
     releaseExecution();
 
-    const results = await Promise.allSettled([first, second]);
+    const results = await resultsPromise;
     assert.equal(results.filter((item) => item.status === "fulfilled").length, 1);
     const rejected = results.find((item) => item.status === "rejected");
     assert.equal(rejected.reason.status, 404);
