@@ -22,6 +22,19 @@ function harness(responses) {
   return { loop: new AgentLoop({ providerRegistry, providerConfig: {}, toolRegistry: registry, dispatcher, contextAssembler: new ContextAssembler() }), getCalls: () => calls };
 }
 
+test("completed turns expose privacy-safe stage timing diagnostics", async () => {
+  const h = harness(['{"type":"final","message":"Quick answer"}']);
+  const result = await h.loop.run({ userId: "user-1", messages: [{ role: "user", content: "Hello" }] });
+  assert.equal(result.status, "completed");
+  assert.ok(result.metrics);
+  assert.ok(result.metrics.stages);
+  for (const key of ["storeReadsMs", "autoMemoryMs", "memoryRetrievalMs", "contextAssemblyMs", "providerMs", "toolExecutionMs"]) {
+    assert.equal(typeof result.metrics.stages[key], "number", key);
+    assert.ok(result.metrics.stages[key] >= 0, key);
+  }
+  assert.equal(result.metrics.stages.modelFirstTokenMs, null);
+});
+
 test("malformed model JSON receives a structured correction and self-recovers", async () => {
   const h = harness(["{not json", '{"type":"final","message":"Recovered"}']);
   const result = await h.loop.run({ userId: "user-1", messages: [{ role: "user", content: "Hello" }] });
