@@ -97,6 +97,7 @@ test("GitHub project change tool is approval-gated and only creates Alfie draft 
     if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/ref/heads/main") return jsonReply({ object: { sha: "base-commit" } });
     if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/commits/base-commit") return jsonReply({ tree: { sha: "base-tree" } });
     if (method === "GET" && parsed.pathname.startsWith("/repos/acme/demo/git/ref/heads/alfie/")) return jsonReply({ message: "Not Found" }, 404);
+    if (method === "GET" && parsed.pathname === "/repos/acme/demo/pulls") return jsonReply([]);
     if (method === "GET" && parsed.pathname === "/repos/acme/demo/contents/README.md") return jsonReply({ message: "Not Found" }, 404);
     if (method === "POST" && parsed.pathname === "/repos/acme/demo/git/blobs") return jsonReply({ sha: "blob-sha" });
     if (method === "POST" && parsed.pathname === "/repos/acme/demo/git/trees") return jsonReply({ sha: "tree-sha" });
@@ -169,6 +170,7 @@ test("GitHub project changes require the exact existing-file SHA at the pinned b
     if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/ref/heads/main") return json({ object: { sha: "pinned-base-commit" } });
     if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/commits/pinned-base-commit") return json({ tree: { sha: "pinned-base-tree" } });
     if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/ref/heads/alfie/change") return json({ message: "Not Found" }, 404);
+    if (method === "GET" && parsed.pathname === "/repos/acme/demo/pulls") return json([]);
     if (method === "GET" && parsed.pathname === "/repos/acme/demo/contents/README.md") return json({ type: "file", size: 12, sha: "current-blob-sha" });
     throw new Error(`Unexpected GitHub API request: ${method} ${parsed.pathname}`);
   } });
@@ -255,6 +257,7 @@ test("GitHub project change aborts if its base branch moves before branch public
     }
     if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/commits/pinned-base") return json({ tree: { sha: "base-tree" } });
     if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/ref/heads/alfie/change") return json({ message: "Not Found" }, 404);
+    if (method === "GET" && parsed.pathname === "/repos/acme/demo/pulls") return json([]);
     if (method === "GET" && parsed.pathname === "/repos/acme/demo/contents/README.md") return json({ message: "Not Found" }, 404);
     if (method === "POST" && parsed.pathname === "/repos/acme/demo/git/blobs") return json({ sha: "blob" });
     if (method === "POST" && parsed.pathname === "/repos/acme/demo/git/trees") return json({ sha: "tree" });
