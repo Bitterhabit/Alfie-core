@@ -675,6 +675,9 @@ export function registerModularConnectorTools(
       }
       const metadata = await githubRequest(`/repos/${repo}`);
       const baseBranch = base || String(metadata.default_branch || "main");
+      if (!baseBranch || baseBranch.includes("..") || baseBranch.startsWith("/") || baseBranch.endsWith("/") || baseBranch.includes("//")) {
+        throw Object.assign(new Error("Base branch name is invalid."), { status: 400 });
+      }
       if (branch === baseBranch || branch === metadata.default_branch) {
         throw Object.assign(new Error("Alfie is not allowed to write to the default branch or use it as its working branch."), { status: 403 });
       }
@@ -688,6 +691,10 @@ export function registerModularConnectorTools(
 
       const seen = new Set();
       const treeEntries = [];
+      const totalContentBytes = args.files.reduce((total, file) => total + Buffer.byteLength(String(file.content || ""), "utf8"), 0);
+      if (totalContentBytes > 80000) {
+        throw Object.assign(new Error("A GitHub change is limited to 80 KB of combined text content. Split this into smaller reviewed changes."), { status: 413 });
+      }
       for (const file of args.files) {
         const filePath = String(file.path || "").trim();
         const parts = filePath.split("/");
