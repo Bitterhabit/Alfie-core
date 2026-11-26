@@ -310,6 +310,8 @@ test("Approval integrity binds pending actions to exact security-relevant tool d
     // Audit log recorded tool.approval_stale events
     const auditEvents = await auditStore.list("alice", { limit: 50 });
     assert.ok(auditEvents.some((e) => e.event === "tool.approval_stale"));
+    const staleReceipts = await pendingActionStore.listReceipts("alice", { limit: 100 });
+    assert.ok(staleReceipts.some((receipt) => receipt.toolId === "notes.save" && receipt.verificationState === "execution_failed"), "Consumed stale approvals must leave a durable failure receipt.");
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
