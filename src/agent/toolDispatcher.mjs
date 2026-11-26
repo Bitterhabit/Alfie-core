@@ -244,6 +244,29 @@ export class ToolDispatcher {
       safeError.actionConsumed = true;
       safeError.actionId = actionId;
       safeError.toolId = action.toolId;
+      if (this.pendingActionStore.recordReceipt) {
+        const outcomeUnknown = safeError.actionOutcomeUnknown === true;
+        const actionCompleted = safeError.actionCompleted === true;
+        try {
+          await this.pendingActionStore.recordReceipt(userId, {
+            actionId,
+            toolId: action.toolId,
+            toolName: action.toolId,
+            riskLevel: action.simulation?.riskLevel || "medium",
+            status: actionCompleted ? "completed" : "failed",
+            summary: action.simulation?.summary || action.preview || action.toolId,
+            affectedResource: action.simulation?.affectedResource || action.toolId,
+            rollbackPlan: action.simulation?.rollbackPlan || "",
+            verified: false,
+            verificationState: outcomeUnknown ? "outcome_unknown" : (actionCompleted ? "unverified" : "execution_failed"),
+            verificationDetail: outcomeUnknown
+              ? "The approved action was interrupted or failed after dispatch. Its external effect may have completed; inspect the destination before retrying."
+              : String(safeError.message || "The approved action did not complete.").slice(0, 260)
+          });
+        } catch {
+          // Keep the executing marker durable. A new Core instance will recover it as outcome_unknown.
+        }
+      }
       throw safeError;
     }
   }
