@@ -44,7 +44,7 @@ GitHub access is split into independent permissions:
 - `github:write` allows one approval-gated workflow: create a new `alfie/*` branch, commit up to 10 reviewed text-file changes (80 KB combined), and open a draft pull request. Alfie cannot target the default branch as its working branch and never pushes directly to the base branch.
 - Existing `github:draft` remains separate for issue creation.
 
-Set `ALFIE_GITHUB_TOKEN` only in the Core server environment. For project changes, use a fine-grained token restricted to the intended repositories with **Contents: read/write** and **Pull requests: read/write**. Read-only browsing needs repository metadata and Contents read access. Do not put the token in browser configuration or chat.
+Set `ALFIE_GITHUB_TOKEN` only in the Core server environment. The Compose configuration passes an explicit allowlist of required settings to the Interface container, so GitHub, Proxmox and search-provider credentials are not injected into that container. For project changes, use a fine-grained token restricted to the intended repositories with **Contents: read/write** and **Pull requests: read/write**. Read-only browsing needs repository metadata and Contents read access. Do not put the token in browser configuration or chat.
 
 Grant `github:read` and `github:write` separately in Tools & Access. Each project change is proposed as a pending action; Alfie does not create the branch or pull request until you approve it. The approved action is bound to its exact arguments and tool fingerprint, and the resulting draft PR is checked after creation. If the network fails after GitHub accepts part of a multi-step operation, check the repository before retrying.
 
