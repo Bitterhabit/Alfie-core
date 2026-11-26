@@ -697,15 +697,22 @@ export function registerModularConnectorTools(
       }
       const baseRefPath = baseBranch.split("/").map(encodeURIComponent).join("/");
       const branchRefPath = String(args.branch).split("/").map(encodeURIComponent).join("/");
-      const [baseRef, existingBranch] = await Promise.all([
+      const owner = repo.split("/")[0];
+      const headQuery = encodeURIComponent(`${owner}:${args.branch}`);
+      const baseQuery = encodeURIComponent(baseBranch);
+      const [baseRef, existingBranch, existingPulls] = await Promise.all([
         githubRequest(`/repos/${repo}/git/ref/heads/${baseRefPath}`),
         githubRequest(`/repos/${repo}/git/ref/heads/${branchRefPath}`).catch((error) => {
           if (error.status === 404) return null;
           throw error;
-        })
+        }),
+        githubRequest(`/repos/${repo}/pulls?state=all&head=${headQuery}&base=${baseQuery}`)
       ]);
       if (existingBranch) {
         throw Object.assign(new Error("That Alfie branch already exists. Inspect it before creating another change."), { status: 409 });
+      }
+      if ((Array.isArray(existingPulls) ? existingPulls : []).some((pull) => pull.head?.ref === args.branch && pull.base?.ref === baseBranch)) {
+        throw Object.assign(new Error("A pull request already exists for that Alfie branch and base. Inspect it before creating another change."), { status: 409 });
       }
       const files = [];
       const seen = new Set();
@@ -772,6 +779,14 @@ export function registerModularConnectorTools(
         throw error;
       });
       if (existingBranch) throw Object.assign(new Error("That Alfie branch already exists. Inspect it before creating another change."), { status: 409 });
+
+      const owner = repo.split("/")[0];
+      const headQuery = encodeURIComponent(`${owner}:${branch}`);
+      const baseQuery = encodeURIComponent(baseBranch);
+      const existingPulls = await githubRequest(`/repos/${repo}/pulls?state=all&head=${headQuery}&base=${baseQuery}`);
+      if ((Array.isArray(existingPulls) ? existingPulls : []).some((pull) => pull.head?.ref === branch && pull.base?.ref === baseBranch)) {
+        throw Object.assign(new Error("A pull request already exists for that Alfie branch and base. Inspect it before creating another change."), { status: 409 });
+      }
 
       const seen = new Set();
       const treeEntries = [];
@@ -900,9 +915,6 @@ export function registerModularConnectorTools(
         if (error.status === 404) return null;
         throw error;
       });
-      if (!branchRef) {
-        return { status: "branch_not_found", repository: repo, branch, base: baseBranch, pullRequests: [] };
-      }
       const owner = repo.split("/")[0];
       const head = encodeURIComponent(`${owner}:${branch}`);
       const baseQuery = encodeURIComponent(baseBranch);
@@ -918,11 +930,11 @@ export function registerModularConnectorTools(
         headSha: String(pull.head?.sha || "").slice(0, 12)
       }));
       return {
-        status: matching.length ? "pull_request_found" : "branch_without_pull_request",
+        status: matching.length ? "pull_request_found" : (branchRef ? "branch_without_pull_request" : "branch_not_found"),
         repository: repo,
         branch,
         base: baseBranch,
-        branchSha: String(branchRef.object?.sha || "").slice(0, 12),
+        branchSha: branchRef ? String(branchRef.object?.sha || "").slice(0, 12) : null,
         pullRequests: matching
       };
     }
