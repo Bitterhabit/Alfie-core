@@ -8145,6 +8145,7 @@ function capabilityPresentation(scope) {
     "journal:write": ["Journal changes", "Create or edit journal entries"],
     "github:read": ["GitHub", "Browse repositories, source files, commits and pull requests"],
     "github:draft": ["GitHub changes", "Prepare GitHub changes for review"],
+    "github:write": ["GitHub project changes", "Create an Alfie branch and draft pull request after approval"],
     "homelab:read": ["Homelab status", "Check connected homelab systems"],
     "petrio:status:read": ["Petrio status", "Check Petrio service status"],
     "petrio:roadmap:read": ["Petrio roadmap", "Read the Petrio roadmap"],
