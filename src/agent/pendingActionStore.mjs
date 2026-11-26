@@ -66,7 +66,7 @@ export class PendingActionStore {
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
       const now = this.now();
-      store.actions = store.actions.filter((item) => item.expiresAt > now && ["pending", "approved"].includes(item.status));
+      store.actions = store.actions.filter((item) => item.status === "executing" || (item.expiresAt > now && ["pending", "approved"].includes(item.status)));
       const pending = {
         id: randomUUID(), ownerId: userId, toolId: action.toolId, risk: action.risk || "write",
         arguments: action.arguments, argumentsHash: action.argumentsHash,
