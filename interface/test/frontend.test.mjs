@@ -791,3 +791,22 @@ test("navigation, welcome tiles and provider cards use softer rounded surfaces",
   assert.match(css, /\.nav-item,\.tools-section-tab,\.conversation-item/);
   assert.match(css, /\.welcome-mark\{border-radius:18px/);
 });
+
+
+test("chat performance tooltip exposes safe per-stage timing diagnostics", async () => {
+  const app = await fs.readFile(new URL("app.js", root), "utf8");
+  for (const key of [
+    "storeReadsMs",
+    "autoMemoryMs",
+    "memoryRetrievalMs",
+    "contextAssemblyMs",
+    "providerSetupMs",
+    "modelFirstTokenMs",
+    "modelResponseMs",
+    "toolExecutionMs"
+  ]) {
+    assert.match(app, new RegExp(key));
+  }
+  assert.match(app, /finalEvent\?\.metrics\?\.stages/);
+  assert.match(app, /Time to first token/);
+});
