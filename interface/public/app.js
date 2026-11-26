@@ -8383,11 +8383,13 @@ async function loadToolsAndApprovals(focusActionId = null) {
     if (receiptHost) {
       for (const receipt of state.receipts.slice(0, 8)) {
         const vState = receipt.verificationState || (receipt.status === "failed" ? "execution_failed" : (receipt.verified ? "verified" : "unverified"));
-        const statusLabel = vState === "execution_failed"
-          ? "Execution failed"
-          : (vState === "verification_failed"
-            ? "Verification failed"
-            : (vState === "verified" ? "Verified" : "Completed (unverified)"));
+        const statusLabel = vState === "outcome_unknown"
+          ? "Outcome unknown — inspect destination before retrying"
+          : (vState === "execution_failed"
+            ? "Execution failed"
+            : (vState === "verification_failed"
+              ? "Verification failed"
+              : (vState === "verified" ? "Verified" : "Completed (unverified)")));
         const meta = [
           statusLabel,
           `${String(receipt.riskLevel || "medium").toUpperCase()} risk`,
@@ -8396,7 +8398,7 @@ async function loadToolsAndApprovals(focusActionId = null) {
         ].filter(Boolean).join(" · ") + (receipt.verificationDetail ? ` — ${receipt.verificationDetail}` : "");
         const receiptEl = createItem(receipt.toolName || receipt.toolId, meta);
         if (vState === "verified") receiptEl.classList.add("receipt-verified");
-        else if (vState === "execution_failed" || vState === "verification_failed") receiptEl.classList.add("receipt-failed");
+        else if (vState === "execution_failed" || vState === "verification_failed" || vState === "outcome_unknown") receiptEl.classList.add("receipt-failed");
         receiptHost.appendChild(receiptEl);
       }
       if (!state.receipts.length) {
