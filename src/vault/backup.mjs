@@ -19,6 +19,8 @@ export const VAULT_COLLECTIONS = Object.freeze([
   "ideas.json",
   "conversations.json",
   "permissions.json",
+  "pending-actions.json",
+  "audit.json",
   "watchers.json",
   "watcher-events.json",
   "workflow-profile.json",
@@ -64,6 +66,8 @@ function summarizeCollectionCount(collection, doc) {
   if (collection === "ideas.json") return Array.isArray(doc.ideas) ? doc.ideas.length : 0;
   if (collection === "conversations.json") return Array.isArray(doc.conversations) ? doc.conversations.length : 0;
   if (collection === "permissions.json") return Array.isArray(doc.leases) ? doc.leases.length : (Array.isArray(doc.scopes) ? doc.scopes.length : 0);
+  if (collection === "pending-actions.json") return Array.isArray(doc.receipts) ? doc.receipts.length : 0;
+  if (collection === "audit.json") return Array.isArray(doc.events) ? doc.events.length : 0;
   if (collection === "watchers.json") return Array.isArray(doc.watchers) ? doc.watchers.length : 0;
   if (collection === "watcher-events.json") return Array.isArray(doc.events) ? doc.events.length : 0;
   if (collection === "context-capsules.json") return Array.isArray(doc.capsules) ? doc.capsules.length : 0;
@@ -92,8 +96,18 @@ export async function exportEncryptedVault({
   for (const name of VAULT_COLLECTIONS) {
     const doc = await readUserJsonDocument(dataDirectory, userId, name);
     if (doc && typeof doc === "object") {
-      collections[name] = doc;
-      counts[name] = summarizeCollectionCount(name, doc);
+      // Never restore or export pending executable approvals. Keep only their
+      // immutable receipts so the audit trail survives a vault round-trip.
+      const exportDoc = name === "pending-actions.json"
+        ? {
+            schemaVersion: 1,
+            ownerId: userId,
+            actions: [],
+            receipts: Array.isArray(doc.receipts) ? doc.receipts : []
+          }
+        : doc;
+      collections[name] = exportDoc;
+      counts[name] = summarizeCollectionCount(name, exportDoc);
     }
   }
 
@@ -256,7 +270,7 @@ export function verifyEncryptedVault({ archive, userId, passphrase }) {
 
 function recordTimestamp(item) {
   if (!item || typeof item !== "object") return null;
-  for (const key of ["updatedAt", "lastUpdatedAt", "timestamp", "occurredAt", "capturedAt", "createdAt"]) {
+  for (const key of ["updatedAt", "lastUpdatedAt", "timestamp", "occurredAt", "capturedAt", "createdAt", "at"]) {
     const value = Date.parse(String(item[key] || ""));
     if (Number.isFinite(value)) return value;
   }
@@ -314,6 +328,7 @@ function mergeCollectionDocument(collection, existing, incoming) {
     "ideas.json": "ideas",
     "conversations.json": "conversations",
     "watchers.json": "watchers",
+    "audit.json": "events",
     "watcher-events.json": "events",
     "context-capsules.json": "capsules",
     "jobs.json": "jobs",
@@ -326,6 +341,15 @@ function mergeCollectionDocument(collection, existing, incoming) {
       ...existing,
       ...incoming,
       [listKey]: mergeArrayById(existing[listKey], incoming[listKey])
+    };
+  }
+  if (collection === "pending-actions.json") {
+    return {
+      ...existing,
+      ...incoming,
+      // Pending approvals are never revived from a backup.
+      actions: [],
+      receipts: mergeArrayById(existing.receipts, incoming.receipts)
     };
   }
   if (collection === "permissions.json") {
