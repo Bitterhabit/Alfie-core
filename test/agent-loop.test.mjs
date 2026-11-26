@@ -276,7 +276,7 @@ test("ContextAssembler shortlists web.weather for weather and web.search for tra
     userText: "Next train to London?",
     history: [{ role: "user", content: "Next train to London?" }],
     registry,
-    grantedScopes: ["web:read"],
+    grantedScopes: ["web:read", "github:read"],
     workflowProfile: {
       location: { enabled: true, label: "Manchester, UK", latitude: 53.4808, longitude: -2.2426, timezone: "Europe/London" }
     }
@@ -585,6 +585,9 @@ test("ContextAssembler gives Alfie an authoritative plain-language summary of cu
   const registry = new ToolRegistry();
   registry.register({ id: "web.search", name: "Search the internet", description: "Search public web pages", scope: "web:read", risk: "read", trust: "external", network: true, externalAction: false, tags: ["web", "search"], handler: async () => ({}) });
   registry.register({ id: "email.read", name: "Draft email", description: "Read messages", scope: "mail:draft", risk: "read", trust: "internal", network: false, externalAction: false, tags: ["email"], handler: async () => ({}) });
+  registry.register({ id: "github.repo.tree", name: "Browse GitHub repositories", description: "Read repository files", scope: "github:read", risk: "read", trust: "external", network: true, externalAction: false, tags: ["github"], handler: async () => ({}) });
+  registry.register({ id: "github.issue.draft", name: "Draft GitHub issue", description: "Prepare an issue", scope: "github:draft", risk: "draft", trust: "external", network: true, externalAction: true, tags: ["github"], handler: async () => ({}) });
+  registry.register({ id: "github.change.create_pr", name: "Create GitHub code change", description: "Prepare a draft pull request", scope: "github:write", risk: "write", trust: "external", network: true, externalAction: true, handler: async () => ({}) });
   const assembled = new ContextAssembler().assemble({
     userText: "What can you currently access?",
     history: [{ role: "user", content: "What can you currently access?" }],
@@ -596,4 +599,7 @@ test("ContextAssembler gives Alfie an authoritative plain-language summary of cu
   assert.match(system, /Internet: available/);
   assert.match(system, /Email drafts: not currently enabled/);
   assert.match(system, /Use this list as the source of truth/);
+  assert.match(system, /GitHub repository reading: available/);
+  assert.match(system, /GitHub issue drafts: not currently enabled/);
+  assert.match(system, /GitHub code changes: not currently enabled/);
 });
