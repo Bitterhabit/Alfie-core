@@ -276,7 +276,7 @@ test("ContextAssembler shortlists web.weather for weather and web.search for tra
     userText: "Next train to London?",
     history: [{ role: "user", content: "Next train to London?" }],
     registry,
-    grantedScopes: ["web:read", "github:read"],
+    grantedScopes: ["web:read"],
     workflowProfile: {
       location: { enabled: true, label: "Manchester, UK", latitude: 53.4808, longitude: -2.2426, timezone: "Europe/London" }
     }
