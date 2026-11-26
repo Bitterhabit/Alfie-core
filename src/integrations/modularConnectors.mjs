@@ -30,7 +30,9 @@ function isSensitiveGitHubPath(value) {
     privateDirectories.has(part) ||
     privateFiles.has(part) ||
     part === ".env" ||
+    part === ".envrc" ||
     part.startsWith(".env.") ||
+    part.endsWith(".env") ||
     /^(secret|secrets|credential|credentials)\./.test(part) ||
     [".pem", ".key", ".p12", ".pfx"].some((suffix) => part.endsWith(suffix)) ||
     part.endsWith(".token") ||
