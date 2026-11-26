@@ -56,17 +56,25 @@ These are repository changes and CI results, not evidence of a live homelab depl
 
 ## Post-1.0 developer integration readiness (26 November 2026)
 
-The GitHub project workflow has since been added to `main` and verified by CI:
+The GitHub project workflow, cloud-provider privacy boundary, approval recovery lifecycle and encrypted vault restore path have since been hardened on `main`.
 
-- Separate `github:read`, `github:draft` and `github:write` capabilities. Read access covers repository metadata, a bounded file tree, bounded text-file reads, recent commits and open pull requests.
-- Project writes create a new `alfie/*` branch and a draft pull request. The default branch is never used as Alfie's working branch; existing files require their expected blob SHA, changes are limited to 10 files / 80 KB, and credential/private-key paths are blocked.
-- GitHub writes are approval-gated. The approval card exposes the exact proposed file contents before the user approves. The action is bound to its argument hash and tool fingerprint.
-- `ALFIE_GITHUB_TOKEN` is configured only in the Core environment. Compose no longer injects the Core `.env` into the Interface container; the Interface receives an explicit environment allowlist.
-- Latest verified application-code commit: `4a511cf31560e5e5981a2c4bb82b30367b30d202`. GitHub Actions run [45888741425](https://github.com/Bitterhabit/Alfie-core/actions/runs/45888741425) completed successfully for both `test-and-build` and `installer-integration`. This includes repository/ref validation, base-branch race protection, draft-PR verification and regression coverage for the online-provider privacy confirmation.
+- **GitHub access:** Separate `github:read`, `github:draft` and `github:write` capabilities. Read access covers repository metadata, bounded file trees/reads, recent commits and pull requests.
+- **GitHub writes:** Writes create an isolated `alfie/*` branch and a draft PR; the default branch is never used as Alfie's working branch. Existing-file changes require exact blob SHAs, proposals are limited to 10 files / 80 KB, and credential/private-key paths are blocked.
+- **Approval integrity:** Approval cards show exact proposed file contents and the reviewed base commit. The action is bound to its arguments, tool implementation and reviewed resource state. Permissions and the GitHub base are rechecked at approval/execution.
+- **GitHub recovery:** `github.change.inspect` is a read-only recovery tool. It distinguishes missing branches, branches without PRs and existing PRs even after branch deletion. Duplicate PR checks run both when preparing approval and immediately before branch publication.
+- **Durable action receipts:** Approved actions are persisted as executing before the handler runs. A new Core instance converts interrupted executions into `outcome_unknown` receipts and never replays them. Stale approvals, permission revocation and expiry leave durable receipts; the UI warns users to inspect the destination before retrying an unknown outcome.
+- **Secret isolation:** `ALFIE_GITHUB_TOKEN` remains Core-only. Compose does not inject Core's `.env` into Interface; the Interface receives an explicit environment allowlist.
+- **Cloud-provider privacy:** Switching a conversation from local to Gemini/OpenAI requires an explicit confirmation. Cloud prompts pass through a local airlock that redacts common credential patterns, email addresses, private LAN addresses, local hostnames and local paths; placeholders are restored only inside Core. Saved location, free-text workflow notes, learning topics and learned traits are excluded from cloud workflow-profile context by default. This is best-effort pattern redaction, not a guarantee that every sensitive detail is detected.
+- **Vault backups:** AES-256-GCM encrypted, scrypt-derived, user-bound archives with a 16 MiB restore limit. Audit events and action receipts are included; executable pending approvals and provider credentials/API keys are excluded. Merge/replace restore paths are covered by transactional and rollback tests.
+- **Execution boundary:** A static regression test forbids arbitrary child-process/shell execution, `eval`, dynamic `Function` construction and Node VM execution. The only allowed child-process use is the VRAM monitor's fixed `nvidia-smi` read-only probe, run through `execFile` with fixed arguments, timeout and buffer limits.
 
-- **GitHub integration setup:** `docs/guides/github-integration.md` documents fine-grained token permissions, Core-only configuration, separate Alfie capability grants and the safe first-write procedure.
+Latest fully green code commit: `2e72e6bd70513edb00da62038f53e70a7940bd81`. GitHub Actions run [45910513197](https://github.com/Bitterhabit/Alfie-core/actions/runs/45910513197) passed both `test-and-build` and `installer-integration`, including the full test suite, syntax checks, Compose validation, both Docker image builds, container smoke tests, clean installation and non-destructive upgrade.
 
-This is code/CI verification only. No homelab deployment, live GitHub token, real repository write, or end-to-end user approval has been tested. Before daily-use acceptance, configure a fine-grained token server-side for the intended repository, grant `github:read` and `github:write` separately in Tools & Access, then test repository browsing and one harmless approval-gated draft PR in a dedicated test repository. Do not paste the token into chat.
+Setup and recovery guides:
+- `docs/guides/github-integration.md`
+- `docs/guides/vault-backups.md`
+
+This remains code/CI verification only. No homelab deployment, live GitHub token, real repository write, end-to-end user approval, or real backup restore has been performed. Before daily-use acceptance, configure a fine-grained GitHub token server-side for a dedicated test repository, grant `github:read` and `github:write` separately in Tools & Access, then test repository browsing, rejection and one harmless approval-gated draft PR. Do not paste the token into chat.
 
 ## One-week daily-use acceptance sequence
 
