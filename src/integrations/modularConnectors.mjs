@@ -681,9 +681,11 @@ export function registerModularConnectorTools(
       if (branch === baseBranch || branch === metadata.default_branch) {
         throw Object.assign(new Error("Alfie is not allowed to write to the default branch or use it as its working branch."), { status: 403 });
       }
-      const baseRef = await githubRequest(`/repos/${repo}/git/ref/heads/${encodeURIComponent(baseBranch)}`);
+      const baseRefPath = baseBranch.split("/").map(encodeURIComponent).join("/");
+      const branchRefPath = branch.split("/").map(encodeURIComponent).join("/");
+      const baseRef = await githubRequest(`/repos/${repo}/git/ref/heads/${baseRefPath}`);
       const baseCommit = await githubRequest(`/repos/${repo}/git/commits/${baseRef.object.sha}`);
-      const existingBranch = await githubRequest(`/repos/${repo}/git/ref/heads/${encodeURIComponent(branch)}`).catch((error) => {
+      const existingBranch = await githubRequest(`/repos/${repo}/git/ref/heads/${branchRefPath}`).catch((error) => {
         if (error.status === 404) return null;
         throw error;
       });
