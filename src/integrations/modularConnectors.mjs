@@ -760,6 +760,11 @@ export function registerModularConnectorTools(
         method: "POST",
         body: { message: args.commitMessage, tree: tree.sha, parents: [baseRef.object.sha] }
       });
+      // Refuse to publish a branch if the selected base moved while the proposal was being built.
+      const latestBaseRef = await githubRequest(`/repos/${repo}/git/ref/heads/${baseRefPath}`);
+      if (latestBaseRef.object?.sha !== baseRef.object.sha) {
+        throw Object.assign(new Error("The base branch changed while this proposal was being prepared. Re-read it and create a fresh proposal."), { status: 409 });
+      }
       await githubRequest(`/repos/${repo}/git/refs`, {
         method: "POST",
         body: { ref: `refs/heads/${branch}`, sha: commit.sha }
@@ -769,7 +774,7 @@ export function registerModularConnectorTools(
         body: { title: args.title, body: args.body, head: branch, base: baseBranch, draft: true }
       });
       const verified = await githubRequest(`/repos/${repo}/pulls/${pull.number}`);
-      if (verified.head?.ref !== branch || verified.base?.ref !== baseBranch || verified.state !== "open") {
+      if (verified.head?.ref !== branch || verified.head?.sha !== commit.sha || verified.base?.ref !== baseBranch || verified.state !== "open" || verified.draft !== true) {
         throw Object.assign(new Error("The pull request was created but its final state could not be independently verified. Check GitHub before retrying."), { status: 502, actionOutcomeUnknown: true });
       }
       return {
