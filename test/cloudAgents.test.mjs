@@ -212,7 +212,20 @@ test("Core server routes Gemini & ChatGPT coding agents with strict server-side 
     toolRegistry,
     pendingActionStore,
     cloudAgentStore,
-    cloudAdapters
+    cloudAdapters,
+    profileStore: {
+      get: async () => ({
+        explanationStyle: "concise",
+        changePresentation: "diffs_and_rollback",
+        interruptionTolerance: "balanced",
+        chunkSize: "small_steps",
+        learningMode: "explain",
+        customNotes: "CLOUD_PRIVATE_NOTE_LEAK",
+        location: { enabled: true, label: "CLOUD_PRIVATE_LOCATION_LEAK", latitude: 1, longitude: 2, timezone: "Europe/London" },
+        learningTopics: [{ topic: "CLOUD_PRIVATE_TOPIC_LEAK", confidence: "practicing" }],
+        learnedStyle: { traits: ["CLOUD_PRIVATE_STYLE_LEAK"] }
+      })
+    }
   });
 
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -275,6 +288,9 @@ test("Core server routes Gemini & ChatGPT coding agents with strict server-side 
     assert.doesNotMatch(serializedGeminiPayload, /TOP_SECRET_MEMORY_TOKEN_999/);
     assert.doesNotMatch(serializedGeminiPayload, /private@home\.test/);
     assert.match(serializedGeminiPayload, /Math Utils/);
+    for (const marker of ["CLOUD_PRIVATE_NOTE_LEAK", "CLOUD_PRIVATE_LOCATION_LEAK", "CLOUD_PRIVATE_TOPIC_LEAK", "CLOUD_PRIVATE_STYLE_LEAK"]) {
+      assert.doesNotMatch(serializedGeminiPayload, new RegExp(marker), `Cloud provider must not receive ${marker}`);
+    }
 
     // 5. Send coding prompt to ChatGPT (OpenAI) — verify ZERO leakage & proper Bearer header
     const openaiReply = await client.chat("user-1", {
