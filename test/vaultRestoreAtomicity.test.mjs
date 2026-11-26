@@ -54,6 +54,66 @@ describe("atomic vault restore", () => {
       await rm(sourceDirectory, { recursive: true, force: true });
     }
   });
+  it("backs up audit history and receipts without restoring executable pending approvals", async () => {
+    const sourceDirectory = await mkdtemp(path.join(tmpdir(), "alfie-vault-audit-source-"));
+    const targetDirectory = await mkdtemp(path.join(tmpdir(), "alfie-vault-audit-target-"));
+    try {
+      await writeUserJsonDocuments(sourceDirectory, "alice", [
+        {
+          filename: "pending-actions.json",
+          data: {
+            schemaVersion: 1,
+            ownerId: "alice",
+            actions: [{ id: "must-not-return", toolId: "github.change.create_pr", arguments: { secret: "must-not-be-restored" } }],
+            receipts: [{ id: "receipt-backup", actionId: "action-backup", toolId: "github.change.create_pr", status: "completed", verificationState: "verified", executedAt: "2026-11-26T20:00:00.000Z" }]
+          }
+        },
+        {
+          filename: "audit.json",
+          data: { schemaVersion: 1, ownerId: "alice", events: [{ id: "audit-backup", at: "2026-11-26T20:00:00.000Z", event: "tool.approval_completed" }] }
+        }
+      ], { backend: "sqlite" });
+
+      await writeUserJsonDocuments(targetDirectory, "alice", [
+        {
+          filename: "pending-actions.json",
+          data: {
+            schemaVersion: 1,
+            ownerId: "alice",
+            actions: [{ id: "live-pending", toolId: "notes.write", arguments: { text: "never replay" }, status: "pending" }],
+            receipts: [{ id: "receipt-live", actionId: "action-live", toolId: "notes.write", status: "completed", verificationState: "verified", executedAt: "2026-11-26T19:00:00.000Z" }]
+          }
+        },
+        {
+          filename: "audit.json",
+          data: { schemaVersion: 1, ownerId: "alice", events: [{ id: "audit-live", at: "2026-11-26T19:00:00.000Z", event: "tool.approval_created" }] }
+        }
+      ], { backend: "sqlite" });
+
+      const exported = await exportEncryptedVault({ dataDirectory: sourceDirectory, userId: "alice", passphrase: PASSPHRASE });
+      assert.equal(exported.summary.counts["pending-actions.json"], 1);
+      assert.equal(exported.summary.counts["audit.json"], 1);
+
+      await restoreEncryptedVault({
+        dataDirectory: targetDirectory,
+        userId: "alice",
+        archive: exported.archive,
+        passphrase: PASSPHRASE,
+        mode: "merge"
+      });
+
+      const pending = await readUserJsonDocument(targetDirectory, "alice", "pending-actions.json", { backend: "sqlite" });
+      const audit = await readUserJsonDocument(targetDirectory, "alice", "audit.json", { backend: "sqlite" });
+      assert.deepEqual(pending.actions, [], "No pending executable approval may be restored or survive a vault merge");
+      assert.deepEqual(pending.receipts.map((receipt) => receipt.id).sort(), ["receipt-backup", "receipt-live"]);
+      assert.deepEqual(audit.events.map((event) => event.id).sort(), ["audit-backup", "audit-live"]);
+      assert.doesNotMatch(JSON.stringify(pending), /must-not-be-restored/);
+    } finally {
+      await rm(sourceDirectory, { recursive: true, force: true });
+      await rm(targetDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("refuses to export an encrypted vault larger than the supported restore limit", async () => {
     const dataDirectory = await mkdtemp(path.join(tmpdir(), "alfie-vault-too-large-"));
     try {
