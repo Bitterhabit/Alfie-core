@@ -81,7 +81,7 @@ export function sanitizeForCloud(text, { customTerms = [], state = null } = {}) 
     : [];
 
   for (const term of cleanTerms) {
-    const regex = new RegExp(`\\\\b${escapeRegExp(term)}\\\\b`, "gi");
+    const regex = new RegExp(`\\b${escapeRegExp(term)}\\b`, "gi");
     sanitized = sanitized.replace(regex, (match) => tokenFor("custom_private_term", "PRIVATE_TERM", match));
   }
 
