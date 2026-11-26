@@ -434,3 +434,65 @@ test("External approval interruption records an unknown outcome and forbids blin
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+
+test("Concurrent approval requests can consume and execute one pending action only once", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-concurrent-approval-"));
+  const registry = new ToolRegistry();
+  const permissionStore = new PermissionStore({ dataDirectory: dir });
+  const pendingActionStore = new PendingActionStore({ dataDirectory: dir });
+  let executions = 0;
+  let releaseExecution;
+  const executionGate = new Promise((resolve) => { releaseExecution = resolve; });
+  registry.register({
+    id: "ops.concurrent_write",
+    name: "Concurrent write",
+    description: "A write used to verify approval single-consumption.",
+    scope: "ops:write",
+    risk: "write",
+    trust: "internal",
+    network: false,
+    externalAction: false,
+    inputSchema: {
+      type: "object",
+      properties: { value: { type: "string", minLength: 1 } },
+      required: ["value"],
+      additionalProperties: false
+    },
+    handler: async ({ value }) => {
+      executions += 1;
+      await executionGate;
+      return { saved: value };
+    }
+  });
+  await permissionStore.grant("alice", "ops:write");
+  const dispatcher = new ToolDispatcher({ registry, permissionStore, pendingActionStore });
+  try {
+    const proposal = await dispatcher.dispatch({
+      userId: "alice",
+      toolId: "ops.concurrent_write",
+      args: { value: "once" },
+      turnId: "concurrent-approval"
+    });
+    assert.equal(proposal.status, "awaiting_user_approval");
+
+    const first = dispatcher.approve("alice", proposal.actionId);
+    const second = dispatcher.approve("alice", proposal.actionId);
+    // Let both requests contend for the same per-user pending-action lock.
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(executions, 1, "Only the request that atomically consumed the approval may enter the handler");
+    releaseExecution();
+
+    const results = await Promise.allSettled([first, second]);
+    assert.equal(results.filter((item) => item.status === "fulfilled").length, 1);
+    const rejected = results.find((item) => item.status === "rejected");
+    assert.equal(rejected.reason.status, 404);
+    assert.equal(executions, 1);
+
+    const receipts = await pendingActionStore.listReceipts("alice");
+    assert.equal(receipts.filter((item) => item.actionId === proposal.actionId).length, 1);
+  } finally {
+    releaseExecution();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
