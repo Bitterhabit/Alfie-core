@@ -15,7 +15,7 @@ import { registerWebResearchTools } from "./webResearch.mjs";
  *  4. Proxmox / Homelab read connector: proxmox.cluster.status
  */
 
-const REPO_PATTERN = /^[a-zA-Z0-9_.-]{1,64}\/[a-zA-Z0-9_.-]{1,100}$/;
+const REPO_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}\/[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$/;
 const NOTE_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,120}$/;
 const CONNECTOR_TIMEOUT_MS = 8000;
 
