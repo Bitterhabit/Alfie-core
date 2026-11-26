@@ -251,7 +251,7 @@ test("Frontend app.js, index.html, and styles.css contain history, approval cont
   assert.match(appJs, /function unwrapToolResultPayload\(/);
   assert.match(appJs, /approvalContinuation:\s*\{/);
   assert.match(appJs, /cardElement:\s*itemEl/);
-  assert.match(appJs, /catch \(error\) \{[\s\S]*?setState\("error", "red"\)/);
+  assert.match(appJs, /catch \(error\) \{[\s\S]*?pulse\("error"/);
   assert.match(appJs, /function createChatApprovalCard\(/);
   assert.match(appJs, /state\.conversations\s*=\s*\[\];/);
   assert.match(stylesCss, /\.stop-stream-button\s*\{/);
