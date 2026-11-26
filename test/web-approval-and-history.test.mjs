@@ -258,9 +258,9 @@ test("Frontend app.js, index.html, and styles.css contain history, approval cont
   assert.ok(appJs.includes("Allowed: ${categories}"), "Fallback privacy warning must list the permitted categories");
   assert.match(appJs, /event\.currentTarget\.value = current/, "The selected provider must remain unchanged until the user confirms");
   assert.match(appJs, /model-switch-warning-confirm/, "Online provider switch must require an explicit confirmation action");
-  assert.match(html, /id="model-switch-warning-allowed"/);
-  assert.match(html, /id="model-switch-warning-blocked"/);
-  assert.match(html, /Tool permissions do not override these data restrictions/);
+  assert.match(indexHtml, /id="model-switch-warning-allowed"/);
+  assert.match(indexHtml, /id="model-switch-warning-blocked"/);
+  assert.match(indexHtml, /Tool permissions do not override these data restrictions/);
   assert.match(appJs, /state\.conversations\s*=\s*\[\];/);
   assert.match(stylesCss, /\.stop-stream-button\s*\{/);
   assert.match(stylesCss, /\.sr-only\s*\{/);
