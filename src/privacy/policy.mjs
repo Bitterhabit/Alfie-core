@@ -268,6 +268,25 @@ export function filterMemories(memories = [], visibility = DEFAULT_CLOUD_VISIBIL
   return { memories: result, redactedCount };
 }
 
+export function filterWorkflowProfileForCloud(profile) {
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) return null;
+  // Only enum-backed interaction preferences are safe to share by default.
+  // Free text, saved location, learning topics, learned traits, and tracking
+  // controls stay local unless a future, explicit privacy control covers them.
+  const allowedKeys = [
+    "explanationStyle",
+    "changePresentation",
+    "interruptionTolerance",
+    "chunkSize",
+    "learningMode"
+  ];
+  const filtered = {};
+  for (const key of allowedKeys) {
+    if (typeof profile[key] === "string") filtered[key] = profile[key];
+  }
+  return Object.keys(filtered).length ? filtered : null;
+}
+
 export function applyCloudPrivacyPolicy({
   provider,
   model,
