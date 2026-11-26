@@ -33,7 +33,7 @@ const PATTERNS = Object.freeze([
   {
     category: "local_path",
     prefix: "LOCAL_PATH",
-    regex: /(?:\/(?:home|Users|root|etc|var\/lib|mnt|srv)\/[^\s"'`,;)]+|[A-Za-z]:\\Users\\[^\s"'`,;)]+)/g
+    regex: /(?:\/(?:home|Users|root|etc|opt|var\/lib|mnt|srv)\/[^\s"'`,;)]+|[A-Za-z]:\\Users\\[^\s"'`,;)]+)/g
   },
   {
     category: "phone",
