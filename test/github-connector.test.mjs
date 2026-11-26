@@ -129,7 +129,7 @@ test("GitHub project change tool is approval-gated and only creates Alfie draft 
     }), (error) => error.status === 400);
     await assert.rejects(() => tool.handler({
       repo: "acme/demo", branch: "alfie/bad", title: "Bad", body: "No", commitMessage: "No",
-      files: [{ path: "../.env", content: "secret" }]
+      files: [{ path: "secrets.env", content: "secret" }]
     }), (error) => error.status === 403);
   } finally {
     if (previousToken === undefined) delete process.env.ALFIE_GITHUB_TOKEN;
