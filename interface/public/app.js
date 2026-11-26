@@ -8316,6 +8316,30 @@ async function loadToolsAndApprovals(focusActionId = null) {
         reason.textContent = `Why approval is needed: ${action.reason}`;
         itemEl.appendChild(reason);
       }
+      if (action.toolId === "github.change.create_pr" && action.arguments && Array.isArray(action.arguments.files)) {
+        const args = action.arguments;
+        const review = document.createElement("details");
+        review.className = "pending-action-file-review";
+        const summary = document.createElement("summary");
+        summary.textContent = `Review proposed files (${args.files.length}) · ${String(args.branch || "Alfie branch")}`;
+        review.appendChild(summary);
+        const meta = document.createElement("p");
+        meta.className = "pending-action-file-meta";
+        meta.textContent = `Base: ${String(args.base || "repository default")} · Pull request: ${String(args.title || "Untitled")}`;
+        review.appendChild(meta);
+        for (const file of args.files.slice(0, 10)) {
+          const fileSection = document.createElement("section");
+          fileSection.className = "pending-action-file";
+          const heading = document.createElement("h4");
+          heading.textContent = String(file.path || "Unnamed file");
+          fileSection.appendChild(heading);
+          const source = document.createElement("pre");
+          source.textContent = String(file.content || "").slice(0, 30000);
+          fileSection.appendChild(source);
+          review.appendChild(fileSection);
+        }
+        itemEl.appendChild(review);
+      }
       if (action.id === focusActionId) itemEl.classList.add("pending-action-focused");
       if (action.simulation) {
         const sim = action.simulation;
