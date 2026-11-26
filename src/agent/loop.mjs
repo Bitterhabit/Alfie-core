@@ -330,6 +330,8 @@ export class AgentLoop {
       memoryRetrievalMs: 0,
       contextAssemblyMs: 0,
       providerMs: 0,
+      providerSetupMs: 0,
+      modelResponseMs: 0,
       modelFirstTokenMs: null,
       toolExecutionMs: 0
     };
@@ -624,13 +626,16 @@ export class AgentLoop {
                 this.providerRegistry.openStream(activeProviderConfig, context.messages, effectiveProviderMode, { signal: controller.signal }),
                 controller.signal
               );
+              stageTimings.providerSetupMs += elapsed(providerStarted);
+              const modelResponseStarted = this.now();
               const streamed = await readStreamedProviderText(opened.endpoint, opened.response, {
                 onDelta: (chunk) => {
-                  if (stageTimings.modelFirstTokenMs === null) stageTimings.modelFirstTokenMs = elapsed(providerStarted);
+                  if (stageTimings.modelFirstTokenMs === null) stageTimings.modelFirstTokenMs = elapsed(modelResponseStarted);
                   if (typeof onDelta === "function") onDelta(chunk);
                 },
                 signal: controller.signal
               });
+              stageTimings.modelResponseMs += elapsed(modelResponseStarted);
               streamedToClient = Boolean(streamed.streamed);
               selected = {
                 endpoint: opened.endpoint,
