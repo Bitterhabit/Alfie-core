@@ -682,6 +682,56 @@ export function registerModularConnectorTools(
       const paths = (args.files || []).map((file) => file.path).slice(0, 6).join(", ");
       return `Create ${args.repo} branch ${args.branch} and open PR "${args.title}" (${(args.files || []).length} files: ${paths})`;
     },
+    async approvalGuard(args) {
+      const repo = validateRepo(args.repo);
+      if (!process.env.ALFIE_GITHUB_TOKEN) {
+        throw Object.assign(new Error("GitHub write access is not configured. Set ALFIE_GITHUB_TOKEN on the server before proposing a code change."), { status: 503 });
+      }
+      const metadata = await githubRequest(`/repos/${repo}`);
+      const baseBranch = validateGitRefName(String(args.base || metadata.default_branch || "main"), "Base branch");
+      if (args.branch === baseBranch || args.branch === metadata.default_branch) {
+        throw Object.assign(new Error("Alfie is not allowed to write to the default branch or use it as its working branch."), { status: 403 });
+      }
+      const baseRefPath = baseBranch.split("/").map(encodeURIComponent).join("/");
+      const branchRefPath = String(args.branch).split("/").map(encodeURIComponent).join("/");
+      const [baseRef, existingBranch] = await Promise.all([
+        githubRequest(`/repos/${repo}/git/ref/heads/${baseRefPath}`),
+        githubRequest(`/repos/${repo}/git/ref/heads/${branchRefPath}`).catch((error) => {
+          if (error.status === 404) return null;
+          throw error;
+        })
+      ]);
+      if (existingBranch) {
+        throw Object.assign(new Error("That Alfie branch already exists. Inspect it before creating another change."), { status: 409 });
+      }
+      const files = [];
+      const seen = new Set();
+      for (const file of args.files || []) {
+        const filePath = String(file.path || "").trim();
+        const parts = filePath.split("/");
+        if (!filePath || filePath.startsWith("/") || filePath.includes("\\\\") || parts.some((part) => !part || part === "." || part === "..")) {
+          throw Object.assign(new Error("A changed file has an invalid repository path."), { status: 400 });
+        }
+        const lower = filePath.toLowerCase();
+        if (parts.some((part) => [" .git", ".git", "node_modules"].includes(part.toLowerCase())) || isSensitiveGitHubPath(filePath)) {
+          throw Object.assign(new Error("Changes to credential, private-key, .git, or dependency paths are blocked."), { status: 403 });
+        }
+        if (seen.has(lower)) throw Object.assign(new Error("A file path appears more than once in this change."), { status: 400 });
+        seen.add(lower);
+        const current = await githubRequest(`/repos/${repo}/contents/${filePath.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(baseRef.object.sha)}`).catch((error) => {
+          if (error.status === 404) return null;
+          throw error;
+        });
+        if (current && (!file.expectedSha || current.sha !== file.expectedSha)) {
+          throw Object.assign(new Error(`File ${filePath} changed or its expected SHA was not supplied. Re-read it and prepare a fresh proposal.`), { status: 409 });
+        }
+        if (!current && file.expectedSha) {
+          throw Object.assign(new Error(`File ${filePath} no longer exists at the base branch. Re-read the repository and prepare a fresh proposal.`), { status: 409 });
+        }
+        files.push({ path: filePath, sha: current?.sha || null });
+      }
+      return { repo, baseBranch, baseSha: baseRef.object.sha, branchAvailable: true, files };
+    },
     dryRun(args) {
       return {
         risk: "high",
