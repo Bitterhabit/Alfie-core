@@ -533,7 +533,7 @@ export function registerModularConnectorTools(
       required: ["repo"],
       additionalProperties: false
     },
-    async handler(args) {
+    async handler(args, { approvalGuard: reviewedState } = {}) {
       const repo = validateRepo(args.repo);
       const requestedPath = String(args.path || "").trim().split("/").filter(Boolean).join("/");
       if (requestedPath && (requestedPath.split("/").some((part) => !part || part === "." || part === "..") || requestedPath.includes("\\"))) {
@@ -760,6 +760,9 @@ export function registerModularConnectorTools(
       const baseRefPath = baseBranch.split("/").map(encodeURIComponent).join("/");
       const branchRefPath = branch.split("/").map(encodeURIComponent).join("/");
       const baseRef = await githubRequest(`/repos/${repo}/git/ref/heads/${baseRefPath}`);
+      if (reviewedState && (reviewedState.repo !== repo || reviewedState.baseBranch !== baseBranch || reviewedState.baseSha !== baseRef.object?.sha)) {
+        throw Object.assign(new Error("The GitHub base branch changed after approval. Review the updated repository and create a fresh proposal."), { status: 409, code: "STALE_APPROVAL" });
+      }
       const baseCommit = await githubRequest(`/repos/${repo}/git/commits/${baseRef.object.sha}`);
       const existingBranch = await githubRequest(`/repos/${repo}/git/ref/heads/${branchRefPath}`).catch((error) => {
         if (error.status === 404) return null;
