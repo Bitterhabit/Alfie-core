@@ -66,6 +66,20 @@ The GitHub project workflow has since been added to `main` and verified by CI:
 
 This is code/CI verification only. No homelab deployment, live GitHub token, real repository write, or end-to-end user approval has been tested. Before daily-use acceptance, configure a fine-grained token server-side for the intended repository, grant `github:read` and `github:write` separately in Tools & Access, then test repository browsing and one harmless approval-gated draft PR in a dedicated test repository. Do not paste the token into chat.
 
+## One-week daily-use acceptance sequence
+
+Use this sequence only after deployment to the intended homelab and server-side provider/token configuration. Record pass/fail, the tested model/provider, and any issue for each day. These are planned checks, not claims that they have already passed.
+
+1. **Day 1 — Core chat and reliability:** login, start a fresh conversation, continue an older one, test short and long prompts, restart the containers and confirm conversations persist. Check provider failure and recovery without scripted fallback.
+2. **Day 2 — Memory and continuity:** create a memory, inspect its provenance, correct it, ask Alfie to use it in a new chat, and verify edit/forget behaviour. Confirm stale or unwanted details are not reintroduced.
+3. **Day 3 — Permissions and approvals:** ask Alfie what access it has, grant and revoke one scope, test read-only access, and verify write actions remain pending until approved. Reject one action and verify it does not execute.
+4. **Day 4 — GitHub read workflow:** configure a fine-grained token in Core only; grant `github:read`; inspect a repository tree, read a normal source file, list commits and open PRs. Confirm blocked secret paths fail closed.
+5. **Day 5 — GitHub write workflow:** grant `github:write`; ask Alfie to propose a harmless change in a dedicated test repository. Review the exact file contents, branch, base and PR details in the approval card; reject one proposal, then approve a separate one and verify only a draft PR on an `alfie/*` branch is created.
+6. **Day 6 — Interface and background work:** use the Interface on mobile and desktop, check session expiry/re-login, notifications/watchers and quiet hours, cancel a safe test job, and check that the UI remains usable after a Core restart.
+7. **Day 7 — Recovery and review:** export an encrypted backup, restore it into a disposable target, verify the live data remains untouched, inspect audit receipts, and review performance stage timings against direct provider latency. Decide which issues block wider use.
+
+Do not use a production repository for the first write test. Do not treat a CI pass as a substitute for these real homelab and user-facing checks.
+
 ## Remaining 1.0 release gates
 
 1. **1.0.0 preparation is merged.** PR #17 aligns package and image versions and adds release notes. All CI steps, including both container smoke tests, passed on its tested code commit `aebafa4c51d20b024ed9fcc8bd987617ae83cda1`; the documentation-only status corrections were included before merge. The merge commit is `d7eed92930e28e9d6536945b7cde80dc67f3307a`.
