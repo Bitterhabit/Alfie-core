@@ -502,7 +502,7 @@ export function registerModularConnectorTools(
     },
     async handler(args) {
       const repo = validateRepo(args.repo);
-      const requestedPath = String(args.path || "").trim().replace(/^\\/+|\\/+$/g, "");
+      const requestedPath = String(args.path || "").trim().split("/").filter(Boolean).join("/");
       if (requestedPath && (requestedPath.split("/").some((part) => !part || part === "." || part === "..") || requestedPath.includes("\\"))) {
         throw Object.assign(new Error("Repository path is invalid."), { status: 400 });
       }
@@ -539,11 +539,15 @@ export function registerModularConnectorTools(
     },
     async handler(args) {
       const repo = validateRepo(args.repo);
-      const filePath = String(args.path || "").trim().replace(/^\\/+/, "");
+      const filePath = String(args.path || "").trim().split("/").filter(Boolean).join("/");
       if (!filePath || filePath.split("/").some((part) => !part || part === "." || part === "..") || filePath.includes("\\")) {
         throw Object.assign(new Error("Repository file path is invalid."), { status: 400 });
       }
-      if (/(^|\\/)(?:\\.env(?:\\.|$)|secrets?\\.|credentials?\\.|id_rsa|.*\\.(?:pem|key|p12|pfx))$/i.test(filePath)) {
+      const sensitiveParts = filePath.toLowerCase().split("/");
+      const sensitiveFile = sensitiveParts.some((part) => part === ".env" || part.startsWith(".env.") || part.startsWith("secret.") || part.startsWith("secrets.") || part.startsWith("credential.") || part.startsWith("credentials.") || part === "id_rsa" || [".pem", ".key", ".p12", ".pfx"].some((suffix) => part.endsWith(suffix)));
+      if (sensitiveFile) {
+        throw Object.assign(new Error("This file type is blocked from automatic reading because it may contain credentials or private keys."), { status: 403 });
+      }
         throw Object.assign(new Error("This file type is blocked from automatic reading because it may contain credentials or private keys."), { status: 403 });
       }
       const ref = String(args.ref || "").trim();
