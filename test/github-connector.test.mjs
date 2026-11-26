@@ -283,6 +283,7 @@ test("GitHub change approval guard binds the reviewed proposal to its exact base
   const previousToken = process.env.ALFIE_GITHUB_TOKEN;
   process.env.ALFIE_GITHUB_TOKEN = "test-github-token";
   let baseSha = "base-commit-one";
+  let existingPulls = [];
   const calls = [];
   const registry = new ToolRegistry();
   registerModularConnectorTools(registry, {
@@ -293,6 +294,7 @@ test("GitHub change approval guard binds the reviewed proposal to its exact base
       if (method === "GET" && parsed.pathname === "/repos/acme/demo") return json({ default_branch: "main" });
       if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/ref/heads/main") return json({ object: { sha: baseSha } });
       if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/ref/heads/alfie/review-test") return json({ message: "Not Found" }, 404);
+      if (method === "GET" && parsed.pathname === "/repos/acme/demo/pulls") return json(existingPulls);
       if (method === "GET" && parsed.pathname === "/repos/acme/demo/contents/README.md") return json({ message: "Not Found" }, 404);
       throw new Error(`Unexpected GitHub API request: ${method} ${parsed.pathname}`);
     }
@@ -319,6 +321,18 @@ test("GitHub change approval guard binds the reviewed proposal to its exact base
     const currentState = await tool.approvalGuard(args, { userId: "alice", toolId: tool.id });
     assert.equal(currentState.baseSha, "base-commit-two");
     assert.notDeepEqual(currentState, reviewedState, "A moved base must invalidate the approval guard");
+    existingPulls = [{
+      number: 41,
+      state: "closed",
+      merged_at: null,
+      head: { ref: "alfie/review-test" },
+      base: { ref: "main" }
+    }];
+    await assert.rejects(
+      () => tool.approvalGuard(args, { userId: "alice", toolId: tool.id }),
+      (error) => error.status === 409,
+      "A previously closed PR must prevent reusing the same Alfie branch name"
+    );
     await assert.rejects(
       () => tool.handler(args, { approvalGuard: reviewedState }),
       (error) => error.status === 409 && error.code === "STALE_APPROVAL",
@@ -375,6 +389,12 @@ test("GitHub change inspection safely distinguishes missing branches, orphan bra
     assert.equal(result.pullRequests[0].url, "https://github.com/acme/demo/pull/42");
 
     branchExists = false;
+    result = await tool.handler({ repo: "acme/demo", branch: "alfie/recovery-check" });
+    assert.equal(result.status, "pull_request_found", "A deleted branch must not hide its existing pull request");
+    assert.equal(result.branchSha, null);
+    assert.equal(result.pullRequests[0].number, 42);
+
+    pullRequests = [];
     result = await tool.handler({ repo: "acme/demo", branch: "alfie/recovery-check" });
     assert.equal(result.status, "branch_not_found");
     assert.equal(result.pullRequests.length, 0);
