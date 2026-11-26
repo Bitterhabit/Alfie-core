@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createAssetInterceptorMiddleware } from "./assetMiddleware.mjs";
 import { applyCloudPrivacyPolicy, filterWorkflowProfileForCloud, isToolAllowedByVisibility } from "../privacy/policy.mjs";
+import { rehydrateFromCloud, sanitizeMessagesForCloud } from "../privacy/broker.mjs";
 import { containsUntrustedData } from "./untrustedData.mjs";
 import { resolveWorkingMode } from "./workingModes.mjs";
 import { resolveLearningMode } from "../profile/store.mjs";
@@ -601,11 +602,12 @@ export class AgentLoop {
           const resolvedCredential = typeof this.cloudAgentStore?.resolveCredential === "function"
             ? await this.cloudAgentStore.resolveCredential(userId, cloudAgent.provider)
             : null;
+          const cloudPayload = sanitizeMessagesForCloud(context.messages);
           selected = await awaitWithAbort(
             this.cloudAdapters.complete({
               provider: cloudAgent.provider,
               model: cloudAgent.model,
-              messages: context.messages,
+              messages: cloudPayload.messages,
               hasTools: context.tools.length > 0,
               signal: controller.signal,
               apiKey: resolvedCredential?.apiKey || "",
@@ -613,6 +615,18 @@ export class AgentLoop {
             }),
             controller.signal
           );
+          if (typeof selected?.result?.content === "string") {
+            selected.result.content = rehydrateFromCloud(selected.result.content, cloudPayload.tokenMap);
+          }
+          if (lastPrivacyReport) {
+            lastPrivacyReport = {
+              ...lastPrivacyReport,
+              airlockActive: true,
+              airlockRedactedCount: cloudPayload.manifest.redactedCount,
+              airlockCategories: cloudPayload.manifest.categoryCounts,
+              redactedCount: Number(lastPrivacyReport.redactedCount || 0) + cloudPayload.manifest.redactedCount
+            };
+          }
         } else {
           try {
             const activeProviderConfig = initialProviderConfig || this.providerConfig;
