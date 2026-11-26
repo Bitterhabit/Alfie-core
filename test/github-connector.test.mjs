@@ -103,7 +103,7 @@ test("GitHub project change tool is approval-gated and only creates Alfie draft 
     if (method === "POST" && parsed.pathname === "/repos/acme/demo/git/commits") return jsonReply({ sha: "new-commit-sha" });
     if (method === "POST" && parsed.pathname === "/repos/acme/demo/git/refs") return jsonReply({ ref: "refs/heads/alfie/feature-one" }, 201);
     if (method === "POST" && parsed.pathname === "/repos/acme/demo/pulls") return jsonReply({ number: 12, html_url: "https://github.com/acme/demo/pull/12" }, 201);
-    if (method === "GET" && parsed.pathname === "/repos/acme/demo/pulls/12") return jsonReply({ number: 12, state: "open", head: { ref: "alfie/feature-one" }, base: { ref: "main" } });
+    if (method === "GET" && parsed.pathname === "/repos/acme/demo/pulls/12") return jsonReply({ number: 12, state: "open", draft: true, head: { ref: "alfie/feature-one", sha: "new-commit-sha" }, base: { ref: "main" } });
     throw new Error(`Unexpected GitHub API request: ${method} ${parsed.pathname}`);
   } });
   try {
@@ -226,6 +226,48 @@ test("GitHub connector rejects dot-segment repository names and malformed Git re
     await assert.rejects(() => change.handler({ ...base, base: "release/@{bad" }), (error) => error.status === 400);
     assert.equal(calls.filter((call) => call.method === "POST").length, 0);
     assert.ok(calls.every((call) => new URL(call.url).hostname === "api.github.com"));
+  } finally {
+    if (previousToken === undefined) delete process.env.ALFIE_GITHUB_TOKEN;
+    else process.env.ALFIE_GITHUB_TOKEN = previousToken;
+  }
+});
+
+
+test("GitHub project change aborts if its base branch moves before branch publication", async () => {
+  const previousToken = process.env.ALFIE_GITHUB_TOKEN;
+  process.env.ALFIE_GITHUB_TOKEN = "test-github-token";
+  const calls = [];
+  let baseReads = 0;
+  const registry = new ToolRegistry();
+  registerModularConnectorTools(registry, { fetchImpl: async (url, options = {}) => {
+    const parsed = new URL(String(url));
+    const method = options.method || "GET";
+    calls.push({ method, path: parsed.pathname });
+    if (method === "GET" && parsed.pathname === "/repos/acme/demo") return json({ default_branch: "main" });
+    if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/ref/heads/main") {
+      baseReads += 1;
+      return json({ object: { sha: baseReads === 1 ? "pinned-base" : "moved-base" } });
+    }
+    if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/commits/pinned-base") return json({ tree: { sha: "base-tree" } });
+    if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/ref/heads/alfie/change") return json({ message: "Not Found" }, 404);
+    if (method === "GET" && parsed.pathname === "/repos/acme/demo/contents/README.md") return json({ message: "Not Found" }, 404);
+    if (method === "POST" && parsed.pathname === "/repos/acme/demo/git/blobs") return json({ sha: "blob" });
+    if (method === "POST" && parsed.pathname === "/repos/acme/demo/git/trees") return json({ sha: "tree" });
+    if (method === "POST" && parsed.pathname === "/repos/acme/demo/git/commits") return json({ sha: "commit" });
+    throw new Error(`Unexpected GitHub API request: ${method} ${parsed.pathname}`);
+  } });
+  try {
+    const tool = registry.tools.get("github.change.create_pr");
+    await assert.rejects(() => tool.handler({
+      repo: "acme/demo",
+      branch: "alfie/change",
+      title: "Test",
+      body: "Test",
+      commitMessage: "Test",
+      files: [{ path: "README.md", content: "test" }]
+    }), (error) => error.status === 409);
+    assert.equal(calls.filter((call) => call.method === "POST" && call.path === "/repos/acme/demo/git/refs").length, 0);
+    assert.equal(calls.filter((call) => call.method === "POST" && call.path === "/repos/acme/demo/pulls").length, 0);
   } finally {
     if (previousToken === undefined) delete process.env.ALFIE_GITHUB_TOKEN;
     else process.env.ALFIE_GITHUB_TOKEN = previousToken;
