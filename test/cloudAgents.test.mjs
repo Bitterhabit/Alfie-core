@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { applyCloudPrivacyPolicy, DEFAULT_CLOUD_VISIBILITY, redactPersonalText } from "../src/privacy/policy.mjs";
+import { applyCloudPrivacyPolicy, DEFAULT_CLOUD_VISIBILITY, filterWorkflowProfileForCloud, redactPersonalText } from "../src/privacy/policy.mjs";
 import { CloudAgentStore } from "../src/providers/cloudAgentStore.mjs";
 import { CloudAgentAdapters } from "../src/providers/cloudAdapters.mjs";
 import { createAlfieCoreServer } from "../src/server.mjs";
@@ -543,3 +543,37 @@ test("CloudAgentStore encrypts UI-configured Gemini & OpenAI API keys at rest on
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test("cloud workflow profile only includes enum-backed interaction preferences", () => {
+  const profile = filterWorkflowProfileForCloud({
+    explanationStyle: "concise",
+    changePresentation: "diffs_and_rollback",
+    interruptionTolerance: "quiet",
+    chunkSize: "small_steps",
+    learningMode: "explain",
+    customNotes: "Private notes: customer names and internal details",
+    location: {
+      enabled: true,
+      label: "Example City, UK",
+      latitude: 53.39,
+      longitude: -3.02,
+      timezone: "Europe/London"
+    },
+    learningTopics: [{ topic: "personal finances", confidence: "practicing" }],
+    learnedStyle: { promptHints: ["Personal response preference"] },
+    autoMemoryEnabled: true,
+    learnFromFeedbackEnabled: true
+  });
+
+  assert.deepEqual(profile, {
+    explanationStyle: "concise",
+    changePresentation: "diffs_and_rollback",
+    interruptionTolerance: "quiet",
+    chunkSize: "small_steps",
+    learningMode: "explain"
+  });
+  assert.equal(JSON.stringify(profile).includes("Example City"), false);
+  assert.equal(JSON.stringify(profile).includes("Private notes"), false);
+  assert.equal(filterWorkflowProfileForCloud(null), null);
+});
+
