@@ -23,7 +23,7 @@ test("Core source contains no arbitrary shell, eval, or dynamic Function executi
 
   const forbidden = [
     [/\bchild_process\b/, "child_process access"],
-    [/(?<![\w$.])(?:exec|execSync|spawn|spawnSync)\s*\(/, "shell/process execution"],
+    [/(?<![\w$.])(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)\s*\(/, "shell/process execution"],
     [/\beval\s*\(/, "eval"],
     [/\bFunction\s*\(/, "dynamic Function construction"],
     [/from\s*["']node:vm["']|require\s*\(\s*["']node:vm["']\s*\)/, "Node VM execution"]
@@ -36,20 +36,20 @@ test("Core source contains no arbitrary shell, eval, or dynamic Function executi
     // The VRAM monitor has one narrowly scoped hardware probe: execFile runs
     // a fixed nvidia-smi binary with fixed read-only arguments and no shell.
     if (relativePath === path.join("system", "vramMonitor.mjs")) {
-      assert.match(source, /import\\s*\\{\\s*execFile\\s*\\}\\s*from\\s*["']node:child_process["']/);
-      assert.match(source, /this\\.execFileImpl\\(\\s*"nvidia-smi",\\s*\\[\\s*"--query-gpu:name,memory\\.used,memory\\.total",\\s*"--format=csv,noheader,nounits"/);
-      assert.match(source, /timeout:\\s*2500/);
-      assert.match(source, /maxBuffer:\\s*64\\s*\\*\\s*1024/);
-      assert.doesNotMatch(source, /shell:\\s*true/);
-      assert.doesNotMatch(source, /(?<![\\w$.])(?:exec|execSync|execFileSync|spawn|spawnSync)\\s*\\(/);
-      assert.doesNotMatch(source, /\\beval\\s*\\(/);
-      assert.doesNotMatch(source, /\\bFunction\\s*\\(/);
-      assert.doesNotMatch(source, /from\\s*["']node:vm["']|require\\s*\\(\\s*["']node:vm["']\\s*\\)/);
+      assert.match(source, /import\s*\{\s*execFile\s*\}\s*from\s*["']node:child_process["']/);
+      assert.match(source, /this\.execFileImpl\(\s*"nvidia-smi",\s*\[\s*"--query-gpu:name,memory\.used,memory\.total",\s*"--format=csv,noheader,nounits"/);
+      assert.match(source, /timeout:\s*2500/);
+      assert.match(source, /maxBuffer:\s*64\s*\*\s*1024/);
+      assert.doesNotMatch(source, /shell:\s*true/);
+      assert.doesNotMatch(source, /(?<![\w$.])(?:exec|execSync|execFileSync|spawn|spawnSync)\s*\(/);
+      assert.doesNotMatch(source, /\beval\s*\(/);
+      assert.doesNotMatch(source, /\bFunction\s*\(/);
+      assert.doesNotMatch(source, /from\s*["']node:vm["']|require\s*\(\s*["']node:vm["']\s*\)/);
       continue;
     }
 
     for (const [pattern, label] of forbidden) {
-      assert.doesNotMatch(source, pattern, `${label} is forbidden in ${relativePath}`);
+      assert.doesNotMatch(source, pattern, label + " is forbidden in " + relativePath);
     }
   }
 });
