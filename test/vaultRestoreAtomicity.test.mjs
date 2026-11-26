@@ -54,6 +54,21 @@ describe("atomic vault restore", () => {
       await rm(sourceDirectory, { recursive: true, force: true });
     }
   });
+  it("refuses to export an encrypted vault larger than the supported restore limit", async () => {
+    const dataDirectory = await mkdtemp(path.join(tmpdir(), "alfie-vault-too-large-"));
+    try {
+      await writeUserJsonDocuments(dataDirectory, "alice", [
+        { filename: "memories.json", data: { ownerId: "alice", memories: [{ id: "large", text: "x".repeat(13 * 1024 * 1024) }] } }
+      ], { backend: "json" });
+      await assert.rejects(
+        () => exportEncryptedVault({ dataDirectory, userId: "alice", passphrase: PASSPHRASE }),
+        (error) => error.status === 413 && error.code === "VAULT_TOO_LARGE"
+      );
+    } finally {
+      await rm(dataDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("compensates JSON fallback writes when a later document fails", async () => {
     const dataDirectory = await mkdtemp(path.join(tmpdir(), "alfie-vault-json-rollback-"));
     try {
