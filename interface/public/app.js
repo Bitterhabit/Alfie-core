@@ -4318,6 +4318,23 @@ function createMetricsBadge(message) {
     addRow("Latency", latencyMs >= 1000 ? (latencyMs / 1000).toFixed(2) + "s (" + Math.round(latencyMs) + " ms)" : Math.round(latencyMs) + " ms");
   }
 
+  const stageLabels = [
+    ["storeReadsMs", "Store reads"],
+    ["autoMemoryMs", "Auto-memory"],
+    ["memoryRetrievalMs", "Memory retrieval"],
+    ["contextAssemblyMs", "Context assembly"],
+    ["providerSetupMs", "Provider setup"],
+    ["modelFirstTokenMs", "Time to first token"],
+    ["modelResponseMs", "Model response"],
+    ["toolExecutionMs", "Tool execution"]
+  ];
+  for (const [key, label] of stageLabels) {
+    const value = metrics.stages?.[key];
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+      addRow(label, value >= 1000 ? (value / 1000).toFixed(2) + "s (" + Math.round(value) + " ms)" : Math.round(value) + " ms");
+    }
+  }
+
   if (completionTokens != null) {
     if (totalTokens != null && totalTokens !== completionTokens) {
       addRow("Tokens", completionTokens + " out / " + totalTokens + " total");
@@ -4969,7 +4986,10 @@ async function continueChatAfterApproval({ conversationId, actionId = "", toolId
       latencyMs: Number.isFinite(Number(finalEvent?.metrics?.latencyMs)) ? Number(finalEvent.metrics.latencyMs) : elapsedMs,
       completionTokens: Number.isFinite(Number(finalEvent?.metrics?.completionTokens)) ? Number(finalEvent.metrics.completionTokens) : Math.max(1, Math.round(finalText.length / 4)),
       totalTokens: Number.isFinite(Number(finalEvent?.metrics?.totalTokens)) ? Number(finalEvent.metrics.totalTokens) : Math.max(1, Math.round(finalText.length / 4)),
-      model: finalEvent?.model || finalEvent?.metrics?.model || $("#model-mode").value || null
+      model: finalEvent?.model || finalEvent?.metrics?.model || $("#model-mode").value || null,
+      ...(finalEvent?.metrics?.stages && typeof finalEvent.metrics.stages === "object"
+        ? { stages: finalEvent.metrics.stages }
+        : {})
     };
     const provenance = finalEvent?.provenance || null;
     const savedMessage = await persistMessage("assistant", finalText, conversationId, metrics, provenance, null, nextActionCard);
