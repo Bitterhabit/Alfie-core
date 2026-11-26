@@ -50,7 +50,7 @@ test("app.js defines AlfieSoulController and sets real-time states", async () =>
   assert.match(app, /window\.alfieSoul(?:\?\.|\.)setState\("working"/);
   assert.match(app, /window\.alfieSoul(?:\?\.|\.)setState\("waiting"/);
   assert.match(app, /window\.alfieSoul(?:\?\.|\.)pulse\("completed"/);
-  assert.match(app, /window\.alfieSoul(?:\?\.|\.)setState\("error",\s*"red"\)/);
+  assert.match(app, /window\.alfieSoul(?:\?\.|\.)pulse\("error"/);
   assert.match(app, /window\.alfieSoul(?:\?\.|\.)setState\("offline",\s*"red"\)/);
 
   // Updates data-mood and data-animation-state attributes
