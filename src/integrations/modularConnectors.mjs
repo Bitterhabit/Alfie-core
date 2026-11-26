@@ -505,7 +505,7 @@ export function registerModularConnectorTools(
   };
   const validateGitRefName = (value, label = "Git ref") => {
     const ref = String(value || "").trim();
-    const invalid = !ref || ref.length > 255 || ref.startsWith("/") || ref.endsWith("/") ||
+    const invalid = !ref || ref === "@" || ref.length > 255 || ref.startsWith("/") || ref.endsWith("/") ||
       ref.endsWith(".") || ref.includes("..") || ref.includes("@{") ||
       /[\s~^:?*\[\]\\]/.test(ref) ||
       ref.split("/").some((part) => !part || part.startsWith(".") || part.endsWith(".lock"));
