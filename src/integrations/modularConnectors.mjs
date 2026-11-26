@@ -19,6 +19,26 @@ const REPO_PATTERN = /^[a-zA-Z0-9_.-]{1,64}\/[a-zA-Z0-9_.-]{1,100}$/;
 const NOTE_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,120}$/;
 const CONNECTOR_TIMEOUT_MS = 8000;
 
+function isSensitiveGitHubPath(value) {
+  const parts = String(value || "").toLowerCase().split("/");
+  const privateDirectories = new Set([".ssh", ".aws", ".docker", ".kube", ".gnupg"]);
+  const privateFiles = new Set([
+    ".netrc", ".npmrc", ".pypirc", ".pgpass", ".git-credentials",
+    "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", "credentials", "secrets"
+  ]);
+  return parts.some((part) =>
+    privateDirectories.has(part) ||
+    privateFiles.has(part) ||
+    part === ".env" ||
+    part.startsWith(".env.") ||
+    /^(secret|secrets|credential|credentials)\./.test(part) ||
+    [".pem", ".key", ".p12", ".pfx"].some((suffix) => part.endsWith(suffix)) ||
+    part.endsWith(".token") ||
+    part.endsWith(".secret") ||
+    part.endsWith(".credentials")
+  );
+}
+
 export function resolveConfinedNotePath(baseDir, relativeName) {
   const cleanRel = String(relativeName || "").trim().replace(/^\/+/, "");
   if (!cleanRel || !NOTE_NAME_PATTERN.test(cleanRel) || cleanRel.includes("..")) {
@@ -545,9 +565,7 @@ export function registerModularConnectorTools(
       if (!filePath || filePath.split("/").some((part) => !part || part === "." || part === "..") || filePath.includes("\\")) {
         throw Object.assign(new Error("Repository file path is invalid."), { status: 400 });
       }
-      const sensitiveParts = filePath.toLowerCase().split("/");
-      const sensitiveFile = sensitiveParts.some((part) => part === ".env" || part.startsWith(".env.") || part.startsWith("secret.") || part.startsWith("secrets.") || part.startsWith("credential.") || part.startsWith("credentials.") || part === "id_rsa" || [".pem", ".key", ".p12", ".pfx"].some((suffix) => part.endsWith(suffix)));
-      if (sensitiveFile) {
+      if (isSensitiveGitHubPath(filePath)) {
         throw Object.assign(new Error("This file type is blocked from automatic reading because it may contain credentials or private keys."), { status: 403 });
       }
       const ref = String(args.ref || "").trim();
@@ -704,8 +722,7 @@ export function registerModularConnectorTools(
           throw Object.assign(new Error("A changed file has an invalid repository path."), { status: 400 });
         }
         const lower = filePath.toLowerCase();
-        if (parts.some((part) => part.toLowerCase() === ".git" || part.toLowerCase() === "node_modules") ||
-            parts.some((part) => part.toLowerCase() === ".env" || part.toLowerCase().startsWith(".env.") || /^(secret|secrets|credential|credentials)\./i.test(part) || ["id_rsa"].includes(part.toLowerCase()) || [".pem", ".key", ".p12", ".pfx"].some((suffix) => part.toLowerCase().endsWith(suffix)))) {
+        if (parts.some((part) => part.toLowerCase() === ".git" || part.toLowerCase() === "node_modules") || isSensitiveGitHubPath(filePath)) {
           throw Object.assign(new Error("Changes to credential, private-key, .git, or dependency paths are blocked."), { status: 403 });
         }
         if (seen.has(lower)) throw Object.assign(new Error("A file path appears more than once in this change."), { status: 400 });
