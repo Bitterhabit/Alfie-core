@@ -224,6 +224,8 @@ test("GitHub connector rejects dot-segment repository names and malformed Git re
     await assert.rejects(() => change.handler({ ...base, base: "../main" }), (error) => error.status === 400);
     await assert.rejects(() => change.handler({ ...base, base: "release//candidate" }), (error) => error.status === 400);
     await assert.rejects(() => change.handler({ ...base, base: "release/@{bad" }), (error) => error.status === 400);
+    await assert.rejects(() => change.handler({ ...base, base: "@" }), (error) => error.status === 400);
+    await assert.rejects(() => change.handler({ ...base, base: "release/\\u0000bad" }), (error) => error.status === 400);
     assert.equal(calls.filter((call) => call.method === "POST").length, 0);
     assert.ok(calls.every((call) => new URL(call.url).hostname === "api.github.com"));
   } finally {
