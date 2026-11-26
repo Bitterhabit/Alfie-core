@@ -296,6 +296,7 @@ test("GitHub change approval guard binds the reviewed proposal to its exact base
       calls.push({ method, path: parsed.pathname });
       if (method === "GET" && parsed.pathname === "/repos/acme/demo") return json({ default_branch: "main" });
       if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/ref/heads/main") return json({ object: { sha: baseSha } });
+      if (method === "GET" && parsed.pathname.startsWith("/repos/acme/demo/git/commits/")) return json({ tree: { sha: "base-tree" } });
       if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/ref/heads/alfie/review-test") return json({ message: "Not Found" }, 404);
       if (method === "GET" && parsed.pathname === "/repos/acme/demo/pulls") return json(existingPulls);
       if (method === "GET" && parsed.pathname === "/repos/acme/demo/contents/README.md") return json({ message: "Not Found" }, 404);
@@ -335,6 +336,11 @@ test("GitHub change approval guard binds the reviewed proposal to its exact base
       () => tool.approvalGuard(args, { userId: "alice", toolId: tool.id }),
       (error) => error.status === 409,
       "A previously closed PR must prevent reusing the same Alfie branch name"
+    );
+    await assert.rejects(
+      () => tool.handler(args, { approvalGuard: currentState }),
+      (error) => error.status === 409,
+      "Execution must recheck for a PR created after the approval card was reviewed"
     );
     await assert.rejects(
       () => tool.handler(args, { approvalGuard: reviewedState }),
