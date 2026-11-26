@@ -45,7 +45,7 @@ These are Alfie-side capability grants, separate from the GitHub token's reposit
 The github.change.create_pr action:
 
 - creates a new branch whose name begins with alfie/;
-- uses a pinned base commit and refuses to publish if the base branch moves while the proposal is prepared;
+- captures the base commit and changed-file versions when the approval card is prepared, displays the reviewed base commit, and rejects the approval if that state changes before or during execution;
 - requires the expected current file SHA for edits to existing files;
 - refuses to overwrite an existing file when it was proposed as a new file;
 - limits a proposal to 10 files and 80 KB combined (30 KB per file);
