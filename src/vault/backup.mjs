@@ -138,6 +138,14 @@ export async function exportEncryptedVault({
     ciphertext: encrypted.toString("base64")
   };
 
+  const encryptedBytes = Buffer.byteLength(JSON.stringify(archive), "utf8");
+  if (encryptedBytes > MAX_VAULT_BYTES) {
+    throw Object.assign(
+      new Error("Encrypted vault export exceeds the maximum supported archive size. Export fewer or smaller collections before retrying."),
+      { status: 413, code: "VAULT_TOO_LARGE" }
+    );
+  }
+
   return {
     archive,
     summary: {
@@ -145,7 +153,7 @@ export async function exportEncryptedVault({
       collectionCount: Object.keys(collections).length,
       counts,
       manifestSha256,
-      encryptedBytes: Buffer.byteLength(JSON.stringify(archive), "utf8")
+      encryptedBytes
     }
   };
 }
