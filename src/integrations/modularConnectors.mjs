@@ -839,10 +839,29 @@ export function registerModularConnectorTools(
         branch,
         base: baseBranch,
         commit: String(commit.sha || "").slice(0, 12),
+        commitSha: String(commit.sha || ""),
         pullRequest: Number(pull.number),
         url: String(pull.html_url || ""),
         verified: true,
         draft: true
+      };
+    },
+    async verifyResult(args, result) {
+      if (!Number.isInteger(Number(result?.pullRequest)) || !result?.commitSha) {
+        return { verified: false, detail: "The created pull request or full commit SHA was not returned." };
+      }
+      const repo = validateRepo(args.repo);
+      const pull = await githubRequest(`/repos/${repo}/pulls/${Number(result.pullRequest)}`);
+      const verified = pull.head?.ref === args.branch
+        && pull.head?.sha === result.commitSha
+        && pull.base?.ref === result.base
+        && pull.state === "open"
+        && pull.draft === true;
+      return {
+        verified,
+        detail: verified
+          ? "GitHub independently confirms the exact branch, commit, base branch, and open draft pull request."
+          : "The pull request no longer matches the approved branch, commit, base, or draft state."
       };
     }
   });
