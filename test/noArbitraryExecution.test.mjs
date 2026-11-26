@@ -38,6 +38,7 @@ test("Core source contains no arbitrary shell, eval, or dynamic Function executi
     if (relativePath === path.join("system", "vramMonitor.mjs")) {
       assert.match(source, /import\s*\{\s*execFile\s*\}\s*from\s*["']node:child_process["']/);
       assert.match(source, /this\.execFileImpl\(\s*"nvidia-smi",\s*\[\s*"--query-gpu:name,memory\.used,memory\.total",\s*"--format=csv,noheader,nounits"/);
+      assert.equal((source.match(/this\.execFileImpl\s*\(/g) || []).length, 1, "Only one fixed hardware probe is permitted.");
       assert.match(source, /timeout:\s*2500/);
       assert.match(source, /maxBuffer:\s*64\s*\*\s*1024/);
       assert.doesNotMatch(source, /shell:\s*true/);
