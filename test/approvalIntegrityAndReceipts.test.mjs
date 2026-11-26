@@ -193,6 +193,7 @@ test("Approval integrity binds pending actions to exact security-relevant tool d
         handlerRef.called += 1;
         return { saved: text };
       },
+      approvalGuard: async ({ text }) => ({ allowed: Boolean(text) }),
       ...overrides
     });
   };
@@ -235,6 +236,10 @@ test("Approval integrity binds pending actions to exact security-relevant tool d
       { label: "scope changed", overrides: { scope: "notes:admin" } },
       { label: "trust changed", overrides: { trust: "external" } },
       { label: "risk changed", overrides: { risk: "draft", externalAction: true } },
+      {
+        label: "approval guard implementation changed without changing its result",
+        overrides: { approvalGuard: async ({ text }) => ({ allowed: text.length > 0 }) }
+      },
       {
         label: "inputSchema changed",
         overrides: {
