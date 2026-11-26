@@ -503,7 +503,7 @@ export function registerModularConnectorTools(
     async handler(args) {
       const repo = validateRepo(args.repo);
       const requestedPath = String(args.path || "").trim().replace(/^\\/+|\\/+$/g, "");
-      if (requestedPath && (requestedPath.split("/").some((part) => !part || part === "." || part === "..") || requestedPath.includes("\\\\"))) {
+      if (requestedPath && (requestedPath.split("/").some((part) => !part || part === "." || part === "..") || requestedPath.includes("\\"))) {
         throw Object.assign(new Error("Repository path is invalid."), { status: 400 });
       }
       const metadata = await githubRequest(`/repos/${repo}`);
@@ -540,7 +540,7 @@ export function registerModularConnectorTools(
     async handler(args) {
       const repo = validateRepo(args.repo);
       const filePath = String(args.path || "").trim().replace(/^\\/+/, "");
-      if (!filePath || filePath.split("/").some((part) => !part || part === "." || part === "..") || filePath.includes("\\\\")) {
+      if (!filePath || filePath.split("/").some((part) => !part || part === "." || part === "..") || filePath.includes("\\")) {
         throw Object.assign(new Error("Repository file path is invalid."), { status: 400 });
       }
       if (/(^|\\/)(?:\\.env(?:\\.|$)|secrets?\\.|credentials?\\.|id_rsa|.*\\.(?:pem|key|p12|pfx))$/i.test(filePath)) {
