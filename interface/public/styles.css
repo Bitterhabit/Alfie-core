@@ -7509,6 +7509,44 @@ input:focus,textarea:focus,select:focus{
   scroll-margin-block: 7rem;
   animation: pending-action-focus 1.8s ease-out 1;
 }
+.pending-action-file-review {
+  margin-top: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  overflow: hidden;
+}
+.pending-action-file-review > summary {
+  cursor: pointer;
+  padding: 0.7rem 0.85rem;
+  font-weight: 600;
+}
+.pending-action-file-meta {
+  margin: 0;
+  padding: 0 0.85rem 0.65rem;
+  font-size: 0.82em;
+  opacity: 0.78;
+}
+.pending-action-file {
+  border-top: 1px solid var(--line);
+  padding: 0.65rem 0.85rem;
+}
+.pending-action-file h4 {
+  margin: 0 0 0.5rem;
+  font: 600 0.85rem/1.4 inherit;
+  overflow-wrap: anywhere;
+}
+.pending-action-file pre {
+  max-height: 22rem;
+  overflow: auto;
+  white-space: pre;
+  overflow-wrap: normal;
+  margin: 0;
+  padding: 0.8rem;
+  border-radius: 0.55rem;
+  background: var(--surface, rgba(0, 0, 0, 0.16));
+  font: 0.78rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
 .pending-action-reason {
   margin: 0.55rem 0 0;
   font-size: 0.88em;
