@@ -7,6 +7,7 @@ export class PendingActionStore {
   constructor({ dataDirectory = process.env.ALFIE_CORE_DATA_DIR || "/data", now = () => Date.now() } = {}) {
     this.dataDirectory = path.resolve(dataDirectory);
     this.now = now;
+    this.instanceId = randomUUID();
     this.mutex = new UserMutex();
   }
 
@@ -23,6 +24,37 @@ export class PendingActionStore {
     if (!store) return { schemaVersion: 1, ownerId: userId, actions: [], receipts: [] };
     if (store.schemaVersion !== 1 || store.ownerId !== userId || !Array.isArray(store.actions)) throw new Error("Pending action store failed integrity validation.");
     if (!Array.isArray(store.receipts)) store.receipts = [];
+
+    // An executing action owned by a previous Core instance cannot safely be
+    // replayed: the process may have stopped before, during, or after its side effect.
+    const interrupted = store.actions.filter((item) =>
+      item.status === "executing" && item.executionInstanceId !== this.instanceId
+    );
+    if (interrupted.length) {
+      const recoveredAt = new Date(this.now()).toISOString();
+      const recoveredReceipts = interrupted.map((action) => ({
+        id: randomUUID(),
+        actionId: String(action.id || "").slice(0, 64),
+        toolId: String(action.toolId || "").slice(0, 80),
+        toolName: String(action.toolId || "Interrupted action").slice(0, 100),
+        riskLevel: ["low", "medium", "high"].includes(action.simulation?.riskLevel) ? action.simulation.riskLevel : "medium",
+        status: "failed",
+        summary: String(action.simulation?.summary || action.preview || action.toolId || "Interrupted approved action").slice(0, 300),
+        affectedResource: String(action.simulation?.affectedResource || "").slice(0, 160),
+        rollbackPlan: String(action.simulation?.rollbackPlan || "").slice(0, 260),
+        verified: false,
+        verificationState: "outcome_unknown",
+        verificationDetail: "Core restarted while this approved action was executing. Its external effect may have completed; inspect the destination before attempting it again.",
+        executedAt: recoveredAt
+      }));
+      const interruptedIds = new Set(interrupted.map((action) => action.id));
+      store.actions = store.actions.filter((action) => !interruptedIds.has(action.id));
+      store.receipts = [
+        ...recoveredReceipts,
+        ...store.receipts.filter((receipt) => !interruptedIds.has(receipt.actionId))
+      ].slice(0, 100);
+      await this.save(userId, store);
+    }
     return store;
   }
 
@@ -65,21 +97,39 @@ export class PendingActionStore {
   async take(userId, actionId) {
     return this.exclusive(userId, async () => {
       const store = await this.load(userId);
-      const index = store.actions.findIndex((item) => item.id === actionId && item.ownerId === userId);
+      const index = store.actions.findIndex((item) =>
+        item.id === actionId && item.ownerId === userId && item.status === "pending"
+      );
       if (index < 0) throw Object.assign(new Error("Pending action not found."), { status: 404 });
-      const [action] = store.actions.splice(index, 1);
-      if (action.expiresAt <= this.now() || action.status !== "pending") {
+      const action = store.actions[index];
+      if (action.expiresAt <= this.now()) {
+        store.actions.splice(index, 1);
         await this.save(userId, store);
         throw Object.assign(new Error("Pending action expired or was already handled."), { status: 409 });
       }
+      action.status = "executing";
+      action.executionInstanceId = this.instanceId;
+      action.executionStartedAt = new Date(this.now()).toISOString();
       await this.save(userId, store);
-      return action;
+      return { ...action };
     });
   }
 
   async reject(userId, actionId) {
-    const action = await this.take(userId, actionId);
-    return { actionId: action.id, status: "rejected" };
+    return this.exclusive(userId, async () => {
+      const store = await this.load(userId);
+      const index = store.actions.findIndex((item) =>
+        item.id === actionId && item.ownerId === userId && item.status === "pending"
+      );
+      if (index < 0) throw Object.assign(new Error("Pending action not found."), { status: 404 });
+      const [action] = store.actions.splice(index, 1);
+      if (action.expiresAt <= this.now()) {
+        await this.save(userId, store);
+        throw Object.assign(new Error("Pending action expired or was already handled."), { status: 409 });
+      }
+      await this.save(userId, store);
+      return { actionId: action.id, status: "rejected" };
+    });
   }
 
   async recordReceipt(userId, receipt = {}) {
@@ -106,7 +156,17 @@ export class PendingActionStore {
         verificationDetail: String(receipt.verificationDetail || "").slice(0, 260),
         executedAt: new Date(this.now()).toISOString()
       };
-      store.receipts = [entry, ...(Array.isArray(store.receipts) ? store.receipts : [])].slice(0, 100);
+      const existing = (Array.isArray(store.receipts) ? store.receipts : []).find((item) => item.actionId && item.actionId === entry.actionId);
+      if (existing?.verificationState === "verified" && entry.verificationState === "unverified") {
+        entry.verified = true;
+        entry.verificationState = "verified";
+        entry.verificationDetail = existing.verificationDetail;
+      }
+      store.actions = store.actions.filter((item) => item.id !== entry.actionId);
+      store.receipts = [
+        entry,
+        ...(Array.isArray(store.receipts) ? store.receipts.filter((item) => item.actionId !== entry.actionId) : [])
+      ].slice(0, 100);
       await this.save(userId, store);
       return entry;
     });
