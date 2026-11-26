@@ -357,7 +357,7 @@ test("GitHub change inspection safely distinguishes missing branches, orphan bra
 
     let result = await tool.handler({ repo: "acme/demo", branch: "alfie/recovery-check" });
     assert.equal(result.status, "branch_without_pull_request");
-    assert.equal(result.branchSha, "branch-commit");
+    assert.equal(result.branchSha, "branch-commi");
 
     pullRequests = [{
       number: 42,
