@@ -36,6 +36,18 @@ The production agent harness is implemented in Node.js:
 
 The Petrio adapter currently registers read-only Calendar and Journal tools (including selected Journal entry reads) when its private service connection is configured. Alfie Core also registers scoped memory search/read tools and approval-gated memory update/forget tools. Mail tools and Calendar/Journal write tools are not yet registered; they must declare trust, risk, strict schemas and output provenance before being enabled. Automatic memory capture remains disabled.
 
+## GitHub project integration
+
+GitHub access is split into independent permissions:
+
+- `github:read` lets Alfie inspect repository metadata, browse a bounded file tree, read bounded text files, and review recent commits and open pull requests.
+- `github:write` allows one approval-gated workflow: create a new `alfie/*` branch, commit up to 10 reviewed text-file changes (80 KB combined), and open a draft pull request. Alfie cannot target the default branch as its working branch and never pushes directly to the base branch.
+- Existing `github:draft` remains separate for issue creation.
+
+Set `ALFIE_GITHUB_TOKEN` only in the Core server environment. For project changes, use a fine-grained token restricted to the intended repositories with **Contents: read/write** and **Pull requests: read/write**. Read-only browsing needs repository metadata and Contents read access. Do not put the token in browser configuration or chat.
+
+Grant `github:read` and `github:write` separately in Tools & Access. Each project change is proposed as a pending action; Alfie does not create the branch or pull request until you approve it. The approved action is bound to its exact arguments and tool fingerprint, and the resulting draft PR is checked after creation. If the network fails after GitHub accepts part of a multi-step operation, check the repository before retrying.
+
 ## Standalone interface
 
 The repository includes a separate Node.js web application in `interface/`. It is a first-party client of Core, not a second agent runtime. Its backend authenticates the local session, signs requests with the standalone identity secret and calls Core through the server-side client SDK. Browser code never receives the Core service token or identity secret.
