@@ -51,7 +51,8 @@ The github.change.create_pr action:
 - limits a proposal to 10 files and 80 KB combined (30 KB per file);
 - blocks credential, environment and private-key paths;
 - opens a draft pull request and verifies its branch, base, commit and draft state;
-- provides the read-only `github.change.inspect` recovery check to distinguish a missing branch, a branch created without a PR, and an existing PR after an interrupted request.
+- checks for an existing PR at approval and again immediately before branch publication, preventing duplicate PRs even if an earlier branch was deleted;
+- provides the read-only `github.change.inspect` recovery check to distinguish a missing branch, a branch created without a PR, and an existing PR after an interrupted request, including when the branch itself has since been deleted.
 
 It never commits directly to the repository's default branch. Every write requires explicit approval in Alfie's chat. The approval card shows the exact proposed file contents before execution.
 
