@@ -191,19 +191,23 @@ export class ToolDispatcher {
       (untrustedContext && tool.risk !== "read") ||
       (Boolean(tool.approvalWhenUntrusted) && untrustedContext);
     if (requiresApproval) {
+      const approvalGuard = tool.approvalGuard
+        ? await tool.approvalGuard(args, { userId, toolId })
+        : null;
+      const approvalContext = { userId, toolId, approvalGuard };
       const preview = tool.approvalPreview
-        ? String(await tool.approvalPreview(args, { userId, toolId })).slice(0, 500)
+        ? String(await tool.approvalPreview(args, approvalContext)).slice(0, 500)
         : "";
       let rawSim = null;
       if (tool.dryRun) {
-        try { rawSim = await tool.dryRun(args, { userId, toolId, preview }); } catch { rawSim = null; }
+        try { rawSim = await tool.dryRun(args, { ...approvalContext, preview }); } catch { rawSim = null; }
       }
       const simulation = normaliseSimulation(rawSim, tool, preview);
       const toolFingerprint = computeToolFingerprint(tool);
       const pending = await this.pendingActionStore.create(userId, {
         toolId, arguments: args, argumentsHash: callHash, toolFingerprint, risk: tool.risk, preview, simulation,
         projectId: projectId || null,
-        approvalGuard: tool.approvalGuard ? await tool.approvalGuard(args, { userId, toolId }) : null,
+        approvalGuard,
         reason: untrustedContext ? "External/untrusted content is present in this turn" : `Tool risk level: ${tool.risk}`
       });
       if (this.auditStore) await this.auditStore.record(userId, {
