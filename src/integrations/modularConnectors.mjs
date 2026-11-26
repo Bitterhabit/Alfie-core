@@ -503,6 +503,15 @@ export function registerModularConnectorTools(
     if (!REPO_PATTERN.test(repo)) throw Object.assign(new Error("Repository must match owner/repo format."), { status: 400 });
     return repo;
   };
+  const validateGitRefName = (value, label = "Git ref") => {
+    const ref = String(value || "").trim();
+    const invalid = !ref || ref.length > 255 || ref.startsWith("/") || ref.endsWith("/") ||
+      ref.endsWith(".") || ref.includes("..") || ref.includes("@{") ||
+      /[\\s~^:?*\\[\\]\\\\]/.test(ref) ||
+      ref.split("/").some((part) => !part || part.startsWith(".") || part.endsWith(".lock"));
+    if (invalid) throw Object.assign(new Error(`${label} name is invalid.`), { status: 400 });
+    return ref;
+  };
 
   registry.register({
     id: "github.repo.tree",
@@ -694,10 +703,7 @@ export function registerModularConnectorTools(
         throw Object.assign(new Error("Branch must be a safe Alfie-owned name beginning with alfie/."), { status: 400 });
       }
       const metadata = await githubRequest(`/repos/${repo}`);
-      const baseBranch = base || String(metadata.default_branch || "main");
-      if (!baseBranch || baseBranch.includes("..") || baseBranch.startsWith("/") || baseBranch.endsWith("/") || baseBranch.includes("//")) {
-        throw Object.assign(new Error("Base branch name is invalid."), { status: 400 });
-      }
+      const baseBranch = validateGitRefName(base || String(metadata.default_branch || "main"), "Base branch");
       if (branch === baseBranch || branch === metadata.default_branch) {
         throw Object.assign(new Error("Alfie is not allowed to write to the default branch or use it as its working branch."), { status: 403 });
       }
