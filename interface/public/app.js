@@ -8143,7 +8143,7 @@ function capabilityPresentation(scope) {
     "calendar:write": ["Calendar changes", "Add or change events"],
     "journal:read": ["Journal", "Read journal entries"],
     "journal:write": ["Journal changes", "Create or edit journal entries"],
-    "github:read": ["GitHub", "Read connected repositories and issues"],
+    "github:read": ["GitHub", "Browse repositories, source files, commits and pull requests"],
     "github:draft": ["GitHub changes", "Prepare GitHub changes for review"],
     "homelab:read": ["Homelab status", "Check connected homelab systems"],
     "petrio:status:read": ["Petrio status", "Check Petrio service status"],
