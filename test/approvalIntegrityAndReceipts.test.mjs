@@ -596,6 +596,16 @@ test("a Core restart recovers an in-flight approval as outcome_unknown and never
     assert.equal(executing.status, "executing");
     assert.ok(executing.executionInstanceId);
 
+    // Creating another proposal must not discard the durable in-flight marker.
+    const secondProposal = await beforeRestart.create("alice", {
+      toolId: "notes.save",
+      risk: "write",
+      arguments: { text: "second proposal" },
+      argumentsHash: "second-args-hash",
+      toolFingerprint: "second-tool-fingerprint",
+      preview: "Save a second note"
+    });
+
     // A fresh store instance represents a Core process restart.
     const afterRestart = new PendingActionStore({ dataDirectory: dir });
     const receipts = await afterRestart.listReceipts("alice");
@@ -606,7 +616,8 @@ test("a Core restart recovers an in-flight approval as outcome_unknown and never
     assert.equal(receipts[0].verificationState, "outcome_unknown");
     assert.match(receipts[0].verificationDetail, /Core restarted/i);
 
-    assert.deepEqual(await afterRestart.list("alice"), []);
+    const pendingAfterRestart = await afterRestart.list("alice");
+    assert.deepEqual(pendingAfterRestart.map((item) => item.id), [secondProposal.id]);
     await assert.rejects(
       () => afterRestart.take("alice", proposal.id),
       (error) => error.status === 404
