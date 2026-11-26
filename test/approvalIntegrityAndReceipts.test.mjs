@@ -505,3 +505,71 @@ test("Concurrent approval requests can consume and execute one pending action on
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test("Pending approvals fail closed after permission revocation or capability lease expiry", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-approval-permission-revoked-"));
+  let now = Date.parse("2026-11-26T22:00:00.000Z");
+  const registry = new ToolRegistry();
+  const permissionStore = new PermissionStore({ dataDirectory: dir, now: () => now });
+  const pendingActionStore = new PendingActionStore({ dataDirectory: dir, now: () => now });
+  let executions = 0;
+
+  registry.register({
+    id: "ops.permission_checked_write",
+    name: "Permission-checked write",
+    description: "A write used to verify capability revocation at approval time.",
+    scope: "ops:write",
+    risk: "write",
+    trust: "internal",
+    network: false,
+    externalAction: false,
+    inputSchema: {
+      type: "object",
+      properties: { value: { type: "string", minLength: 1 } },
+      required: ["value"],
+      additionalProperties: false
+    },
+    handler: async ({ value }) => {
+      executions += 1;
+      return { saved: value };
+    }
+  });
+
+  const dispatcher = new ToolDispatcher({ registry, permissionStore, pendingActionStore });
+  try {
+    await permissionStore.grant("alice", "ops:write");
+    const revokedProposal = await dispatcher.dispatch({
+      userId: "alice",
+      toolId: "ops.permission_checked_write",
+      args: { value: "revoked" },
+      turnId: "permission-revoked"
+    });
+    assert.equal(revokedProposal.status, "awaiting_user_approval");
+
+    await permissionStore.revoke("alice", "ops:write");
+    await assert.rejects(
+      () => dispatcher.approve("alice", revokedProposal.actionId),
+      (error) => error.status === 403
+    );
+    assert.equal(executions, 0, "Revoked permissions must prevent the pending action from executing");
+
+    await permissionStore.grant("alice", "ops:write", { ttlMinutes: 1 });
+    const expiringProposal = await dispatcher.dispatch({
+      userId: "alice",
+      toolId: "ops.permission_checked_write",
+      args: { value: "expired" },
+      turnId: "permission-expiry"
+    });
+    assert.equal(expiringProposal.status, "awaiting_user_approval");
+
+    now += 60 * 1000;
+    await assert.rejects(
+      () => dispatcher.approve("alice", expiringProposal.actionId),
+      (error) => error.status === 403
+    );
+    assert.equal(executions, 0, "Expired capability leases must prevent the pending action from executing");
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
