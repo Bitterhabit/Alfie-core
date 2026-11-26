@@ -25,7 +25,7 @@ test("Core source contains no arbitrary shell, eval, or dynamic Function executi
     [/\bchild_process\b/, "child_process access"],
     [/(?<![\w$.])(?:exec|execSync|spawn|spawnSync)\s*\(/, "shell/process execution"],
     [/\beval\s*\(/, "eval"],
-    [/\bnew\s+Function\s*\(/, "dynamic Function construction"],
+    [/\bFunction\s*\(/, "dynamic Function construction"],
     [/from\s*["']node:vm["']|require\s*\(\s*["']node:vm["']\s*\)/, "Node VM execution"]
   ];
 
