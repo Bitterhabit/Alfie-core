@@ -46,50 +46,51 @@ function escapeRegExp(str) {
   return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function sanitizeForCloud(text, { customTerms = [] } = {}) {
+function createSanitizerState() {
+  return {
+    valueToToken: new Map(),
+    tokenToValue: new Map(),
+    counters: {},
+    redactions: []
+  };
+}
+
+export function sanitizeForCloud(text, { customTerms = [], state = null } = {}) {
   const original = String(text ?? "");
-  const valueToToken = new Map();
-  const tokenToValue = new Map();
-  const counters = {};
-  const redactions = [];
+  const shared = state || createSanitizerState();
+  const redactionStart = shared.redactions.length;
 
   function tokenFor(category, prefix, matchedValue) {
-    const existing = valueToToken.get(matchedValue);
+    const existing = shared.valueToToken.get(matchedValue);
     if (existing) return existing;
-    counters[prefix] = (counters[prefix] || 0) + 1;
-    const token = `[${prefix}_${counters[prefix]}]`;
-    valueToToken.set(matchedValue, token);
-    tokenToValue.set(token, matchedValue);
-    redactions.push({
-      token,
-      category,
-      length: matchedValue.length
-    });
+    shared.counters[prefix] = (shared.counters[prefix] || 0) + 1;
+    const token = `[${prefix}_${shared.counters[prefix]}]`;
+    shared.valueToToken.set(matchedValue, token);
+    shared.tokenToValue.set(token, matchedValue);
+    shared.redactions.push({ token, category, length: matchedValue.length });
     return token;
   }
 
   let sanitized = original;
-
-  // 1. Apply user-defined private terms first (longest first to avoid partial collisions)
   const cleanTerms = Array.isArray(customTerms)
     ? customTerms
-        .map((t) => String(t || "").trim())
-        .filter((t) => t.length >= 3)
+        .map((term) => String(term || "").trim())
+        .filter((term) => term.length >= 3)
         .sort((a, b) => b.length - a.length)
         .slice(0, 40)
     : [];
 
   for (const term of cleanTerms) {
-    const regex = new RegExp(`\\b${escapeRegExp(term)}\\b`, "gi");
+    const regex = new RegExp(`\\\\b${escapeRegExp(term)}\\\\b`, "gi");
     sanitized = sanitized.replace(regex, (match) => tokenFor("custom_private_term", "PRIVATE_TERM", match));
   }
 
-  // 2. Apply deterministic structured entity patterns
   for (const rule of PATTERNS) {
     rule.regex.lastIndex = 0;
     sanitized = sanitized.replace(rule.regex, (match) => tokenFor(rule.category, rule.prefix, match));
   }
 
+  const redactions = shared.redactions.slice(redactionStart);
   const categoryCounts = {};
   for (const item of redactions) {
     categoryCounts[item.category] = (categoryCounts[item.category] || 0) + 1;
@@ -100,7 +101,7 @@ export function sanitizeForCloud(text, { customTerms = [] } = {}) {
     redactedCount: redactions.length,
     categoryCounts,
     redactions,
-    tokenMap: Object.fromEntries(tokenToValue.entries()),
+    tokenMap: Object.fromEntries(shared.tokenToValue.entries()),
     safeToSend: true
   };
 }
@@ -111,39 +112,31 @@ export function rehydrateFromCloud(cloudText, tokenMap = {}) {
   const entries = Object.entries(tokenMap).sort((a, b) => b[0].length - a[0].length);
   for (const [token, originalValue] of entries) {
     if (!token || typeof originalValue !== "string") continue;
-    // Never rehydrate secrets back into model output if someone tried to echo them?
-    // Safe here because rehydration only restores the user's own local text in the local UI.
     output = output.split(token).join(originalValue);
   }
   return output;
 }
 
 export function sanitizeMessagesForCloud(messages = [], { customTerms = [] } = {}) {
-  const combinedTokenMap = {};
-  const allRedactions = [];
-  const categoryCounts = {};
-
-  const sanitizedMessages = (Array.isArray(messages) ? messages : []).map((msg) => {
-    const result = sanitizeForCloud(msg?.content || "", { customTerms });
-    Object.assign(combinedTokenMap, result.tokenMap);
-    allRedactions.push(...result.redactions);
-    for (const [cat, count] of Object.entries(result.categoryCounts)) {
-      categoryCounts[cat] = (categoryCounts[cat] || 0) + count;
-    }
-    return {
-      ...msg,
-      content: result.sanitizedText
-    };
+  const state = createSanitizerState();
+  const sanitizedMessages = (Array.isArray(messages) ? messages : []).map((message) => {
+    const result = sanitizeForCloud(message?.content || "", { customTerms, state });
+    return { ...message, content: result.sanitizedText };
   });
+
+  const categoryCounts = {};
+  for (const item of state.redactions) {
+    categoryCounts[item.category] = (categoryCounts[item.category] || 0) + 1;
+  }
 
   return {
     messages: sanitizedMessages,
-    tokenMap: combinedTokenMap,
+    tokenMap: Object.fromEntries(state.tokenToValue.entries()),
     manifest: {
       airlockActive: true,
-      redactedCount: allRedactions.length,
+      redactedCount: state.redactions.length,
       categoryCounts,
-      redactions: allRedactions
+      redactions: state.redactions
     }
   };
 }
