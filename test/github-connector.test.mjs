@@ -309,6 +309,7 @@ test("GitHub change approval guard binds the reviewed proposal to its exact base
     const reviewedState = await tool.approvalGuard(args, { userId: "alice", toolId: tool.id });
     assert.equal(reviewedState.baseSha, "base-commit-one");
     assert.equal(reviewedState.files[0].sha, null);
+    assert.match(tool.approvalPreview(args, { approvalGuard: reviewedState }), /main @ base-commit/);
 
     // Simulate the base branch advancing after the approval card was created.
     baseSha = "base-commit-two";
