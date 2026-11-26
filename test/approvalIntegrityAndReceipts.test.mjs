@@ -573,3 +573,46 @@ test("Pending approvals fail closed after permission revocation or capability le
   }
 });
 
+test("a Core restart recovers an in-flight approval as outcome_unknown and never makes it replayable", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alfie-approval-restart-recovery-"));
+  try {
+    const beforeRestart = new PendingActionStore({ dataDirectory: dir });
+    const proposal = await beforeRestart.create("alice", {
+      toolId: "github.change.create_pr",
+      risk: "write",
+      arguments: { repo: "acme/demo", branch: "alfie/recovery" },
+      argumentsHash: "stable-args-hash",
+      toolFingerprint: "stable-tool-fingerprint",
+      preview: "Create reviewed branch and draft PR",
+      simulation: {
+        riskLevel: "high",
+        summary: "Create a reviewed GitHub change",
+        affectedResource: "github:acme/demo:branch:alfie/recovery",
+        rollbackPlan: "Inspect and close any created pull request"
+      }
+    });
+
+    const executing = await beforeRestart.take("alice", proposal.id);
+    assert.equal(executing.status, "executing");
+    assert.ok(executing.executionInstanceId);
+
+    // A fresh store instance represents a Core process restart.
+    const afterRestart = new PendingActionStore({ dataDirectory: dir });
+    const receipts = await afterRestart.listReceipts("alice");
+    assert.equal(receipts.length, 1);
+    assert.equal(receipts[0].actionId, proposal.id);
+    assert.equal(receipts[0].status, "failed");
+    assert.equal(receipts[0].verified, false);
+    assert.equal(receipts[0].verificationState, "outcome_unknown");
+    assert.match(receipts[0].verificationDetail, /Core restarted/i);
+
+    assert.deepEqual(await afterRestart.list("alice"), []);
+    await assert.rejects(
+      () => afterRestart.take("alice", proposal.id),
+      (error) => error.status === 404
+    );
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
