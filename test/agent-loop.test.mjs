@@ -592,7 +592,7 @@ test("ContextAssembler gives Alfie an authoritative plain-language summary of cu
     userText: "What can you currently access?",
     history: [{ role: "user", content: "What can you currently access?" }],
     registry,
-    grantedScopes: ["web:read"]
+    grantedScopes: ["web:read", "github:read"]
   });
   const system = assembled.messages[0].content;
   assert.match(system, /CURRENT CAPABILITIES/);
