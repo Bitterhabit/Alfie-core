@@ -126,7 +126,7 @@ test("GitHub project change tool is approval-gated and only creates Alfie draft 
     await assert.rejects(() => tool.handler({
       repo: "acme/demo", branch: "main", title: "Bad", body: "No", commitMessage: "No",
       files: [{ path: "README.md", content: "overwrite" }]
-    }), (error) => error.status === 403);
+    }), (error) => error.status === 400);
     await assert.rejects(() => tool.handler({
       repo: "acme/demo", branch: "alfie/bad", title: "Bad", body: "No", commitMessage: "No",
       files: [{ path: "../.env", content: "secret" }]
