@@ -109,6 +109,7 @@ test("GitHub project change tool is approval-gated and only creates Alfie draft 
     assert.ok(tool);
     assert.equal(tool.scope, "github:write");
     assert.equal(tool.risk, "write");
+    assert.equal(tool.requiresApproval, true);
     assert.equal(tool.externalAction, true);
     assert.equal(tool.network, true);
     assert.equal(tool.trust, "external");
@@ -139,6 +140,50 @@ test("GitHub project change tool is approval-gated and only creates Alfie draft 
       repo: "acme/demo", branch: "alfie/bad", title: "Bad", body: "No", commitMessage: "No",
       files: [{ path: ".aws/credentials", content: "secret" }]
     }), (error) => error.status === 403);
+  } finally {
+    if (previousToken === undefined) delete process.env.ALFIE_GITHUB_TOKEN;
+    else process.env.ALFIE_GITHUB_TOKEN = previousToken;
+  }
+});
+
+
+test("GitHub project changes require the exact existing-file SHA at the pinned base commit", async () => {
+  const previousToken = process.env.ALFIE_GITHUB_TOKEN;
+  process.env.ALFIE_GITHUB_TOKEN = "test-github-token";
+  const calls = [];
+  const registry = new ToolRegistry();
+  registerModularConnectorTools(registry, { fetchImpl: async (url, options = {}) => {
+    const parsed = new URL(String(url));
+    const method = options.method || "GET";
+    calls.push({ method, path: parsed.pathname, ref: parsed.searchParams.get("ref") });
+    if (method === "GET" && parsed.pathname === "/repos/acme/demo") return json({ default_branch: "main" });
+    if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/ref/heads/main") return json({ object: { sha: "pinned-base-commit" } });
+    if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/commits/pinned-base-commit") return json({ tree: { sha: "pinned-base-tree" } });
+    if (method === "GET" && parsed.pathname === "/repos/acme/demo/git/ref/heads/alfie/change") return json({ message: "Not Found" }, 404);
+    if (method === "GET" && parsed.pathname === "/repos/acme/demo/contents/README.md") return json({ type: "file", size: 12, sha: "current-blob-sha" });
+    throw new Error(`Unexpected GitHub API request: ${method} ${parsed.pathname}`);
+  } });
+  try {
+    const tool = registry.tools.get("github.change.create_pr");
+    const base = {
+      repo: "acme/demo",
+      branch: "alfie/change",
+      title: "Update README",
+      body: "Reviewed update",
+      commitMessage: "Update README",
+    };
+    await assert.rejects(
+      () => tool.handler({ ...base, files: [{ path: "README.md", content: "# Updated" }] }),
+      (error) => error.status === 409
+    );
+    await assert.rejects(
+      () => tool.handler({ ...base, files: [{ path: "README.md", content: "# Updated", expectedSha: "stale-blob-sha" }] }),
+      (error) => error.status === 409
+    );
+    assert.equal(calls.filter((call) => call.method === "POST").length, 0);
+    const contentReads = calls.filter((call) => call.path === "/repos/acme/demo/contents/README.md");
+    assert.equal(contentReads.length, 2);
+    assert.ok(contentReads.every((call) => call.ref === "pinned-base-commit"));
   } finally {
     if (previousToken === undefined) delete process.env.ALFIE_GITHUB_TOKEN;
     else process.env.ALFIE_GITHUB_TOKEN = previousToken;
