@@ -1,6 +1,6 @@
 # Alfie Core status and 1.0 readiness
 
-Last reviewed: 22 November 2026  
+Last reviewed: 26 November 2026  
 Repository: Bitterhabit/Alfie-core  
 Current main commit at release-preparation start: 33d7307fc07a10140c6f629b4228f7188c244c5b  
 Main versions: `@alfie/core 1.0.0`, `@alfie/interface 1.0.0` (PR #17 merged; deployment acceptance pending)
@@ -53,6 +53,18 @@ Squash merge commits on main:
 - PR #17: `d7eed92930e28e9d6536945b7cde80dc67f3307a`
 
 These are repository changes and CI results, not evidence of a live homelab deployment.
+
+## Post-1.0 developer integration readiness (26 November 2026)
+
+The GitHub project workflow has since been added to `main` and verified by CI:
+
+- Separate `github:read`, `github:draft` and `github:write` capabilities. Read access covers repository metadata, a bounded file tree, bounded text-file reads, recent commits and open pull requests.
+- Project writes create a new `alfie/*` branch and a draft pull request. The default branch is never used as Alfie's working branch; existing files require their expected blob SHA, changes are limited to 10 files / 80 KB, and credential/private-key paths are blocked.
+- GitHub writes are approval-gated. The approval card exposes the exact proposed file contents before the user approves. The action is bound to its argument hash and tool fingerprint.
+- `ALFIE_GITHUB_TOKEN` is configured only in the Core environment. Compose no longer injects the Core `.env` into the Interface container; the Interface receives an explicit environment allowlist.
+- Latest verified main commit: `3a5eb6aa7bb187ad0d6dd9eaa4db2a0a9d74ba30`. GitHub Actions run [45878442069](https://github.com/Bitterhabit/Alfie-core/actions/runs/45878442069) completed successfully for both `test-and-build` and `installer-integration`.
+
+This is code/CI verification only. No homelab deployment, live GitHub token, real repository write, or end-to-end user approval has been tested. Before daily-use acceptance, configure a fine-grained token server-side for the intended repository, grant `github:read` and `github:write` separately in Tools & Access, then test repository browsing and one harmless approval-gated draft PR in a dedicated test repository. Do not paste the token into chat.
 
 ## Remaining 1.0 release gates
 
