@@ -195,3 +195,39 @@ test("GitHub project changes require the exact existing-file SHA at the pinned b
     else process.env.ALFIE_GITHUB_TOKEN = previousToken;
   }
 });
+
+
+test("GitHub connector rejects dot-segment repository names and malformed Git refs", async () => {
+  const previousToken = process.env.ALFIE_GITHUB_TOKEN;
+  process.env.ALFIE_GITHUB_TOKEN = "test-github-token";
+  const calls = [];
+  const registry = new ToolRegistry();
+  registerModularConnectorTools(registry, { fetchImpl: async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || "GET" });
+    return json({ default_branch: "main" });
+  } });
+  try {
+    const tree = registry.tools.get("github.repo.tree");
+    await assert.rejects(() => tree.handler({ repo: "../demo" }), (error) => error.status === 400);
+    await assert.rejects(() => tree.handler({ repo: "acme/.." }), (error) => error.status === 400);
+    assert.equal(calls.length, 0);
+
+    const change = registry.tools.get("github.change.create_pr");
+    const base = {
+      repo: "acme/demo",
+      branch: "alfie/safe-change",
+      title: "Test",
+      body: "Test",
+      commitMessage: "Test",
+      files: [{ path: "README.md", content: "test" }]
+    };
+    await assert.rejects(() => change.handler({ ...base, base: "../main" }), (error) => error.status === 400);
+    await assert.rejects(() => change.handler({ ...base, base: "release//candidate" }), (error) => error.status === 400);
+    await assert.rejects(() => change.handler({ ...base, base: "release/@{bad" }), (error) => error.status === 400);
+    assert.equal(calls.filter((call) => call.method === "POST").length, 0);
+    assert.ok(calls.every((call) => new URL(call.url).hostname === "api.github.com"));
+  } finally {
+    if (previousToken === undefined) delete process.env.ALFIE_GITHUB_TOKEN;
+    else process.env.ALFIE_GITHUB_TOKEN = previousToken;
+  }
+});
