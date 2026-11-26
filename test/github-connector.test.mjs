@@ -127,6 +127,9 @@ test("GitHub project change tool is approval-gated and only creates Alfie draft 
     assert.equal(result.verified, true);
     assert.equal(result.draft, true);
     assert.equal(result.pullRequest, 12);
+    assert.equal(result.commitSha, "new-commit-sha");
+    const independentCheck = await tool.verifyResult({ repo: "acme/demo", branch: "alfie/feature-one" }, result);
+    assert.equal(independentCheck.verified, true);
     assert.ok(calls.some((call) => call.method === "POST" && call.path.endsWith("/git/refs")));
     assert.ok(calls.some((call) => call.method === "POST" && call.path.endsWith("/pulls")));
     assert.ok(calls.every((call) => call.auth === "Bearer test-github-token"));
