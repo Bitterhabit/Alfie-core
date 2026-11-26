@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createAssetInterceptorMiddleware } from "./assetMiddleware.mjs";
-import { applyCloudPrivacyPolicy, isToolAllowedByVisibility } from "../privacy/policy.mjs";
+import { applyCloudPrivacyPolicy, filterWorkflowProfileForCloud, isToolAllowedByVisibility } from "../privacy/policy.mjs";
 import { containsUntrustedData } from "./untrustedData.mjs";
 import { resolveWorkingMode } from "./workingModes.mjs";
 import { resolveLearningMode } from "../profile/store.mjs";
@@ -374,6 +374,7 @@ export class AgentLoop {
     // Parallelize independent pre-turn store reads to minimize latency before model execution.
     const allowProject = !cloudAgent || cloudAgent.visibility?.allowProjectContext !== false;
     const shouldUsePersonalMemories = !cloudAgent || cloudAgent.visibility?.allowPersonalMemories === true;
+    const effectiveWorkflowProfile = cloudAgent ? filterWorkflowProfileForCloud(workflowProfile) : workflowProfile;
 
     const storeReadsStarted = this.now();
     const [activeProject, workflowProfile, initialProviderConfig] = await Promise.all([
@@ -537,7 +538,7 @@ export class AgentLoop {
           privacyNotice,
           workingMode: resolvedMode.id,
           project: activeProject,
-          workflowProfile,
+          workflowProfile: effectiveWorkflowProfile,
           approvalContinuation,
           directFinalAfterTool
         });
