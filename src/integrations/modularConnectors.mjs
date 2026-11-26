@@ -701,7 +701,7 @@ export function registerModularConnectorTools(
         }
         if (seen.has(lower)) throw Object.assign(new Error("A file path appears more than once in this change."), { status: 400 });
         seen.add(lower);
-        const current = await githubRequest(`/repos/${repo}/contents/${filePath.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(baseBranch)}`).catch((error) => {
+        const current = await githubRequest(`/repos/${repo}/contents/${filePath.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(baseRef.object.sha)}`).catch((error) => {
           if (error.status === 404) return null;
           throw error;
         });
