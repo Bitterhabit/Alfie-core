@@ -315,7 +315,12 @@ test("GitHub change approval guard binds the reviewed proposal to its exact base
     const currentState = await tool.approvalGuard(args, { userId: "alice", toolId: tool.id });
     assert.equal(currentState.baseSha, "base-commit-two");
     assert.notDeepEqual(currentState, reviewedState, "A moved base must invalidate the approval guard");
-    assert.equal(calls.some((call) => call.method === "POST"), false, "Approval guards must remain read-only");
+    await assert.rejects(
+      () => tool.handler(args, { approvalGuard: reviewedState }),
+      (error) => error.status === 409 && error.code === "STALE_APPROVAL",
+      "Execution must recheck the reviewed base to close the approval-to-handler race"
+    );
+    assert.equal(calls.some((call) => call.method === "POST"), false, "Approval guards and stale-base rejection must remain read-only");
   } finally {
     if (previousToken === undefined) delete process.env.ALFIE_GITHUB_TOKEN;
     else process.env.ALFIE_GITHUB_TOKEN = previousToken;
